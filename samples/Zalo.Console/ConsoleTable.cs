@@ -95,7 +95,21 @@ internal sealed class ConsoleTable
         int width = 0;
         foreach (char c in str)
         {
-            width += c > 0x00FF ? 2 : 1;
+            if ((c >= 0x1100 && c <= 0x115F) ||
+                (c >= 0x2E80 && c <= 0xA4CF) ||
+                (c >= 0xAC00 && c <= 0xD7A3) ||
+                (c >= 0xF900 && c <= 0xFAFF) ||
+                (c >= 0xFE10 && c <= 0xFE19) ||
+                (c >= 0xFE30 && c <= 0xFE6F) ||
+                (c >= 0xFF01 && c <= 0xFF60) ||
+                (c >= 0xFFE0 && c <= 0xFFE6))
+            {
+                width += 2;
+            }
+            else
+            {
+                width += 1;
+            }
         }
         return width;
     }
