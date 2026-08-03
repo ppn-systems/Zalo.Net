@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
@@ -26,6 +27,7 @@ public static class AttachmentApis
         string NormalUrl,
         string HdUrl,
         string ThumbUrl,
+        string Checksum,
         int TotalSize);
 
     private static string GetHost(ZaloSession session, string serviceKey, string defaultHost)
@@ -48,6 +50,12 @@ public static class AttachmentApis
     {
         string ext = Path.GetExtension(fileName).TrimStart('.').ToLowerInvariant();
         return ext is "jpg" or "jpeg" or "png" or "webp" or "gif" or "bmp";
+    }
+
+    private static string ComputeMd5Hex(byte[] bytes)
+    {
+        byte[] hash = MD5.HashData(bytes);
+        return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
     private static string? GetNodeString(JsonNode? node)
@@ -182,6 +190,8 @@ public static class AttachmentApis
         string typeParam = isGroup ? "11" : "2";
 
         int totalSize = fileBytes.Length;
+        string checksum = ComputeMd5Hex(fileBytes);
+
         int totalChunk = (int)Math.Ceiling((double)totalSize / ChunkSize);
         if (totalChunk == 0)
         {
@@ -271,7 +281,7 @@ public static class AttachmentApis
         }
 
         string finalId = photoId ?? clientId.ToString(System.Globalization.CultureInfo.InvariantCulture);
-        return new UploadResult(finalId, normalUrl ?? "", hdUrl ?? "", thumbUrl ?? "", totalSize);
+        return new UploadResult(finalId, normalUrl ?? "", hdUrl ?? "", thumbUrl ?? "", checksum, totalSize);
     }
 
     private static async Task<ZaloSendResult> SendFileMessageAsync(
@@ -327,28 +337,39 @@ public static class AttachmentApis
         }
         else
         {
+            string fileExt = Path.GetExtension(fileName).TrimStart('.').ToLowerInvariant();
             payload = isGroup
                 ? new JsonObject
                 {
                     ["fileId"] = upload.PhotoId,
+                    ["checksum"] = upload.Checksum,
+                    ["checksumSha"] = "",
+                    ["extention"] = fileExt,
+                    ["totalSize"] = upload.TotalSize,
+                    ["fileName"] = fileName,
                     ["clientId"] = now.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ["desc"] = text,
+                    ["fType"] = 1,
+                    ["fileCount"] = 0,
+                    ["fdata"] = "{}",
                     ["grid"] = threadId,
                     ["fileUrl"] = upload.NormalUrl,
-                    ["fileSize"] = upload.TotalSize,
-                    ["fileName"] = fileName,
                     ["zsource"] = -1,
                     ["ttl"] = 0
                 }
                 : new JsonObject
                 {
                     ["fileId"] = upload.PhotoId,
+                    ["checksum"] = upload.Checksum,
+                    ["checksumSha"] = "",
+                    ["extention"] = fileExt,
+                    ["totalSize"] = upload.TotalSize,
+                    ["fileName"] = fileName,
                     ["clientId"] = now.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ["desc"] = text,
+                    ["fType"] = 1,
+                    ["fileCount"] = 0,
+                    ["fdata"] = "{}",
                     ["toid"] = threadId,
                     ["fileUrl"] = upload.NormalUrl,
-                    ["fileSize"] = upload.TotalSize,
-                    ["fileName"] = fileName,
                     ["zsource"] = -1,
                     ["ttl"] = 0
                 };
