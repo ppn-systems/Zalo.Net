@@ -1,3 +1,6 @@
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Licensed under the Apache License, Version 2.0.
+
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -8,6 +11,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using Zalo.Net.Contracts;
 using Zalo.Net.Contracts.Exceptions;
 using Zalo.Net.Cryptography;
 
@@ -33,8 +37,8 @@ public static class LoginApis
         string url = BuildUrl(LoginInfoUrl, encParams, new()
         {
             ["nretry"] = "0",
-            ["type"] = ZaloHttpClient.ApiType.ToString(CultureInfo.InvariantCulture),
-            ["client_version"] = ZaloHttpClient.ApiVersion.ToString(CultureInfo.InvariantCulture),
+            ["type"] = ZaloConstants.Protocol.ApiType.ToString(CultureInfo.InvariantCulture),
+            ["client_version"] = ZaloConstants.Protocol.ApiVersion.ToString(CultureInfo.InvariantCulture),
         });
 
         HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Get, ct: ct).ConfigureAwait(false);
@@ -83,16 +87,16 @@ public static class LoginApis
         string signKey = Hashing.GetSignKey("getserverinfo", new Dictionary<string, object?>
         {
             ["imei"] = imei,
-            ["type"] = ZaloHttpClient.ApiType,
-            ["client_version"] = ZaloHttpClient.ApiVersion,
+            ["type"] = ZaloConstants.Protocol.ApiType,
+            ["client_version"] = ZaloConstants.Protocol.ApiVersion,
             ["computer_name"] = "Web",
         });
 
         string url = BuildUrl(ServerInfoUrl, new Dictionary<string, string>
         {
             ["imei"] = imei,
-            ["type"] = ZaloHttpClient.ApiType.ToString(CultureInfo.InvariantCulture),
-            ["client_version"] = ZaloHttpClient.ApiVersion.ToString(CultureInfo.InvariantCulture),
+            ["type"] = ZaloConstants.Protocol.ApiType.ToString(CultureInfo.InvariantCulture),
+            ["client_version"] = ZaloConstants.Protocol.ApiVersion.ToString(CultureInfo.InvariantCulture),
             ["computer_name"] = "Web",
             ["signkey"] = signKey,
         }, null);
@@ -117,7 +121,7 @@ public static class LoginApis
             ["ts"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
         };
 
-        ParamsEncryptor encryptor = new(ZaloHttpClient.ApiType, imei, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        ParamsEncryptor encryptor = new(ZaloConstants.Protocol.ApiType, imei, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         string enk = encryptor.GetEncryptKey();
         string dataJson = JsonSerializer.Serialize(data, AuthJsonContext.Default.DictionaryStringObject);
         string encrypted = encryptor.EncryptData(dataJson);
@@ -129,8 +133,8 @@ public static class LoginApis
             ["zcid"] = zcid,
             ["zcid_ext"] = zcidExt,
             ["enc_ver"] = encVer,
-            ["type"] = ZaloHttpClient.ApiType.ToString(CultureInfo.InvariantCulture),
-            ["client_version"] = ZaloHttpClient.ApiVersion.ToString(CultureInfo.InvariantCulture),
+            ["type"] = ZaloConstants.Protocol.ApiType.ToString(CultureInfo.InvariantCulture),
+            ["client_version"] = ZaloConstants.Protocol.ApiVersion.ToString(CultureInfo.InvariantCulture),
         };
 
         @params["signkey"] = Hashing.GetSignKey(signType, @params.ToDictionary(k => k.Key, v => (object?)v.Value));

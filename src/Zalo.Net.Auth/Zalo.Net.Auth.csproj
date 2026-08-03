@@ -1,5 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <Title>Zalo.Net.Auth - Authentication &amp; HTTP Engine</Title>
+    <Description>Authentication endpoints, cookie store, and SocketsHttpHandler client engine with IWebProxy support.</Description>
+    <PackageTags>zalo;zalo-auth;http-client;proxy;cookies</PackageTags>
+  </PropertyGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Zalo.Net.Contracts\Zalo.Net.Contracts.csproj" />
     <ProjectReference Include="..\Zalo.Net.Cryptography\Zalo.Net.Cryptography.csproj" />

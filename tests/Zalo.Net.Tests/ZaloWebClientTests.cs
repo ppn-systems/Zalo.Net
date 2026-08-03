@@ -1,3 +1,6 @@
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Licensed under the Apache License, Version 2.0.
+
 using System;
 using System.Collections.Generic;
 using System.Threading;
@@ -18,6 +21,22 @@ public class ZaloWebClientTests
     public void Dispose_CleanState_DisposesWithoutThrowing()
     {
         using ZaloWebClient client = new();
+        Assert.NotNull(client);
+    }
+
+    [Fact]
+    public void Constructor_WithProxy_AssignsProxyProperty()
+    {
+        System.Net.WebProxy proxy = new("http://127.0.0.1:8080");
+        using ZaloWebClient client = new(proxy);
+
+        Assert.Same(proxy, client.Proxy);
+    }
+
+    [Fact]
+    public void Implements_IZaloClient_Interface()
+    {
+        using IZaloClient client = new ZaloWebClient();
         Assert.NotNull(client);
     }
 
@@ -73,4 +92,20 @@ public class ZaloWebClientTests
     [Fact]
     public async Task SendFriendRequestAsync_NullSession_ThrowsArgumentNullException()
         => _ = await Assert.ThrowsAsync<ArgumentNullException>(() => ZaloWebClient.SendFriendRequestAsync(null!, "u123", "Hello", CancellationToken.None));
+
+    [Fact]
+    public async Task UndoMessageAsync_NullSession_ThrowsArgumentNullException()
+        => _ = await Assert.ThrowsAsync<ArgumentNullException>(() => ZaloWebClient.UndoMessageAsync(null!, "thread1", "msg1", "cli1", ZaloThreadType.User, CancellationToken.None));
+
+    [Fact]
+    public async Task AddReactionAsync_NullSession_ThrowsArgumentNullException()
+        => _ = await Assert.ThrowsAsync<ArgumentNullException>(() => ZaloWebClient.AddReactionAsync(null!, "thread1", "msg1", "cli1", ZaloThreadType.User, Endpoints.ZaloReactionType.Heart, CancellationToken.None));
+
+    [Fact]
+    public async Task SendStickerAsync_NullSession_ThrowsArgumentNullException()
+        => _ = await Assert.ThrowsAsync<ArgumentNullException>(() => ZaloWebClient.SendStickerAsync(null!, "thread1", 1, 1, 1, ZaloThreadType.User, CancellationToken.None));
+
+    [Fact]
+    public async Task SendQuoteMessageAsync_NullSession_ThrowsArgumentNullException()
+        => _ = await Assert.ThrowsAsync<ArgumentNullException>(() => ZaloWebClient.SendQuoteMessageAsync(null!, "thread1", ZaloThreadType.User, "Rep", "m1", "c1", "u1", "Quote", quoteTs: 0, ct: CancellationToken.None));
 }

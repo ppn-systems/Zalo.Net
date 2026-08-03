@@ -1,3 +1,6 @@
+﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Licensed under the Apache License, Version 2.0.
+
 using System.Text.Json.Serialization;
 
 namespace Zalo.Net.Contracts;
@@ -18,6 +21,12 @@ namespace Zalo.Net.Contracts;
 [JsonSerializable(typeof(ZaloSessionStatusChanged))]
 [JsonSerializable(typeof(ZaloSendResult))]
 [JsonSerializable(typeof(ZaloUserProfile))]
+[JsonSerializable(typeof(long))]
+[JsonSerializable(typeof(int))]
+[JsonSerializable(typeof(string))]
+[JsonSerializable(typeof(bool))]
+[JsonSerializable(typeof(double))]
+[JsonSerializable(typeof(object))]
 public partial class ZaloJsonContext : JsonSerializerContext
 {
 }

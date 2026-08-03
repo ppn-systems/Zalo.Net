@@ -1,3 +1,6 @@
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Licensed under the Apache License, Version 2.0.
+
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -16,13 +19,21 @@ namespace Zalo.Net;
 /// <summary>
 /// Primary client facade for Zalo Web API interactions, authentication flows, and real-time WebSocket messaging.
 /// </summary>
-public sealed class ZaloWebClient : IDisposable
+public sealed class ZaloWebClient : IZaloClient
 {
-    private const string DefaultUserAgent =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
-
+    private readonly System.Net.IWebProxy? _proxy;
     private readonly Dictionary<Guid, QrSession> _qrSessions = [];
     private readonly Lock _lock = new();
+
+    /// <summary>
+    /// Gets the configured proxy instance for this client, if assigned.
+    /// </summary>
+    public System.Net.IWebProxy? Proxy => _proxy;
+
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ZaloWebClient"/> class with an optional Proxy handler.
+    /// </summary>
+    public ZaloWebClient(System.Net.IWebProxy? proxy = null) => _proxy = proxy;
 
 #pragma warning disable CS0067
     /// <summary>Occurs when an inbound WebSocket message is received.</summary>
@@ -33,10 +44,10 @@ public sealed class ZaloWebClient : IDisposable
 #pragma warning restore CS0067
 
     /// <summary>Starts QR login flow.</summary>
-    public async Task<ZaloQrSession> StartQrLoginAsync(CancellationToken ct)
+    public async Task<ZaloQrSession> StartQrLoginAsync(CancellationToken ct = default)
     {
-        string ua = DefaultUserAgent;
-        ZaloHttpClient http = new(ua);
+        string ua = ZaloConstants.Protocol.DefaultUserAgent;
+        ZaloHttpClient http = new(ua, proxy: _proxy);
 
         string version = await LoginQrApis.LoadLoginPageAsync(http, ct).ConfigureAwait(false);
 
@@ -53,7 +64,7 @@ public sealed class ZaloWebClient : IDisposable
         image = image.Replace("data:image/png;base64,", "", StringComparison.Ordinal);
 
         Guid sessionId = Guid.NewGuid();
-        DateTimeOffset expiresAt = DateTimeOffset.UtcNow.AddMinutes(5);
+        DateTimeOffset expiresAt = DateTimeOffset.UtcNow.AddSeconds(100);
 
         QrSession qrSession = new(http, version, code, ua, expiresAt, sessionId);
         lock (_lock)
@@ -64,6 +75,17 @@ public sealed class ZaloWebClient : IDisposable
         _ = Task.Run(() => this.RunQrLoginFlowAsync(sessionId, qrSession.Cts.Token), CancellationToken.None);
 
         return new ZaloQrSession(sessionId, image, code, expiresAt);
+    }
+
+    /// <summary>Polls QR login status.</summary>
+    public Task<ZaloLoginState> PollQrStatusAsync(Guid sessionId, CancellationToken ct = default)
+    {
+        if (ct.IsCancellationRequested)
+        {
+            return Task.FromCanceled<ZaloLoginState>(ct);
+        }
+
+        return this.PollLoginAsync(sessionId);
     }
 
     /// <summary>Polls QR login status.</summary>
@@ -97,10 +119,11 @@ public sealed class ZaloWebClient : IDisposable
             }
         }
 
+        string? displayName = null;
+        string? avatar = null;
+
         try
         {
-            string? displayName = null;
-            string? avatar = null;
 
             while (!sessionCt.IsCancellationRequested && DateTimeOffset.UtcNow < session.ExpiresAt)
             {
@@ -186,8 +209,8 @@ public sealed class ZaloWebClient : IDisposable
                 }
                 if (errorCode != 0)
                 {
-                    await Task.Delay(3000, sessionCt).ConfigureAwait(false);
-                    continue;
+                    lock (_lock) { session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Expired); }
+                    return;
                 }
 
                 await LoginQrApis.CheckSessionAsync(session.Http, sessionCt).ConfigureAwait(false);
@@ -201,7 +224,7 @@ public sealed class ZaloWebClient : IDisposable
                 avatar = userInfo?["avatar"]?.GetValue<string>() ?? avatar;
 
                 string imei = Hashing.GenerateImei(session.UserAgent);
-                ParamsEncryptor encryptor = new(ZaloHttpClient.ApiType, imei, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                ParamsEncryptor encryptor = new(ZaloConstants.Protocol.ApiType, imei, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                 string enk = encryptor.GetEncryptKey();
 
                 JsonNode? loginData = await LoginApis.GetLoginInfoAsync(session.Http, imei, "vi", enk, sessionCt).ConfigureAwait(false);
@@ -229,7 +252,7 @@ public sealed class ZaloWebClient : IDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            lock (_lock) { session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Expired); }
+            lock (_lock) { session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Expired, displayName, avatar, ex.Message); }
             this.StatusChanged?.Invoke(this, new ZaloSessionStatusChanged("", ZaloConnectionStatus.SessionExpired, ex.Message));
         }
     }
@@ -249,13 +272,16 @@ public sealed class ZaloWebClient : IDisposable
         }
     }
 
-    /// <summary>Logs in from session material.</summary>
-    public static async Task<ZaloSession> LoginWithSessionAsync(ZaloSessionMaterial material, CancellationToken ct)
+    /// <summary>Logs in from session material with optional proxy routing.</summary>
+    public static async Task<ZaloSession> LoginWithSessionAsync(
+        ZaloSessionMaterial material,
+        CancellationToken ct,
+        System.Net.IWebProxy? proxy = null)
     {
         ArgumentNullException.ThrowIfNull(material);
 
         CookieStore cookies = CookieStore.FromJson(material.CookiesJson);
-        using ZaloHttpClient http = new(material.UserAgent, cookies);
+        using ZaloHttpClient http = new(material.UserAgent, cookies, proxy);
 
         JsonNode? loginData = await LoginApis.GetLoginInfoAsync(http, material.Imei, material.Language, material.SecretKey, ct).ConfigureAwait(false);
         JsonNode? serverData = await LoginApis.GetServerInfoAsync(http, material.Imei, ct).ConfigureAwait(false);
@@ -266,21 +292,27 @@ public sealed class ZaloWebClient : IDisposable
         IReadOnlyDictionary<string, string[]> svcMap = ExtractServiceMap(loginData);
         _ = serverData;
 
+        if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Auth.SessionLoaded))
+        {
+            ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Auth.SessionLoaded, new { AuthenticatedUid = uid, HasProxy = proxy != null });
+        }
+
         return new ZaloSession(
             material with { SecretKey = secretKey, Uid = uid },
             uid, wsUrls, svcMap,
-            PingIntervalMs: 20_000);
+            PingIntervalMs: 20_000,
+            Proxy: proxy);
     }
 
     private static string BuildWsUrl(string baseUrl)
     {
         string sep = baseUrl.Contains('?', StringComparison.Ordinal) ? "&" : "?";
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        return $"{baseUrl}{sep}zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}&t={now}";
+        return $"{baseUrl}{sep}zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}&t={now}";
     }
 
     /// <summary>Starts WebSocket listener.</summary>
-    public Task StartListenerAsync(ZaloSession session, CancellationToken ct, Action<ZaloLogLevel, string>? log = null)
+    public Task StartListenerAsync(ZaloSession session, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(session);
 
@@ -291,8 +323,7 @@ public sealed class ZaloWebClient : IDisposable
         ZaloWsListener listener = new(
             session,
             msg => this.MessageReceived?.Invoke(this, msg),
-            status => this.StatusChanged?.Invoke(this, status),
-            log);
+            status => this.StatusChanged?.Invoke(this, status));
 
         string wsUrl = BuildWsUrl(session.WsUrls[0]);
         return listener.RunAsync(wsUrl, ct).ContinueWith(_ => { }, ct, TaskContinuationOptions.None, TaskScheduler.Default);
@@ -304,7 +335,7 @@ public sealed class ZaloWebClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         string msgId = await MessageApis.SendTextAsync(http, session, threadId, threadType, text, ct).ConfigureAwait(false);
         return new ZaloSendResult(msgId);
     }
@@ -316,7 +347,7 @@ public sealed class ZaloWebClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         return await AttachmentApis.SendImageAttachmentAsync(http, session, threadId, threadType, fileBytes, fileName, caption, ct).ConfigureAwait(false);
     }
 
@@ -325,22 +356,67 @@ public sealed class ZaloWebClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         (string uid, string name, string? avatar) = await MessageApis.GetUserInfoAsync(http, session, userId, ct).ConfigureAwait(false);
         return new ZaloUserProfile(uid, name, avatar);
     }
 
-    /// <summary>Requests historical message backfill.</summary>
-    public static async Task RequestOldMessagesAsync(ZaloSession session, ZaloThreadType type,
-        string? lastMsgId, CancellationToken ct)
+    /// <summary>Sends a quote/reply message.</summary>
+    public static async Task<string> SendQuoteMessageAsync(
+        ZaloSession session, string threadId, ZaloThreadType threadType, string text,
+        string quoteMsgId, string quoteCliMsgId, string quoteSenderUid, string quoteContent,
+        long quoteTs = 0,
+        CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        using ZaloHttpClient http = CreateHttpForSession(session.Material);
-        _ = await MessageHistoryApis.GetOldMessagesAsync(http, session, type, lastMsgId, ct).ConfigureAwait(false);
+        using ZaloHttpClient http = CreateHttpForSession(session);
+        return await MessageApis.SendQuoteAsync(http, session, threadId, threadType, text, quoteMsgId, quoteCliMsgId, quoteSenderUid, quoteContent, quoteTs, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Recalls/undos a previously sent message.</summary>
+    public static async Task UndoMessageAsync(
+        ZaloSession session, string threadId, string msgId, string cliMsgId, ZaloThreadType type,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session);
+        await UndoApis.UndoMessageAsync(http, session, threadId, msgId, cliMsgId, type, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Adds a reaction (emoji) to a message.</summary>
+    public static async Task AddReactionAsync(
+        ZaloSession session, string threadId, string msgId, string cliMsgId, ZaloThreadType type,
+        ZaloReactionType reaction, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session);
+        await ReactionApis.AddReactionAsync(http, session, threadId, msgId, cliMsgId, type, reaction, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Sends a Zalo sticker message.</summary>
+    public static async Task SendStickerAsync(
+        ZaloSession session, string threadId, int stickerId, int cateId, int stickerType, ZaloThreadType type,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session);
+        await StickerApis.SendStickerAsync(http, session, threadId, stickerId, cateId, stickerType, type, ct).ConfigureAwait(false);
     }
 
     #region Group Management (Group 2)
+
+    /// <summary>Fetches all group chats the user belongs to.</summary>
+    public static async Task<IReadOnlyList<ZaloGroupInfo>> GetAllGroupsAsync(ZaloSession session, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session);
+        return await GroupApis.GetAllGroupsAsync(http, session, ct).ConfigureAwait(false);
+    }
 
     /// <summary>Creates a new Zalo group chat.</summary>
     public static async Task<ZaloGroupCreateResult> CreateGroupAsync(
@@ -348,7 +424,7 @@ public sealed class ZaloWebClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         return await GroupApis.CreateGroupAsync(http, session, groupName, memberIds, ct).ConfigureAwait(false);
     }
 
@@ -358,7 +434,7 @@ public sealed class ZaloWebClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         await GroupApis.LeaveGroupAsync(http, session, groupId, silent, ct).ConfigureAwait(false);
     }
 
@@ -368,7 +444,7 @@ public sealed class ZaloWebClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         await GroupApis.AddUserToGroupAsync(http, session, groupId, memberIds, ct).ConfigureAwait(false);
     }
 
@@ -378,7 +454,7 @@ public sealed class ZaloWebClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         await GroupApis.RemoveUserFromGroupAsync(http, session, groupId, memberIds, ct).ConfigureAwait(false);
     }
 
@@ -388,7 +464,7 @@ public sealed class ZaloWebClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         await GroupApis.ChangeGroupNameAsync(http, session, groupId, newName, ct).ConfigureAwait(false);
     }
 
@@ -402,7 +478,7 @@ public sealed class ZaloWebClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         return await FriendApis.GetAllFriendsAsync(http, session, count, page, ct).ConfigureAwait(false);
     }
 
@@ -412,7 +488,7 @@ public sealed class ZaloWebClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         return await FriendApis.FindUserByPhoneAsync(http, session, phoneNumber, ct).ConfigureAwait(false);
     }
 
@@ -422,7 +498,7 @@ public sealed class ZaloWebClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         await FriendApis.SendFriendRequestAsync(http, session, userId, message, ct).ConfigureAwait(false);
     }
 
@@ -432,7 +508,7 @@ public sealed class ZaloWebClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         await FriendApis.AcceptFriendRequestAsync(http, session, userId, ct).ConfigureAwait(false);
     }
 
@@ -442,7 +518,7 @@ public sealed class ZaloWebClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         await FriendApis.BlockUserAsync(http, session, userId, ct).ConfigureAwait(false);
     }
 
@@ -452,14 +528,27 @@ public sealed class ZaloWebClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(session);
 
-        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         await FriendApis.UnblockUserAsync(http, session, userId, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Changes the display alias (nickname) of a friend for CRM contact tracking.</summary>
+    public static async Task ChangeFriendAliasAsync(
+        ZaloSession session, string userId, string alias, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session);
+        await FriendApis.ChangeFriendAliasAsync(http, session, userId, alias, ct).ConfigureAwait(false);
     }
 
     #endregion
 
-    /// <summary>Runs WebSocket listener with automatic exponential backoff reconnects.</summary>
-    public async Task RunWithReconnectAsync(ZaloSessionMaterial material, CancellationToken ct)
+    /// <summary>Runs WebSocket listener with automatic exponential backoff reconnects and optional proxy routing.</summary>
+    public async Task RunWithReconnectAsync(
+        ZaloSessionMaterial material,
+        System.Net.IWebProxy? proxy = null,
+        CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(material);
 
@@ -471,7 +560,7 @@ public sealed class ZaloWebClient : IDisposable
             ZaloSession session;
             try
             {
-                session = await LoginWithSessionAsync(material, ct).ConfigureAwait(false);
+                session = await LoginWithSessionAsync(material, ct, proxy ?? _proxy).ConfigureAwait(false);
             }
             catch (ZaloApiException ex) when (IsAuthError(ex))
             {
@@ -558,8 +647,8 @@ public sealed class ZaloWebClient : IDisposable
         return result;
     }
 
-    private static ZaloHttpClient CreateHttpForSession(ZaloSessionMaterial m)
-        => new(m.UserAgent, CookieStore.FromJson(m.CookiesJson));
+    private static ZaloHttpClient CreateHttpForSession(ZaloSession session)
+        => new(session.Material.UserAgent, CookieStore.FromJson(session.Material.CookiesJson), session.Proxy);
 
     private void RemoveQrSession(Guid sessionId)
     {

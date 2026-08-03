@@ -1,9 +1,15 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <Title>Zalo.Net.WebSocket - Real-Time Protocol Engine</Title>
+    <Description>Real-time WebSocket connection listener, frame decoder, ping heartbeat, and auto-reconnect engine.</Description>
+    <PackageTags>zalo;zalo-websocket;realtime;socket;reconnect</PackageTags>
+  </PropertyGroup>
+
   <ItemGroup>
+    <ProjectReference Include="..\Zalo.Net.Auth\Zalo.Net.Auth.csproj" />
     <ProjectReference Include="..\Zalo.Net.Contracts\Zalo.Net.Contracts.csproj" />
     <ProjectReference Include="..\Zalo.Net.Cryptography\Zalo.Net.Cryptography.csproj" />
-    <ProjectReference Include="..\Zalo.Net.Auth\Zalo.Net.Auth.csproj" />
   </ItemGroup>
 
 </Project>

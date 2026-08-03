@@ -1,3 +1,6 @@
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Licensed under the Apache License, Version 2.0.
+
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
@@ -29,7 +32,50 @@ internal static class FriendApis
     {
         string baseClean = baseUrl.EndsWith('/') ? baseUrl[..^1] : baseUrl;
         string sep = path.Contains('?', StringComparison.Ordinal) ? "&" : "?";
-        return $"{baseClean}{path}{sep}zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}";
+        return $"{baseClean}{path}{sep}zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}";
+    }
+
+    private static JsonNode? DecryptDataNode(ZaloSession session, JsonNode? node)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+        JsonNode? dataNode = node["data"];
+        if (dataNode is null)
+        {
+            return node;
+        }
+
+        if (dataNode.GetValueKind() == System.Text.Json.JsonValueKind.String)
+        {
+            string encStr = dataNode.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(encStr))
+            {
+                return null;
+            }
+
+            string? decrypted = ZaloCipher.DecodeAes(session.Material.SecretKey, encStr)
+                             ?? ZaloCipher.DecodeAesUtf8Key(session.Material.SecretKey, encStr);
+            if (!string.IsNullOrWhiteSpace(decrypted))
+            {
+                try
+                {
+                    JsonNode? decodedJson = JsonNode.Parse(decrypted);
+                    if (decodedJson is JsonObject obj && obj.ContainsKey("data"))
+                    {
+                        return obj["data"];
+                    }
+                    return decodedJson;
+                }
+                catch
+                {
+                    // Fallback to raw data node if parse fails
+                }
+            }
+        }
+
+        return dataNode;
     }
 
     public static async Task<IReadOnlyList<ZaloFriendInfo>> GetAllFriendsAsync(
@@ -69,8 +115,8 @@ internal static class FriendApis
             throw new ZaloApiException(msg, errorCode);
         }
 
-        JsonNode? dataArr = node["data"];
-        if (dataArr is not JsonArray arr)
+        JsonNode? dataNode = DecryptDataNode(session, node);
+        if (dataNode is not JsonArray arr)
         {
             return Array.Empty<ZaloFriendInfo>();
         }
@@ -82,8 +128,14 @@ internal static class FriendApis
             {
                 continue;
             }
-            string userId = item["userId"]?.GetValue<string>() ?? item["uid"]?.GetValue<string>() ?? "";
-            string displayName = item["displayName"]?.GetValue<string>() ?? item["zaloName"]?.GetValue<string>() ?? "";
+            string userId = item["userId"]?.GetValue<string>()
+                         ?? item["uid"]?.GetValue<string>()
+                         ?? item["fId"]?.GetValue<string>()
+                         ?? "";
+            string displayName = item["displayName"]?.GetValue<string>()
+                               ?? item["zaloName"]?.GetValue<string>()
+                               ?? item["dName"]?.GetValue<string>()
+                               ?? "";
             string? avatar = item["avatar"]?.GetValue<string>();
             string? phone = item["phoneNumber"]?.GetValue<string>();
             string? alias = item["alias"]?.GetValue<string>();
@@ -140,9 +192,21 @@ internal static class FriendApis
             throw new ZaloApiException(msg, errorCode);
         }
 
-        JsonNode? data = node["data"];
-        string uid = data?["uid"]?.GetValue<string>() ?? data?["userId"]?.GetValue<string>() ?? "";
-        string displayName = data?["displayName"]?.GetValue<string>() ?? data?["zaloName"]?.GetValue<string>() ?? "";
+        JsonNode? data = DecryptDataNode(session, node);
+        string uid = data?["uid"]?.GetValue<string>()
+                  ?? data?["userId"]?.GetValue<string>()
+                  ?? data?["fId"]?.GetValue<string>()
+                  ?? "";
+        string displayName = data?["zalo_name"]?.GetValue<string>()
+                           ?? data?["display_name"]?.GetValue<string>()
+                           ?? data?["displayName"]?.GetValue<string>()
+                           ?? data?["zaloName"]?.GetValue<string>()
+                           ?? data?["dpName"]?.GetValue<string>()
+                           ?? data?["dName"]?.GetValue<string>()
+                           ?? data?["name"]?.GetValue<string>()
+                           ?? data?["username"]?.GetValue<string>()
+                           ?? data?["user_name"]?.GetValue<string>()
+                           ?? "";
         string? avatar = data?["avatar"]?.GetValue<string>();
 
         return new ZaloUserProfile(uid, displayName, avatar);
@@ -284,6 +348,42 @@ internal static class FriendApis
         using HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Post, body: body, ct: ct).ConfigureAwait(false);
         JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false)
                       ?? throw new ZaloApiException("Invalid JSON response from unblockUser");
+
+        int errorCode = node["error_code"]?.GetValue<int>() ?? -1;
+        if (errorCode != 0)
+        {
+            string msg = node["error_message"]?.GetValue<string>() ?? $"Error {errorCode}";
+            throw new ZaloApiException(msg, errorCode);
+        }
+    }
+
+    public static async Task ChangeFriendAliasAsync(
+        ZaloHttpClient http, ZaloSession session, string userId, string alias, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+
+        string host = GetHost(session, "alias", "https://alias-wpa.chat.zalo.me");
+        string baseUrl = MakeUrl(host, "/api/alias/update");
+
+        JsonObject payload = new()
+        {
+            ["friendId"] = userId,
+            ["alias"] = alias ?? "",
+            ["imei"] = session.Material.Imei
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt changeFriendAlias payload");
+        }
+
+        string requestUrl = $"{baseUrl}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false)
+                      ?? throw new ZaloApiException("Invalid JSON response from changeFriendAlias");
 
         int errorCode = node["error_code"]?.GetValue<int>() ?? -1;
         if (errorCode != 0)

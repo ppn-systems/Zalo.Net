@@ -18,7 +18,7 @@
         <IsTrimmable>true</IsTrimmable>
 
         <UseArtifactsOutput>true</UseArtifactsOutput>
-        <NoWarn>$(NoWarn);CS1591;CA5351;CA5350;CA2007;CA1031;CA2000</NoWarn>
+        <NoWarn>$(NoWarn);CS1591;CA5351;CA5350;CA2007;CA1031;CA2000;CS1700</NoWarn>
     </PropertyGroup>
 
     <PropertyGroup Condition="Exists('$(MSBuildThisFileDirectory)src/Zalo.Net.snk')">
@@ -48,7 +48,15 @@
     <PropertyGroup>
         <Authors>PPN Corporation</Authors>
         <Company>PPN Corporation</Company>
-		<GenerateDocumentationFile>true</GenerateDocumentationFile>
-		<Copyright>Copyright (c) 2026 PPN Corporation. All rights reserved.</Copyright>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <Copyright>Copyright (c) 2026 PPN Corporation. All rights reserved.</Copyright>
+        <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+        <PackageIcon Condition="Exists('$(MSBuildThisFileDirectory)icon.png')">icon.png</PackageIcon>
+        <PackageReadmeFile Condition="Exists('$(MSBuildThisFileDirectory)README.md')">README.md</PackageReadmeFile>
     </PropertyGroup>
+
+    <ItemGroup>
+        <None Include="$(MSBuildThisFileDirectory)icon.png" Pack="true" PackagePath="\" Condition="Exists('$(MSBuildThisFileDirectory)icon.png')" />
+        <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Condition="Exists('$(MSBuildThisFileDirectory)README.md')" />
+    </ItemGroup>
 </Project>

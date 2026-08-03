@@ -1,6 +1,6 @@
-using Org.BouncyCastle.Crypto.Engines;
-using Org.BouncyCastle.Crypto.Modes;
-using Org.BouncyCastle.Crypto.Parameters;
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Licensed under the Apache License, Version 2.0.
+
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
@@ -249,16 +249,16 @@ public sealed class ZaloWsListenerTests
         RandomNumberGenerator.Fill(iv);
         RandomNumberGenerator.Fill(aad);
 
-        GcmBlockCipher cipher = new(new AesEngine());
-        cipher.Init(true, new AeadParameters(new KeyParameter(keyBytes), 128, iv, aad));
-        byte[] ctTag = new byte[cipher.GetOutputSize(plain.Length)];
-        int len = cipher.ProcessBytes(plain, 0, plain.Length, ctTag, 0);
-        _ = cipher.DoFinal(ctTag, len);
+        using AesGcm gcm = new(keyBytes, 16);
+        byte[] ciphertext = new byte[plain.Length];
+        byte[] tag = new byte[16];
+        gcm.Encrypt(iv.AsSpan(0, 12), plain, ciphertext, tag, aad);
 
-        byte[] buf = new byte[16 + 16 + ctTag.Length];
+        byte[] buf = new byte[16 + 16 + ciphertext.Length + 16];
         iv.CopyTo(buf, 0);
         aad.CopyTo(buf, 16);
-        ctTag.CopyTo(buf, 32);
+        ciphertext.CopyTo(buf, 32);
+        tag.CopyTo(buf, 32 + ciphertext.Length);
         return buf;
     }
 }

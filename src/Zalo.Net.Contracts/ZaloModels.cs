@@ -1,3 +1,6 @@
+﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Licensed under the Apache License, Version 2.0.
+
 namespace Zalo.Net.Contracts;
 
 /// <summary>
@@ -99,17 +102,19 @@ public sealed record ZaloLoginState(
     System.Guid SessionId,
     ZaloLoginStatus Status,
     string? DisplayName = null,
-    string? AvatarUrl = null);
+    string? AvatarUrl = null,
+    string? ErrorMessage = null);
 
 /// <summary>
-/// Active Zalo session details including service mappings and WS endpoints.
+/// Active Zalo session details including service mappings, WS endpoints, and optional Proxy routing.
 /// </summary>
 public sealed record ZaloSession(
     ZaloSessionMaterial Material,
     string Uid,
     string[] WsUrls,
     System.Collections.Generic.IReadOnlyDictionary<string, string[]> ServiceMap,
-    int PingIntervalMs);
+    int PingIntervalMs,
+    System.Net.IWebProxy? Proxy = null);
 
 /// <summary>
 /// Represents a message media or file attachment.
@@ -134,7 +139,8 @@ public sealed record ZaloMessageEvent(
     string TimestampMs,
     object? Content,
     System.Collections.Generic.IReadOnlyList<ZaloAttachment>? Attachments,
-    bool IsSelf);
+    bool IsSelf,
+    string? RawJson = null);
 
 /// <summary>
 /// Event payload emitted when the WebSocket connection status changes.

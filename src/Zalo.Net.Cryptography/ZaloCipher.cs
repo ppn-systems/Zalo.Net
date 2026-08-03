@@ -1,3 +1,6 @@
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Licensed under the Apache License, Version 2.0.
+
 using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
@@ -82,22 +85,14 @@ public static class ZaloCipher
     {
         using Aes aes = Aes.Create();
         aes.Key = key;
-        aes.IV = s_zeroIv;
-        aes.Mode = CipherMode.CBC;
-        aes.Padding = PaddingMode.PKCS7;
-        using ICryptoTransform enc = aes.CreateEncryptor();
-        return enc.TransformFinalBlock(plaintext, 0, plaintext.Length);
+        return aes.EncryptCbc(plaintext, s_zeroIv, PaddingMode.PKCS7);
     }
 
     private static string DecryptCbc(byte[] key, byte[] ciphertext)
     {
         using Aes aes = Aes.Create();
         aes.Key = key;
-        aes.IV = s_zeroIv;
-        aes.Mode = CipherMode.CBC;
-        aes.Padding = PaddingMode.PKCS7;
-        using ICryptoTransform dec = aes.CreateDecryptor();
-        byte[] plain = dec.TransformFinalBlock(ciphertext, 0, ciphertext.Length);
+        byte[] plain = aes.DecryptCbc(ciphertext, s_zeroIv, PaddingMode.PKCS7);
         return Encoding.UTF8.GetString(plain);
     }
 }

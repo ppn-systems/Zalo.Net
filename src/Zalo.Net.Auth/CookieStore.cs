@@ -1,3 +1,6 @@
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Licensed under the Apache License, Version 2.0.
+
 using System;
 using System.Collections.Generic;
 using System.Net;
@@ -26,6 +29,12 @@ internal sealed class SerializedCookie
 [JsonSerializable(typeof(Dictionary<string, object>))]
 [JsonSerializable(typeof(Dictionary<string, object?>))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
+[JsonSerializable(typeof(long))]
+[JsonSerializable(typeof(int))]
+[JsonSerializable(typeof(string))]
+[JsonSerializable(typeof(bool))]
+[JsonSerializable(typeof(double))]
+[JsonSerializable(typeof(object))]
 internal partial class AuthJsonContext : JsonSerializerContext
 {
 }
@@ -63,6 +72,27 @@ public sealed class CookieStore
     /// Gets the Cookie header string for the given URL.
     /// </summary>
     public string GetCookieHeader(string url) => _jar.GetCookieHeader(new Uri(url));
+
+    /// <summary>
+    /// Gets a combined Cookie header containing all cookies stored in the container.
+    /// </summary>
+    public string GetAllCookiesHeader()
+    {
+        HashSet<string> seenKeys = new(StringComparer.OrdinalIgnoreCase);
+        System.Text.StringBuilder sb = new();
+        foreach (Cookie c in _jar.GetAllCookies())
+        {
+            if (!string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.Value) && seenKeys.Add(c.Name))
+            {
+                if (sb.Length > 0)
+                {
+                    _ = sb.Append("; ");
+                }
+                _ = sb.Append(c.Name).Append('=').Append(c.Value);
+            }
+        }
+        return sb.ToString();
+    }
 
     /// <summary>
     /// Serializes cookies to tough-cookie compatible JSON format.
