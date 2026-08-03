@@ -18,9 +18,14 @@ namespace Zalo.Net.Endpoints;
 public static class AttachmentApis
 {
     private const int ChunkSize = 5 * 1024 * 1024;
-    private const string DefaultChatHost = "https://chat-wpa.chat.zalo.me";
-    private const string DefaultGroupHost = "https://group-wpa.chat.zalo.me";
     private const string DefaultFileHost = "https://file-wpa.chat.zalo.me";
+
+    private sealed record UploadResult(
+        string PhotoId,
+        string NormalUrl,
+        string HdUrl,
+        string ThumbUrl,
+        int TotalSize);
 
     private static string GetHost(ZaloSession session, string serviceKey, string defaultHost)
     {
@@ -68,7 +73,10 @@ public static class AttachmentApis
                         }
                         return decodedJson;
                     }
-                    catch { }
+                    catch
+                    {
+                        // Fallback to raw node
+                    }
                 }
             }
         }
@@ -86,11 +94,11 @@ public static class AttachmentApis
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(fileBytes);
 
-        string photoId = await UploadImageAsync(http, session, threadId, threadType, fileBytes, fileName, ct).ConfigureAwait(false);
-        return await SendImageMessageAsync(http, session, threadId, threadType, photoId, caption ?? "", ct).ConfigureAwait(false);
+        UploadResult upload = await UploadImageAsync(http, session, threadId, threadType, fileBytes, fileName, ct).ConfigureAwait(false);
+        return await SendImageMessageAsync(http, session, threadId, threadType, upload, caption ?? "", ct).ConfigureAwait(false);
     }
 
-    private static async Task<string> UploadImageAsync(
+    private static async Task<UploadResult> UploadImageAsync(
         ZaloHttpClient http, ZaloSession session,
         string threadId, ZaloThreadType threadType, byte[] fileBytes, string fileName,
         CancellationToken ct)
@@ -109,7 +117,10 @@ public static class AttachmentApis
         long clientId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
         string baseUrl = MakeUrl(fileBaseUrl, urlPath);
-        string? lastPhotoId = null;
+        string? photoId = null;
+        string? normalUrl = null;
+        string? hdUrl = null;
+        string? thumbUrl = null;
 
         for (int i = 0; i < totalChunk; i++)
         {
@@ -160,47 +171,61 @@ public static class AttachmentApis
             }
 
             JsonNode? dataNode = DecryptDataNode(session, json) ?? json?["data"];
-            lastPhotoId = dataNode?["photoId"]?.GetValue<string>()
-                       ?? dataNode?["fileId"]?.GetValue<string>()
-                       ?? dataNode?["photo_id"]?.GetValue<string>();
+            photoId = dataNode?["photoId"]?.GetValue<string>() ?? dataNode?["fileId"]?.GetValue<string>();
+            normalUrl = dataNode?["normalUrl"]?.GetValue<string>() ?? dataNode?["url"]?.GetValue<string>();
+            hdUrl = dataNode?["hdUrl"]?.GetValue<string>() ?? normalUrl;
+            thumbUrl = dataNode?["thumbUrl"]?.GetValue<string>() ?? normalUrl;
         }
 
-        if (string.IsNullOrEmpty(lastPhotoId) || lastPhotoId == "-1")
+        if (string.IsNullOrEmpty(photoId) || photoId == "-1")
         {
             throw new ZaloApiException("Failed to get photoId after upload");
         }
 
-        return lastPhotoId;
+        return new UploadResult(photoId, normalUrl ?? "", hdUrl ?? "", thumbUrl ?? "", totalSize);
     }
 
     private static async Task<ZaloSendResult> SendImageMessageAsync(
         ZaloHttpClient http, ZaloSession session,
-        string threadId, ZaloThreadType threadType, string photoId, string text,
+        string threadId, ZaloThreadType threadType, UploadResult upload, string text,
         CancellationToken ct)
     {
         bool isGroup = threadType == ZaloThreadType.Group;
-        string host = isGroup ? GetHost(session, "group", DefaultGroupHost) : GetHost(session, "chat", DefaultChatHost);
+        string fileHost = GetHost(session, "file", DefaultFileHost);
         string path = isGroup ? "/api/group/photo_original/send" : "/api/message/photo_original/send";
-        string url = MakeUrl(host, path);
+        string url = MakeUrl(fileHost, path);
 
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         JsonObject payload = isGroup
             ? new JsonObject
             {
-                ["photoId"] = photoId,
-                ["clientId"] = now,
+                ["photoId"] = upload.PhotoId,
+                ["clientId"] = now.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ["desc"] = text,
                 ["grid"] = threadId,
-                ["ttl"] = 0
+                ["rawUrl"] = upload.NormalUrl,
+                ["hdUrl"] = upload.HdUrl,
+                ["thumbUrl"] = upload.ThumbUrl,
+                ["oriUrl"] = upload.NormalUrl,
+                ["hdSize"] = upload.TotalSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["zsource"] = -1,
+                ["ttl"] = 0,
+                ["jcp"] = "{\"convertible\":\"jxl\"}"
             }
             : new JsonObject
             {
-                ["photoId"] = photoId,
-                ["clientId"] = now,
+                ["photoId"] = upload.PhotoId,
+                ["clientId"] = now.ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ["desc"] = text,
                 ["toid"] = threadId,
-                ["imei"] = session.Material.Imei,
-                ["ttl"] = 0
+                ["rawUrl"] = upload.NormalUrl,
+                ["hdUrl"] = upload.HdUrl,
+                ["thumbUrl"] = upload.ThumbUrl,
+                ["normalUrl"] = upload.NormalUrl,
+                ["hdSize"] = upload.TotalSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["zsource"] = -1,
+                ["ttl"] = 0,
+                ["jcp"] = "{\"convertible\":\"jxl\"}"
             };
 
         string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
