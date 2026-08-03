@@ -181,18 +181,22 @@ internal static class Program
         while (!ct.IsCancellationRequested)
         {
             System.Console.WriteLine();
-            ConsoleTable menuTable = new("STT", "TÊN CHỨC NĂNG");
-            menuTable.AddRow("1", "Gửi tin nhắn văn bản (Cá nhân / Nhóm)");
-            menuTable.AddRow("2", "Danh sách bạn bè");
-            menuTable.AddRow("3", "Tra cứu thông tin người dùng qua SĐT");
-            menuTable.AddRow("4", "Gửi hình ảnh đính kèm");
-            menuTable.AddRow("5", "Tải lịch sử tin nhắn cũ");
-            menuTable.AddRow("6", "Tạo nhóm chat mới");
-            menuTable.AddRow("7", "Thêm thành viên vào nhóm");
-            menuTable.AddRow("8", "Xóa thành viên khỏi nhóm");
-            menuTable.AddRow("9", "Gửi lời mời kết bạn (qua SĐT / UID)");
-            menuTable.AddRow("10", "Đăng xuất khỏi phiên hiện tại");
-            menuTable.AddRow("Q", "Thoát khỏi chương trình");
+            ConsoleTable menuTable = new("STT", "CHỨC NĂNG HỆ THỐNG ZALO.NET");
+            menuTable.AddRow("--", "[TIN NHẮN & TRUYỀN THÔNG]");
+            menuTable.AddRow("1", "  Gửi tin nhắn văn bản (Cá nhân / Nhóm)");
+            menuTable.AddRow("2", "  Gửi hình ảnh đính kèm");
+            menuTable.AddRow("3", "  Tải lịch sử tin nhắn nhóm");
+            menuTable.AddRow("--", "[QUẢN LÝ BẠN BÈ]");
+            menuTable.AddRow("4", "  Danh sách bạn bè");
+            menuTable.AddRow("5", "  Tra cứu thông tin người dùng qua SĐT");
+            menuTable.AddRow("6", "  Gửi lời mời kết bạn (qua SĐT / UID)");
+            menuTable.AddRow("--", "[QUẢN LÝ NHÓM CHAT]");
+            menuTable.AddRow("7", "  Tạo nhóm chat mới");
+            menuTable.AddRow("8", "  Thêm thành viên vào nhóm");
+            menuTable.AddRow("9", "  Xóa thành viên khỏi nhóm");
+            menuTable.AddRow("--", "[HỆ THỐNG]");
+            menuTable.AddRow("10", " Đăng xuất khỏi phiên hiện tại");
+            menuTable.AddRow("Q", "  Thoát khỏi chương trình");
             menuTable.Print(ConsoleColor.DarkCyan, ConsoleColor.Yellow);
 
             System.Console.Write("[NHẬP] Lựa chọn của bạn: ");
@@ -209,35 +213,35 @@ internal static class Program
                     break;
 
                 case "2":
-                    await HandleGetFriendsAsync(session, ct).ConfigureAwait(false);
-                    break;
-
-                case "3":
-                    await HandleFindUserAsync(session, ct).ConfigureAwait(false);
-                    break;
-
-                case "4":
                     await HandleSendImageAsync(session, ct).ConfigureAwait(false);
                     break;
 
-                case "5":
+                case "3":
                     await HandleGetHistoryAsync(session, ct).ConfigureAwait(false);
                     break;
 
+                case "4":
+                    await HandleGetFriendsAsync(session, ct).ConfigureAwait(false);
+                    break;
+
+                case "5":
+                    await HandleFindUserAsync(session, ct).ConfigureAwait(false);
+                    break;
+
                 case "6":
-                    await HandleCreateGroupAsync(session, ct).ConfigureAwait(false);
+                    await HandleSendFriendRequestAsync(session, ct).ConfigureAwait(false);
                     break;
 
                 case "7":
-                    await HandleAddUserToGroupAsync(session, ct).ConfigureAwait(false);
+                    await HandleCreateGroupAsync(session, ct).ConfigureAwait(false);
                     break;
 
                 case "8":
-                    await HandleRemoveUserFromGroupAsync(session, ct).ConfigureAwait(false);
+                    await HandleAddUserToGroupAsync(session, ct).ConfigureAwait(false);
                     break;
 
                 case "9":
-                    await HandleSendFriendRequestAsync(session, ct).ConfigureAwait(false);
+                    await HandleRemoveUserFromGroupAsync(session, ct).ConfigureAwait(false);
                     break;
 
                 case "10":
