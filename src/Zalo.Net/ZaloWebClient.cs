@@ -53,7 +53,7 @@ public sealed class ZaloWebClient : IDisposable
         image = image.Replace("data:image/png;base64,", "", StringComparison.Ordinal);
 
         Guid sessionId = Guid.NewGuid();
-        DateTimeOffset expiresAt = DateTimeOffset.UtcNow.AddMinutes(5);
+        DateTimeOffset expiresAt = DateTimeOffset.UtcNow.AddSeconds(100);
 
         QrSession qrSession = new(http, version, code, ua, expiresAt, sessionId);
         lock (_lock)
@@ -186,8 +186,8 @@ public sealed class ZaloWebClient : IDisposable
                 }
                 if (errorCode != 0)
                 {
-                    await Task.Delay(3000, sessionCt).ConfigureAwait(false);
-                    continue;
+                    lock (_lock) { session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Expired); }
+                    return;
                 }
 
                 await LoginQrApis.CheckSessionAsync(session.Http, sessionCt).ConfigureAwait(false);
