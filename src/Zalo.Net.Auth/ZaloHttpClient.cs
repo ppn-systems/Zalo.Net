@@ -150,18 +150,15 @@ public sealed class ZaloHttpClient : IDisposable
         _ = req.Headers.TryAddWithoutValidation("User-Agent", _userAgent);
 
         string cookieHeader = _cookies.GetCookieHeader(currentUrl);
-        string allCookies = _cookies.GetAllCookiesHeader();
-
-        if (string.IsNullOrEmpty(cookieHeader))
+        if (string.IsNullOrEmpty(cookieHeader) && !string.IsNullOrEmpty(origin))
         {
-            cookieHeader = allCookies;
-        }
-        else if (!string.IsNullOrEmpty(allCookies))
-        {
-            cookieHeader = $"{cookieHeader}; {allCookies}";
+            cookieHeader = _cookies.GetCookieHeader(origin);
         }
 
-        _ = req.Headers.TryAddWithoutValidation("Cookie", cookieHeader);
+        if (!string.IsNullOrEmpty(cookieHeader))
+        {
+            _ = req.Headers.TryAddWithoutValidation("Cookie", cookieHeader);
+        }
     }
 
     /// <inheritdoc/>
