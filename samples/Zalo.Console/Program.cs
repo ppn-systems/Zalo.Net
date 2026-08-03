@@ -190,7 +190,8 @@ internal static class Program
             menuTable.AddRow("6", "Tạo nhóm chat mới");
             menuTable.AddRow("7", "Thêm thành viên vào nhóm");
             menuTable.AddRow("8", "Xóa thành viên khỏi nhóm");
-            menuTable.AddRow("9", "Đăng xuất khỏi phiên hiện tại");
+            menuTable.AddRow("9", "Gửi lời mời kết bạn (qua SĐT / UID)");
+            menuTable.AddRow("10", "Đăng xuất khỏi phiên hiện tại");
             menuTable.AddRow("Q", "Thoát khỏi chương trình");
             menuTable.Print(ConsoleColor.DarkCyan, ConsoleColor.Yellow);
 
@@ -236,6 +237,10 @@ internal static class Program
                     break;
 
                 case "9":
+                    await HandleSendFriendRequestAsync(session, ct).ConfigureAwait(false);
+                    break;
+
+                case "10":
                     if (File.Exists(ConsoleConstants.SessionFilePath))
                     {
                         File.Delete(ConsoleConstants.SessionFilePath);
@@ -743,6 +748,53 @@ internal static class Program
         catch (Exception ex)
         {
             System.Console.WriteLine($"[LỖI] Không thể xóa thành viên khỏi nhóm: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleSendFriendRequestAsync(ZaloSession session, CancellationToken ct)
+    {
+        System.Console.Write("[NHẬP] Nhập SĐT hoặc User ID (UID) người dùng muốn kết bạn: ");
+        string? input = System.Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(input))
+        {
+            return;
+        }
+
+        string userId = input;
+        if (!input.All(char.IsDigit) || input.Length < 15)
+        {
+            try
+            {
+                System.Console.WriteLine("[THÔNG BÁO] Đang tìm kiếm thông tin người dùng qua SĐT...");
+                ZaloUserProfile profile = await ZaloWebClient.FindUserByPhoneAsync(session, input, ct).ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(profile.Uid))
+                {
+                    userId = profile.Uid;
+                    System.Console.WriteLine($"[THÔNG BÁO] Đã tìm thấy người dùng: {profile.DisplayName} (UID: {userId})");
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"[CẢNH BÁO] Không thể tìm UID qua SĐT: {ex.Message}");
+            }
+        }
+
+        System.Console.Write("[NHẬP] Nhập lời nhắn kết bạn (mặc định: 'Xin chào, mình kết bạn nhé!'): ");
+        string? msg = System.Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(msg))
+        {
+            msg = "Xin chào, mình kết bạn nhé!";
+        }
+
+        try
+        {
+            System.Console.WriteLine("[THÔNG BÁO] Đang gửi lời mời kết bạn...");
+            await ZaloWebClient.SendFriendRequestAsync(session, userId, msg, ct).ConfigureAwait(false);
+            System.Console.WriteLine($"[THÀNH CÔNG] Đã gửi lời mời kết bạn thành công tới UID: {userId}");
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[LỖI] Không thể gửi lời mời kết bạn: {ex.Message}");
         }
     }
 
