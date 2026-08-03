@@ -85,34 +85,26 @@ public static class MessageHistoryApis
             throw new ZaloApiException("Zalo Web API chỉ hỗ trợ tải lịch sử tin nhắn đối với Nhóm (Group). Tin nhắn cá nhân (DM) được đồng bộ qua WebSocket thời gian thực.");
         }
 
-        Console.WriteLine($"[DEBUG LOG] Inspecting session.ServiceMap entries for session {session.Material.Imei}:");
-        foreach (KeyValuePair<string, string[]> kvp in session.ServiceMap)
-        {
-            Console.WriteLine($"[DEBUG LOG]   ServiceMap['{kvp.Key}'] = [{string.Join(", ", kvp.Value)}]");
-        }
-
         List<string> hostsToTry = [];
-        foreach (KeyValuePair<string, string[]> kvp in session.ServiceMap)
+        string[] targetKeys = ["group", "group_cloud_message", "conversation", "chat"];
+        foreach (string key in targetKeys)
         {
-            foreach (string h in kvp.Value)
+            if (session.ServiceMap.TryGetValue(key, out string[]? hosts))
             {
-                if (!string.IsNullOrWhiteSpace(h))
+                foreach (string h in hosts)
                 {
-                    hostsToTry.Add(h.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? h : $"https://{h}");
+                    if (!string.IsNullOrWhiteSpace(h))
+                    {
+                        hostsToTry.Add(h.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? h : $"https://{h}");
+                    }
                 }
             }
         }
         hostsToTry.Add(DefaultGroupHost);
-        hostsToTry.Add("https://group-wpa.chat.zalo.me");
-        hostsToTry.Add("https://chat-wpa.chat.zalo.me");
 
         string[] candidatePaths = [
             "/api/group/history",
-            "/api/group/getmsg",
-            "/api/group/getmsglog",
-            "/api/group/lastmessages",
-            "/api/conversation/history",
-            "/api/message/history"
+            "/api/group/getmsg"
         ];
 
         JsonObject payload = new()
@@ -134,15 +126,18 @@ public static class MessageHistoryApis
             foreach (string path in candidatePaths)
             {
                 string baseUrl = MakeUrl(host, path);
+                using CancellationTokenSource timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeoutCts.CancelAfter(TimeSpan.FromSeconds(4));
 
                 // Try GET
                 try
                 {
                     string reqUrlGet = $"{baseUrl}&params={Uri.EscapeDataString(encryptedParams)}";
-                    using HttpResponseMessage respGet = await http.RequestAsync(reqUrlGet, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+                    Console.WriteLine($"[DEBUG LOG] GET {host}{path} ...");
+                    using HttpResponseMessage respGet = await http.RequestAsync(reqUrlGet, HttpMethod.Get, ct: timeoutCts.Token).ConfigureAwait(false);
                     if (respGet.IsSuccessStatusCode)
                     {
-                        JsonNode? json = await ZaloHttpClient.ReadJsonAsync(respGet, ct).ConfigureAwait(false);
+                        JsonNode? json = await ZaloHttpClient.ReadJsonAsync(respGet, timeoutCts.Token).ConfigureAwait(false);
                         int errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
                         if (errorCode == 0)
                         {
@@ -160,18 +155,19 @@ public static class MessageHistoryApis
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[DEBUG LOG] GET {host}{path} -> Exception: {ex.Message}");
+                    Console.WriteLine($"[DEBUG LOG] GET {host}{path} -> {ex.Message}");
                     lastEx = ex;
                 }
 
                 // Try POST
                 try
                 {
+                    Console.WriteLine($"[DEBUG LOG] POST {host}{path} ...");
                     using FormUrlEncodedContent postBody = new([new KeyValuePair<string, string>("params", encryptedParams)]);
-                    using HttpResponseMessage respPost = await http.RequestAsync(baseUrl, HttpMethod.Post, body: postBody, ct: ct).ConfigureAwait(false);
+                    using HttpResponseMessage respPost = await http.RequestAsync(baseUrl, HttpMethod.Post, body: postBody, ct: timeoutCts.Token).ConfigureAwait(false);
                     if (respPost.IsSuccessStatusCode)
                     {
-                        JsonNode? json = await ZaloHttpClient.ReadJsonAsync(respPost, ct).ConfigureAwait(false);
+                        JsonNode? json = await ZaloHttpClient.ReadJsonAsync(respPost, timeoutCts.Token).ConfigureAwait(false);
                         int errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
                         if (errorCode == 0)
                         {
@@ -189,7 +185,7 @@ public static class MessageHistoryApis
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[DEBUG LOG] POST {host}{path} -> Exception: {ex.Message}");
+                    Console.WriteLine($"[DEBUG LOG] POST {host}{path} -> {ex.Message}");
                     lastEx = ex;
                 }
             }
