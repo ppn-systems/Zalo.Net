@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 using System;
@@ -67,7 +67,7 @@ public sealed class ParamsEncryptorTests
     [Fact]
     public void Md5_IsLowercaseHex()
     {
-        string md5 = ParamsEncryptor.ComputeMd5Hex("abc123");
+        string md5 = Hashing.Md5Hex("abc123");
         Assert.Equal(md5.ToLowerInvariant(), md5);
         Assert.Equal(32, md5.Length);
     }

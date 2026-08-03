@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 using System;
@@ -23,17 +23,10 @@ public sealed class ParamsEncryptor
     /// <summary>
     /// Initializes a new instance of the <see cref="ParamsEncryptor"/> class.
     /// </summary>
-    public ParamsEncryptor(int type, string imei, long firstLaunchTime)
+    public ParamsEncryptor(int type, string imei, long firstLaunchTime, string? zcidExt = null)
     {
         _zcid = CreateZcid(type, imei, firstLaunchTime);
-        _zcidExt = RandomHexString();
-        this.CreateEncryptKey();
-    }
-
-    internal ParamsEncryptor(int type, string imei, long firstLaunchTime, string zcidExt)
-    {
-        _zcid = CreateZcid(type, imei, firstLaunchTime);
-        _zcidExt = zcidExt;
+        _zcidExt = zcidExt ?? RandomHexString();
         this.CreateEncryptKey();
     }
 

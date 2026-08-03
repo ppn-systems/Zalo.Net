@@ -1,6 +1,6 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 using System.Runtime.CompilerServices;
 
-[assembly: InternalsVisibleTo("Zalo.Net.WebSocket.Tests")]
+[assembly: InternalsVisibleTo("Zalo.Net.WebSocket.Tests, PublicKey=00a4000004800000140100000602000000a400005253413100080000010001005d53e4df6aee8068ce8debce445a00c9c883c1bcaa19c29972f916b578d5e6922f9fe30a37af93e5c353128eab4b852f12a5803a2dd643de0208592e56a9587d6c4d28d6e8621aa7fa2ebe653124af790f49a5be65c32d649bbd93deec326c604b4c9229fa22cf2817479f818efd5c897c521d64c8701b8d462f76ea254501f61c3fd182f9f8869567ad71441b5c5f61bf07864e63b586add9f5dd0fbe2e9ad62ec74df89e9f230d604a0f43e7e67c558ca7f45a61ab47816d077ac1f86d36e5e4b677e1a93fb86664f352cea3c3ef73df4ce26ac9a52856854d5b68249d0e34be2c94fa0ae4f06bb1e73086fe5135f89170d120f17bd0f2baaf0e705b27e5bf")]

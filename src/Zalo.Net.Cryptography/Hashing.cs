@@ -63,7 +63,7 @@ public static class Hashing
     }
 
     [SuppressMessage("Security", "CA5351:Do Not Use Broken Cryptographic Algorithms", Justification = "MD5 required by Zalo protocol specification")]
-    internal static string Md5Hex(string input)
+    public static string Md5Hex(string input)
     {
         Span<byte> hash = stackalloc byte[16];
         _ = MD5.HashData(Encoding.UTF8.GetBytes(input), hash);

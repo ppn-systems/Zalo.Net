@@ -18,7 +18,7 @@
         <IsTrimmable>true</IsTrimmable>
 
         <UseArtifactsOutput>true</UseArtifactsOutput>
-        <NoWarn>$(NoWarn);CS1591;CA5351;CA5350;CA2007;CA1031;CA2000</NoWarn>
+        <NoWarn>$(NoWarn);CS1591;CA5351;CA5350;CA2007;CA1031;CA2000;CS1700</NoWarn>
     </PropertyGroup>
 
     <PropertyGroup Condition="Exists('$(MSBuildThisFileDirectory)src/Zalo.Net.snk')">
