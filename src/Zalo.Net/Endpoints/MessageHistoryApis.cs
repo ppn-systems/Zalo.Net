@@ -97,7 +97,7 @@ public static class MessageHistoryApis
         candidateHosts.Add(DefaultGroupHost);
         candidateHosts.Add("https://tt-group2.zalo.me");
 
-        string[] candidatePaths = ["/api/group/getmsglog", "/api/group/history", "/api/group/getmsg"];
+        string[] candidatePaths = ["/api/group/history", "/api/group/getmsglog", "/api/group/lastmessages", "/api/group/getmsg"];
 
         long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 

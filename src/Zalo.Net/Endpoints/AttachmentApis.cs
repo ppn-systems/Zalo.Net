@@ -43,6 +43,19 @@ public static class AttachmentApis
         return $"{baseClean}{path}{sep}zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}";
     }
 
+    private static string? GetNodeString(JsonNode? node)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+        if (node is JsonValue val)
+        {
+            return val.ToString();
+        }
+        return node.GetValue<string>();
+    }
+
     private static JsonNode? DecryptDataNode(ZaloSession session, JsonNode? node)
     {
         if (node is null)
@@ -75,7 +88,7 @@ public static class AttachmentApis
                     }
                     catch
                     {
-                        // Fallback to raw node
+                        // Fallback to raw data node
                     }
                 }
             }
@@ -171,10 +184,10 @@ public static class AttachmentApis
             }
 
             JsonNode? dataNode = DecryptDataNode(session, json) ?? json?["data"];
-            photoId = dataNode?["photoId"]?.GetValue<string>() ?? dataNode?["fileId"]?.GetValue<string>();
-            normalUrl = dataNode?["normalUrl"]?.GetValue<string>() ?? dataNode?["url"]?.GetValue<string>();
-            hdUrl = dataNode?["hdUrl"]?.GetValue<string>() ?? normalUrl;
-            thumbUrl = dataNode?["thumbUrl"]?.GetValue<string>() ?? normalUrl;
+            photoId = GetNodeString(dataNode?["photoId"]) ?? GetNodeString(dataNode?["fileId"]) ?? GetNodeString(dataNode?["photo_id"]);
+            normalUrl = GetNodeString(dataNode?["normalUrl"]) ?? GetNodeString(dataNode?["url"]);
+            hdUrl = GetNodeString(dataNode?["hdUrl"]) ?? normalUrl;
+            thumbUrl = GetNodeString(dataNode?["thumbUrl"]) ?? normalUrl;
         }
 
         if (string.IsNullOrEmpty(photoId) || photoId == "-1")
@@ -245,8 +258,8 @@ public static class AttachmentApis
         }
 
         JsonNode? dataNode = DecryptDataNode(session, json) ?? json?["data"];
-        string msgId = dataNode?["msgId"]?.GetValue<string>()
-                    ?? dataNode?["message_id"]?.GetValue<string>()
+        string msgId = GetNodeString(dataNode?["msgId"])
+                    ?? GetNodeString(dataNode?["message_id"])
                     ?? now.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         return new ZaloSendResult(msgId);
