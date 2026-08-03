@@ -1,10 +1,5 @@
 using System;
-using System.Collections.Generic;
-using System.Globalization;
-using System.Linq;
 using System.Net.Http;
-using System.Text;
-using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
@@ -20,8 +15,24 @@ namespace Zalo.Net.Endpoints;
 /// </summary>
 public static class MessageHistoryApis
 {
-    private const string GetOldMsgsDmUrl = "https://tt-chat2.zalo.me/api/message/getoldmsg";
-    private const string GetOldMsgsGroupUrl = "https://groupms-chat2.zalo.me/api/message/getoldmsg";
+    private const string DefaultChatHost = "https://chat-wpa.chat.zalo.me";
+    private const string DefaultGroupHost = "https://group-wpa.chat.zalo.me";
+
+    private static string GetHost(ZaloSession session, string serviceKey, string defaultHost)
+    {
+        if (session.ServiceMap.TryGetValue(serviceKey, out string[]? hosts) && hosts.Length > 0)
+        {
+            return hosts[0].StartsWith("http", StringComparison.OrdinalIgnoreCase) ? hosts[0] : $"https://{hosts[0]}";
+        }
+        return defaultHost;
+    }
+
+    private static string MakeUrl(string baseUrl, string path)
+    {
+        string baseClean = baseUrl.EndsWith('/') ? baseUrl[..^1] : baseUrl;
+        string sep = path.Contains('?', StringComparison.Ordinal) ? "&" : "?";
+        return $"{baseClean}{path}{sep}zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}";
+    }
 
     /// <summary>Fetches old message history.</summary>
     public static async Task<JsonNode?> GetOldMessagesAsync(
@@ -32,50 +43,51 @@ public static class MessageHistoryApis
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(session);
 
-        long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        bool isGroup = type == ZaloThreadType.Group;
+        string host = isGroup ? GetHost(session, "group", DefaultGroupHost) : GetHost(session, "chat", DefaultChatHost);
+        string url = MakeUrl(host, isGroup ? "/api/group/getoldmsg" : "/api/message/getoldmsg");
 
-        Dictionary<string, object> data = new()
+        JsonObject payload = new()
         {
             ["imei"] = session.Material.Imei,
             ["count"] = 50,
-            ["src"] = 1,
+            ["src"] = 1
         };
 
         if (!string.IsNullOrEmpty(lastMsgId))
         {
-            data["lastMsgId"] = lastMsgId;
+            payload["lastMsgId"] = lastMsgId;
         }
 
-        string baseUrl = type == ZaloThreadType.Group ? GetOldMsgsGroupUrl : GetOldMsgsDmUrl;
-
-        string dataJson = JsonSerializer.Serialize(data, EndpointJsonContext.Default.DictionaryStringObject);
-        string encrypted = ZaloCipher.EncodeAes(session.Material.SecretKey, dataJson);
-
-        Dictionary<string, object?> signDict = data.ToDictionary(k => k.Key, v => (object?)v.Value);
-        signDict["ts"] = ts;
-        string signKey = Hashing.GetSignKey("getoldmsg", signDict);
-
-        Dictionary<string, string> queryParams = new()
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
         {
-            ["params"] = encrypted,
-            ["ts"] = ts.ToString(CultureInfo.InvariantCulture),
-            ["signkey"] = signKey,
-            ["nretry"] = "0",
-            ["type"] = ZaloHttpClient.ApiType.ToString(CultureInfo.InvariantCulture),
-            ["client_version"] = ZaloHttpClient.ApiVersion.ToString(CultureInfo.InvariantCulture),
-        };
-
-        StringBuilder sb = new StringBuilder(baseUrl).Append('?');
-        foreach (KeyValuePair<string, string> kvp in queryParams)
-        {
-            _ = sb.Append(Uri.EscapeDataString(kvp.Key)).Append('=').Append(Uri.EscapeDataString(kvp.Value)).Append('&');
+            throw new ZaloApiException("Failed to encrypt getOldMessages payload");
         }
 
-        string fullUrl = sb.ToString().TrimEnd('&');
-        HttpResponseMessage resp = await http.RequestAsync(fullUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
-        JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false)
+                      ?? throw new ZaloApiException("Invalid JSON response from getOldMessages");
 
-        return (json?["error_code"]?.GetValue<int>() ?? -1) != 0
-            ? throw new ZaloApiException(json?["error_message"]?.GetValue<string>() ?? "getOldMessages failed") : (json?["data"]);
+        int errorCode = node["error_code"]?.GetValue<int>() ?? -1;
+        if (errorCode != 0)
+        {
+            string msg = node["error_message"]?.GetValue<string>() ?? $"Error {errorCode}";
+            throw new ZaloApiException(msg, errorCode);
+        }
+
+        JsonNode? dataNode = node["data"];
+        if (dataNode?.GetValueKind() == System.Text.Json.JsonValueKind.String)
+        {
+            string encStr = dataNode.GetValue<string>();
+            string? decrypted = ZaloCipher.DecodeAes(session.Material.SecretKey, encStr);
+            if (!string.IsNullOrWhiteSpace(decrypted))
+            {
+                try { dataNode = JsonNode.Parse(decrypted); } catch { }
+            }
+        }
+
+        return dataNode;
     }
 }
