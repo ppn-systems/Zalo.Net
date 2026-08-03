@@ -194,7 +194,9 @@ internal static class FriendApis
                   ?? data?["userId"]?.GetValue<string>()
                   ?? data?["fId"]?.GetValue<string>()
                   ?? "";
-        string displayName = data?["displayName"]?.GetValue<string>()
+        string displayName = data?["zalo_name"]?.GetValue<string>()
+                           ?? data?["display_name"]?.GetValue<string>()
+                           ?? data?["displayName"]?.GetValue<string>()
                            ?? data?["zaloName"]?.GetValue<string>()
                            ?? data?["dpName"]?.GetValue<string>()
                            ?? data?["dName"]?.GetValue<string>()

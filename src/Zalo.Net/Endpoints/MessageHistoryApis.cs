@@ -34,30 +34,32 @@ public static class MessageHistoryApis
         return $"{baseClean}{path}{sep}zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}";
     }
 
-    /// <summary>Fetches old message history.</summary>
+    /// <summary>Fetches old message history for a direct chat or group.</summary>
     public static async Task<JsonNode?> GetOldMessagesAsync(
         ZaloHttpClient http, ZaloSession session,
-        ZaloThreadType type, string? lastMsgId,
-        CancellationToken ct)
+        string threadId, ZaloThreadType type, int count = 50,
+        CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(session);
 
         bool isGroup = type == ZaloThreadType.Group;
         string host = isGroup ? GetHost(session, "group", DefaultGroupHost) : GetHost(session, "chat", DefaultChatHost);
-        string url = MakeUrl(host, isGroup ? "/api/group/getoldmsg" : "/api/message/getoldmsg");
+        string path = isGroup ? "/api/group/history" : "/api/message/history";
+        string baseUrl = MakeUrl(host, path);
 
-        JsonObject payload = new()
-        {
-            ["imei"] = session.Material.Imei,
-            ["count"] = 50,
-            ["src"] = 1
-        };
-
-        if (!string.IsNullOrEmpty(lastMsgId))
-        {
-            payload["lastMsgId"] = lastMsgId;
-        }
+        JsonObject payload = isGroup
+            ? new JsonObject
+            {
+                ["grid"] = threadId,
+                ["count"] = count > 0 ? count : 50
+            }
+            : new JsonObject
+            {
+                ["toid"] = threadId,
+                ["count"] = count > 0 ? count : 50,
+                ["imei"] = session.Material.Imei
+            };
 
         string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
         if (string.IsNullOrEmpty(encryptedParams))
@@ -65,7 +67,7 @@ public static class MessageHistoryApis
             throw new ZaloApiException("Failed to encrypt getOldMessages payload");
         }
 
-        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        string requestUrl = $"{baseUrl}&params={Uri.EscapeDataString(encryptedParams)}";
         using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
         JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false)
                       ?? throw new ZaloApiException("Invalid JSON response from getOldMessages");

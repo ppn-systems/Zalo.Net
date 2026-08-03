@@ -331,15 +331,20 @@ public sealed class ZaloWebClient : IDisposable
         return new ZaloUserProfile(uid, name, avatar);
     }
 
-    /// <summary>Requests historical message backfill.</summary>
-    public static async Task RequestOldMessagesAsync(ZaloSession session, ZaloThreadType type,
-        string? lastMsgId, CancellationToken ct)
+    /// <summary>Requests historical message backfill for a thread.</summary>
+    public static async Task<JsonNode?> GetOldMessagesAsync(ZaloSession session, string threadId, ZaloThreadType type,
+        int count = 50, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(session);
 
         using ZaloHttpClient http = CreateHttpForSession(session.Material);
-        _ = await MessageHistoryApis.GetOldMessagesAsync(http, session, type, lastMsgId, ct).ConfigureAwait(false);
+        return await MessageHistoryApis.GetOldMessagesAsync(http, session, threadId, type, count, ct).ConfigureAwait(false);
     }
+
+    /// <summary>Requests historical message backfill.</summary>
+    public static async Task RequestOldMessagesAsync(ZaloSession session, string threadId, ZaloThreadType type,
+        int count = 50, CancellationToken ct = default) =>
+        _ = await GetOldMessagesAsync(session, threadId, type, count, ct).ConfigureAwait(false);
 
     #region Group Management (Group 2)
 

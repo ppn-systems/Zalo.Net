@@ -378,9 +378,12 @@ internal static class Program
 
         try
         {
-            System.Console.WriteLine("[THÔNG BÁO] Đang tải lịch sử tin nhắn...");
-            await ZaloWebClient.RequestOldMessagesAsync(session, threadType, lastMsgId: null, ct).ConfigureAwait(false);
-            System.Console.WriteLine($"[THÀNH CÔNG] Đã gửi yêu cầu tải lịch sử tin nhắn.");
+            JsonNode? history = await ZaloWebClient.GetOldMessagesAsync(session, targetId, threadType, count: 50, ct).ConfigureAwait(false);
+            System.Console.WriteLine($"[THÀNH CÔNG] Đã tải lịch sử tin nhắn:");
+            if (history is not null)
+            {
+                System.Console.WriteLine(history.ToJsonString());
+            }
         }
         catch (Exception ex)
         {
