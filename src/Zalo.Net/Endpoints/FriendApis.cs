@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 using System;
@@ -32,7 +32,7 @@ internal static class FriendApis
     {
         string baseClean = baseUrl.EndsWith('/') ? baseUrl[..^1] : baseUrl;
         string sep = path.Contains('?', StringComparison.Ordinal) ? "&" : "?";
-        return $"{baseClean}{path}{sep}zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}";
+        return $"{baseClean}{path}{sep}zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}";
     }
 
     private static JsonNode? DecryptDataNode(ZaloSession session, JsonNode? node)

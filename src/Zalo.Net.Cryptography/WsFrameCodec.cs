@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 using System;
@@ -11,9 +11,7 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
-using Org.BouncyCastle.Crypto.Engines;
-using Org.BouncyCastle.Crypto.Modes;
-using Org.BouncyCastle.Crypto.Parameters;
+using System.Security.Cryptography;
 
 namespace Zalo.Net.Cryptography;
 
@@ -107,18 +105,19 @@ public static class WsFrameCodec
 
     private static byte[] AesGcmDecrypt(byte[] key, byte[] nonce, byte[] aad, byte[] ctWithTag)
     {
-        GcmBlockCipher cipher = new(new AesEngine());
-        AeadParameters parameters = new(
-            new KeyParameter(key),
-            macSize: 128,
-            nonce: nonce,
-            associatedText: aad);
-        cipher.Init(forEncryption: false, parameters);
+        if (ctWithTag.Length < 16)
+        {
+            throw new InvalidOperationException("Ciphertext with tag must be at least 16 bytes");
+        }
 
-        byte[] output = new byte[cipher.GetOutputSize(ctWithTag.Length)];
-        int len = cipher.ProcessBytes(ctWithTag, 0, ctWithTag.Length, output, 0);
-        _ = cipher.DoFinal(output, len);
-        return output;
+        ReadOnlySpan<byte> actualNonce = nonce.Length > 12 ? nonce.AsSpan(0, 12) : nonce;
+        ReadOnlySpan<byte> ciphertext = ctWithTag.AsSpan(0, ctWithTag.Length - 16);
+        ReadOnlySpan<byte> tag = ctWithTag.AsSpan(ctWithTag.Length - 16, 16);
+
+        using AesGcm gcm = new(key, 16);
+        byte[] plaintext = new byte[ciphertext.Length];
+        gcm.Decrypt(actualNonce, ciphertext, tag, plaintext, aad);
+        return plaintext;
     }
 
     private static async Task<string> InflateBase64Async(string base64, CancellationToken ct)

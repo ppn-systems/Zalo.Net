@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 using System;
@@ -9,9 +9,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
-using Org.BouncyCastle.Crypto.Engines;
-using Org.BouncyCastle.Crypto.Modes;
-using Org.BouncyCastle.Crypto.Parameters;
 using Xunit;
 
 namespace Zalo.Net.Cryptography.Tests;
@@ -155,18 +152,16 @@ public sealed class WsFrameCodecTests
         RandomNumberGenerator.Fill(iv);
         RandomNumberGenerator.Fill(aad);
 
-        GcmBlockCipher cipher = new(new AesEngine());
-        AeadParameters parameters = new(new KeyParameter(keyBytes), 128, iv, aad);
-        cipher.Init(true, parameters);
+        using AesGcm gcm = new(keyBytes, 16);
+        byte[] ciphertext = new byte[plainBytes.Length];
+        byte[] tag = new byte[16];
+        gcm.Encrypt(iv.AsSpan(0, 12), plainBytes, ciphertext, tag, aad);
 
-        byte[] ctWithTag = new byte[cipher.GetOutputSize(plainBytes.Length)];
-        int len = cipher.ProcessBytes(plainBytes, 0, plainBytes.Length, ctWithTag, 0);
-        _ = cipher.DoFinal(ctWithTag, len);
-
-        byte[] frame = new byte[16 + 16 + ctWithTag.Length];
+        byte[] frame = new byte[16 + 16 + ciphertext.Length + 16];
         iv.CopyTo(frame, 0);
         aad.CopyTo(frame, 16);
-        ctWithTag.CopyTo(frame, 32);
+        ciphertext.CopyTo(frame, 32);
+        tag.CopyTo(frame, 32 + ciphertext.Length);
 
         return (frame, keyBytes);
     }
