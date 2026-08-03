@@ -26,12 +26,16 @@ public sealed class ZaloWsListener
     private readonly Action<ZaloSessionStatusChanged> _onStatus;
     private readonly Action<ZaloLogLevel, string>? _log;
 
+    /// <summary>Gets or sets the send throttle function.</summary>
     public Func<CancellationToken, Task>? SendThrottle { get; set; }
 
     private const int InitialBufferSize = 4 * 1024;
     private const int CloseCodeDuplicate = 3000;
     private const int CloseCodeKicked = 3003;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ZaloWsListener"/> class.
+    /// </summary>
     public ZaloWsListener(
         ZaloSession session,
         Action<ZaloMessageEvent> onMessage,
@@ -44,16 +48,28 @@ public sealed class ZaloWsListener
         _log = log;
     }
 
-    public enum DisconnectReason { Clean, Transient, Duplicate, SessionExpired }
+    /// <summary>Disconnect reason enum.</summary>
+    public enum DisconnectReason
+    {
+        /// <summary>Clean disconnection.</summary>
+        Clean,
+        /// <summary>Transient network disconnection.</summary>
+        Transient,
+        /// <summary>Duplicate connection login elsewhere.</summary>
+        Duplicate,
+        /// <summary>Session expired.</summary>
+        SessionExpired
+    }
 
+    /// <summary>Runs the WebSocket receive loop.</summary>
     public async Task<DisconnectReason> RunAsync(string wsUrl, CancellationToken ct)
     {
-        using var ws = new ClientWebSocket();
-        ConfigureWs(ws);
+        using ClientWebSocket ws = new();
+        this.ConfigureWs(ws);
 
         try
         {
-            await ws.ConnectAsync(new Uri(wsUrl), ct);
+            await ws.ConnectAsync(new Uri(wsUrl), ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -68,13 +84,13 @@ public sealed class ZaloWsListener
         _onStatus(new ZaloSessionStatusChanged(_session.Uid, ZaloConnectionStatus.Connected));
         _log?.Invoke(ZaloLogLevel.Information, $"Zalo WS connected: uid={_session.Uid}");
 
-        using var pingCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var pingTask = PingLoopAsync(ws, _session.PingIntervalMs, pingCts.Token);
+        using CancellationTokenSource pingCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        Task pingTask = this.PingLoopAsync(ws, _session.PingIntervalMs, pingCts.Token);
 
         DisconnectReason reason;
         try
         {
-            reason = await ReceiveLoopAsync(ws, ct);
+            reason = await this.ReceiveLoopAsync(ws, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -87,22 +103,22 @@ public sealed class ZaloWsListener
         }
         finally
         {
-            await pingCts.CancelAsync();
-            try { await pingTask; } catch { /* ignore */ }
+            await pingCts.CancelAsync().ConfigureAwait(false);
+            try { await pingTask.ConfigureAwait(false); } catch { /* ignore */ }
 
             if (ws.State == WebSocketState.Open)
             {
-                try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None); }
+                try { await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None).ConfigureAwait(false); }
                 catch { /* ignore */ }
             }
         }
 
-        var finalStatus = reason switch
+        ZaloConnectionStatus finalStatus = reason switch
         {
+            DisconnectReason.Clean => ZaloConnectionStatus.Disconnected,
+            DisconnectReason.Transient => ZaloConnectionStatus.Disconnected,
             DisconnectReason.Duplicate => ZaloConnectionStatus.DuplicateConnection,
             DisconnectReason.SessionExpired => ZaloConnectionStatus.SessionExpired,
-            DisconnectReason.Clean => throw new NotImplementedException(),
-            DisconnectReason.Transient => throw new NotImplementedException(),
             _ => ZaloConnectionStatus.Disconnected,
         };
         _onStatus(new ZaloSessionStatusChanged(_session.Uid, finalStatus));
@@ -111,21 +127,24 @@ public sealed class ZaloWsListener
 
     private void ConfigureWs(ClientWebSocket ws)
     {
-        var ua = string.IsNullOrEmpty(_session.Material.UserAgent)
+        string ua = string.IsNullOrEmpty(_session.Material.UserAgent)
             ? DefaultUserAgent
             : _session.Material.UserAgent;
         ws.Options.SetRequestHeader("User-Agent", ua);
-        ws.Options.SetRequestHeader("Cookie", ExtractCookieHeader());
+        ws.Options.SetRequestHeader("Cookie", this.ExtractCookieHeader());
         ws.Options.SetRequestHeader("Origin", "https://chat.zalo.me");
         ws.Options.SetRequestHeader("Accept-Language", "vi-VN,vi;q=0.9");
     }
 
     private string ExtractCookieHeader()
     {
-        if (string.IsNullOrEmpty(_session.Material.CookiesJson)) return "";
+        if (string.IsNullOrEmpty(_session.Material.CookiesJson))
+        {
+            return "";
+        }
         try
         {
-            var store = CookieStore.FromJson(_session.Material.CookiesJson);
+            CookieStore store = CookieStore.FromJson(_session.Material.CookiesJson);
             return store.GetCookieHeader("https://chat.zalo.me");
         }
         catch { return ""; }
@@ -135,20 +154,25 @@ public sealed class ZaloWsListener
 
     private async Task<DisconnectReason> ReceiveLoopAsync(ClientWebSocket ws, CancellationToken ct)
     {
-        var state = new CipherState();
-        var buffer = ArrayPool<byte>.Shared.Rent(InitialBufferSize);
+        CipherState state = new();
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(InitialBufferSize);
         try
         {
             while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
             {
-                var (frameBytes, msgType) = await ReceiveFullFrameAsync(ws, buffer, ct);
+                (byte[] frameBytes, WebSocketMessageType msgType) = await ReceiveFullFrameAsync(ws, buffer, ct).ConfigureAwait(false);
 
                 if (msgType == WebSocketMessageType.Close)
+                {
                     return InterpretCloseCode(ws);
+                }
 
-                if (msgType != WebSocketMessageType.Binary || frameBytes.Length < 4) continue;
+                if (msgType != WebSocketMessageType.Binary || frameBytes.Length < 4)
+                {
+                    continue;
+                }
 
-                await DispatchFrameAsync(frameBytes, state, ct);
+                await this.DispatchFrameAsync(frameBytes, state, ct).ConfigureAwait(false);
             }
         }
         finally
@@ -160,7 +184,7 @@ public sealed class ZaloWsListener
 
     private static DisconnectReason InterpretCloseCode(ClientWebSocket ws)
     {
-        var code = (int?)ws.CloseStatus;
+        int? code = (int?)ws.CloseStatus;
         return code switch
         {
             (int)WebSocketCloseStatus.NormalClosure => DisconnectReason.Clean,
@@ -173,23 +197,32 @@ public sealed class ZaloWsListener
     private static async Task<(byte[] Bytes, WebSocketMessageType Type)> ReceiveFullFrameAsync(
         ClientWebSocket ws, byte[] buf, CancellationToken ct)
     {
-        var segments = new List<byte[]>();
-        var total = 0;
+        List<byte[]> segments = [];
+        int total = 0;
 
         while (true)
         {
-            var result = await ws.ReceiveAsync(new ArraySegment<byte>(buf), ct);
+            WebSocketReceiveResult result = await ws.ReceiveAsync(new ArraySegment<byte>(buf), ct).ConfigureAwait(false);
             segments.Add([.. buf[..result.Count]]);
             total += result.Count;
 
             if (result.EndOfMessage)
             {
                 if (result.MessageType == WebSocketMessageType.Close)
+                {
                     return ([], WebSocketMessageType.Close);
-                if (segments.Count == 1) return (segments[0], result.MessageType);
-                var out_ = new byte[total];
-                var off = 0;
-                foreach (var s in segments) { s.CopyTo(out_, off); off += s.Length; }
+                }
+                if (segments.Count == 1)
+                {
+                    return (segments[0], result.MessageType);
+                }
+                byte[] out_ = new byte[total];
+                int off = 0;
+                foreach (byte[] s in segments)
+                {
+                    s.CopyTo(out_, off);
+                    off += s.Length;
+                }
                 return (out_, result.MessageType);
             }
 
@@ -199,14 +232,14 @@ public sealed class ZaloWsListener
 
     internal async Task DispatchFrameAsync(byte[] frameBytes, CipherState state, CancellationToken ct)
     {
-        var (_, cmd, subCmd) = WsFrameCodec.ParseHeader(frameBytes.AsSpan());
-        var body = new ReadOnlyMemory<byte>(frameBytes, 4, frameBytes.Length - 4);
+        (_, int cmd, byte subCmd) = WsFrameCodec.ParseHeader(frameBytes.AsSpan());
+        ReadOnlyMemory<byte> body = new(frameBytes, 4, frameBytes.Length - 4);
 
         switch (cmd)
         {
             case 1 when subCmd == 1:
                 _log?.Invoke(ZaloLogLevel.Debug, $"Zalo WS frame: cmd={cmd} subCmd={subCmd} thread=none");
-                state.Key = ExtractCipherKey(body);
+                state.Key = await ExtractCipherKeyAsync(body).ConfigureAwait(false);
                 _log?.Invoke(ZaloLogLevel.Debug, $"Zalo WS cipherKey set: {(state.Key is null ? "NULL" : $"len={state.Key.Length}")}");
                 break;
 
@@ -214,9 +247,9 @@ public sealed class ZaloWsListener
             case 510:
                 try
                 {
-                    var payload = await WsFrameCodec.DecodeFrameBodyAsync(body, state.Key, ct);
-                    _log?.Invoke(ZaloLogLevel.Debug, $"Zalo WS frame: cmd={cmd} subCmd={subCmd} thread={ExtractThreadIdForLog(payload, ZaloThreadType.User)}");
-                    DispatchMessages(payload, ZaloThreadType.User);
+                    JsonNode? payload = await WsFrameCodec.DecodeFrameBodyAsync(body, state.Key, ct).ConfigureAwait(false);
+                    _log?.Invoke(ZaloLogLevel.Debug, $"Zalo WS frame: cmd={cmd} subCmd={subCmd} thread={this.ExtractThreadIdForLog(payload, ZaloThreadType.User)}");
+                    this.DispatchMessages(payload, ZaloThreadType.User);
                 }
                 catch (Exception ex)
                 {
@@ -228,9 +261,9 @@ public sealed class ZaloWsListener
             case 511:
                 try
                 {
-                    var payload = await WsFrameCodec.DecodeFrameBodyAsync(body, state.Key, ct);
-                    _log?.Invoke(ZaloLogLevel.Debug, $"Zalo WS frame: cmd={cmd} subCmd={subCmd} thread={ExtractThreadIdForLog(payload, ZaloThreadType.Group)}");
-                    DispatchMessages(payload, ZaloThreadType.Group);
+                    JsonNode? payload = await WsFrameCodec.DecodeFrameBodyAsync(body, state.Key, ct).ConfigureAwait(false);
+                    _log?.Invoke(ZaloLogLevel.Debug, $"Zalo WS frame: cmd={cmd} subCmd={subCmd} thread={this.ExtractThreadIdForLog(payload, ZaloThreadType.Group)}");
+                    this.DispatchMessages(payload, ZaloThreadType.Group);
                 }
                 catch (Exception ex)
                 {
@@ -246,82 +279,106 @@ public sealed class ZaloWsListener
 
     private string ExtractThreadIdForLog(JsonNode? payload, ZaloThreadType type)
     {
-        if (payload is null) return "unknown";
-        var data = payload["data"];
-        var arrName = type == ZaloThreadType.Group ? "groupMsgs" : "msgs";
-        var msgs = data?[arrName] as JsonArray;
-        var firstMsg = msgs?.FirstOrDefault() ?? data;
-        if (firstMsg is null) return "unknown";
+        if (payload is null)
+        {
+            return "unknown";
+        }
+        JsonNode? data = payload["data"];
+        string arrName = type == ZaloThreadType.Group ? "groupMsgs" : "msgs";
+        JsonArray? msgs = data?[arrName] as JsonArray;
+        JsonNode? firstMsg = msgs?.FirstOrDefault() ?? data;
+        if (firstMsg is null)
+        {
+            return "unknown";
+        }
 
-        var evt = ParseMessageEvent(firstMsg, type);
+        ZaloMessageEvent? evt = this.ParseMessageEvent(firstMsg, type);
         return evt?.ThreadId ?? "unknown";
     }
 
-    private static string? ExtractCipherKey(ReadOnlyMemory<byte> body)
+    private static Task<string?> ExtractCipherKeyAsync(ReadOnlyMemory<byte> body)
     {
-        if (body.Length == 0) return null;
-        var text = Encoding.UTF8.GetString(body.Span);
+        if (body.Length == 0)
+        {
+            return Task.FromResult<string?>(null);
+        }
+        string text = Encoding.UTF8.GetString(body.Span);
         try
         {
-            var node = JsonNode.Parse(text);
-            return node?["key"]?.GetValue<string>()
+            JsonNode? node = JsonNode.Parse(text);
+            string? key = node?["key"]?.GetValue<string>()
                 ?? node?["cipherKey"]?.GetValue<string>();
+            return Task.FromResult(key);
         }
-        catch { return text.Trim(); }
+        catch { return Task.FromResult<string?>(text.Trim()); }
     }
 
     private void DispatchMessages(JsonNode? payload, ZaloThreadType threadType)
     {
-        if (payload is null) return;
-
-        var data = payload["data"];
-        var arrName = threadType == ZaloThreadType.Group ? "groupMsgs" : "msgs";
-
-        if (data?[arrName] is not JsonArray msgs)
+        if (payload is null)
         {
-            var single = data is JsonObject ? ParseMessageEvent(data, threadType) : null;
-            if (single is not null) _onMessage(single);
             return;
         }
 
-        foreach (var msg in msgs)
+        JsonNode? data = payload["data"];
+        string arrName = threadType == ZaloThreadType.Group ? "groupMsgs" : "msgs";
+        if (data?[arrName] is not JsonArray msgs)
         {
-            if (msg is null) continue;
-            var evt = ParseMessageEvent(msg, threadType);
-            if (evt is not null) _onMessage(evt);
+            ZaloMessageEvent? single = data is JsonObject ? this.ParseMessageEvent(data, threadType) : null;
+            if (single is not null)
+            {
+                _onMessage(single);
+            }
+            return;
+        }
+
+        foreach (JsonNode? msg in msgs)
+        {
+            if (msg is null)
+            {
+                continue;
+            }
+            ZaloMessageEvent? evt = this.ParseMessageEvent(msg, threadType);
+            if (evt is not null)
+            {
+                _onMessage(evt);
+            }
         }
     }
 
     private ZaloMessageEvent? ParseMessageEvent(JsonNode msg, ZaloThreadType threadType)
     {
-        var msgId = msg["msgId"]?.ToJsonString()?.Trim('"');
-        var cliMsgId = msg["cliMsgId"]?.ToJsonString()?.Trim('"');
-        if (msgId is null) return null;
+        string? msgId = msg["msgId"]?.ToJsonString()?.Trim('"');
+        string? cliMsgId = msg["cliMsgId"]?.ToJsonString()?.Trim('"');
+        if (msgId is null)
+        {
+            return null;
+        }
 
-        var uidFrom = msg["uidFrom"]?.GetValue<string>() ?? "";
-        var idTo = msg["idTo"]?.GetValue<string>() ?? msg["toUid"]?.GetValue<string>() ?? "";
+        string uidFrom = msg["uidFrom"]?.GetValue<string>() ?? "";
+        string idTo = msg["idTo"]?.GetValue<string>() ?? msg["toUid"]?.GetValue<string>() ?? "";
 
-        var threadId = threadType == ZaloThreadType.Group
+        string threadId = threadType == ZaloThreadType.Group
             ? (msg["threadId"]?.GetValue<string>() ?? idTo)
             : (string.IsNullOrEmpty(uidFrom) || uidFrom == "0" || uidFrom == _session.Uid ? idTo : uidFrom);
 
-        var isSelfRaw = msg["isSelf"]?.ToJsonString();
-        var isSelf = isSelfRaw == "1" || isSelfRaw == "true"
+        string? isSelfRaw = msg["isSelf"]?.ToJsonString();
+        bool isSelf = isSelfRaw == "1" || isSelfRaw == "true"
                      || uidFrom == "0"
                      || (!string.IsNullOrEmpty(_session.Uid) && uidFrom == _session.Uid);
 
-        var msgType = msg["msgType"]?.GetValue<string>() ?? "";
-        var content = msg["content"];
+        string msgType = msg["msgType"]?.GetValue<string>() ?? "";
+        JsonNode? content = msg["content"];
         List<ZaloAttachment>? attachments = null;
 
         if (content is JsonObject contentObj &&
             (msgType == "chat.photo" || msgType == "chat.gif" || msgType == "chat.video.msg" || msgType == "share.file" || msgType == "chat.voice"))
         {
-            var url = contentObj["href"]?.GetValue<string>() ?? contentObj["url"]?.GetValue<string>() ?? contentObj["thumb"]?.GetValue<string>();
+            string? url = contentObj["href"]?.GetValue<string>() ?? contentObj["url"]?.GetValue<string>() ?? contentObj["thumb"]?.GetValue<string>();
             if (!string.IsNullOrEmpty(url))
             {
-                var fileName = contentObj["title"]?.GetValue<string>() ?? contentObj["description"]?.GetValue<string>() ?? "attachment";
-                attachments = new List<ZaloAttachment> { new ZaloAttachment(url, fileName, msgType) };
+                string fileName = contentObj["title"]?.GetValue<string>() ?? contentObj["description"]?.GetValue<string>() ?? "attachment";
+                attachments = [new ZaloAttachment(url, fileName, msgType)];
             }
         }
 
@@ -346,11 +403,17 @@ public sealed class ZaloWsListener
         {
             while (!ct.IsCancellationRequested)
             {
-                await Task.Delay(intervalMs, ct);
-                if (ws.State != WebSocketState.Open) break;
-                if (SendThrottle is not null) await SendThrottle(ct);
+                await Task.Delay(intervalMs, ct).ConfigureAwait(false);
+                if (ws.State != WebSocketState.Open)
+                {
+                    break;
+                }
+                if (this.SendThrottle is not null)
+                {
+                    await this.SendThrottle(ct).ConfigureAwait(false);
+                }
                 ReadOnlyMemory<byte> frame = new byte[] { 0x01, 0x00, 0x00, 0x00 };
-                await ws.SendAsync(frame, WebSocketMessageType.Binary, endOfMessage: true, ct);
+                await ws.SendAsync(frame, WebSocketMessageType.Binary, endOfMessage: true, ct).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) { /* expected */ }

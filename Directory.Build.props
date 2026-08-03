@@ -17,9 +17,8 @@
         <IsAotCompatible>true</IsAotCompatible>
         <IsTrimmable>true</IsTrimmable>
 
-        <!-- Gom toàn bộ thư mục bin/ và obj/ của mọi project về chung một thư mục artifacts/ ở root (Sạch sẽ repo) -->
         <UseArtifactsOutput>true</UseArtifactsOutput>
-        <NoWarn>$(NoWarn);CS1591;CA1710;CA2000;CA1305;CA1307;CA2016;SYSLIB1045;IDE0270;IDE0300;IDE0305;IDE0005;IDE0008;IDE0009;IDE0011;IDE1006;CA1031;CA5351;CA5350;CA2007;IL2026;IL3050;CA1062;CA1861;CA1822;CA1054;CA1056;CA1707;CA1711;CA1716;CA1720;CA2234;IDE0007;IDE0028;IDE0047;IDE0048;IDE0053;IDE0058;IDE0060;IDE0090;IDE0130;IDE0290</NoWarn>
+        <NoWarn>$(NoWarn);CS1591;CA5351;CA5350;CA2007;CA1031;CA2000</NoWarn>
     </PropertyGroup>
 
     <!-- Debug: Ép FULL thông tin và Source Code vào DLL để dễ fix lỗi lúc dev -->

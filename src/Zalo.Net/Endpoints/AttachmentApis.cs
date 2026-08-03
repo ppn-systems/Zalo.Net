@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -9,7 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Zalo.Net.Auth;
 using Zalo.Net.Contracts;
-using Zalo.Net.Contracts.Errors;
+using Zalo.Net.Contracts.Exceptions;
 using Zalo.Net.Cryptography;
 
 namespace Zalo.Net.Endpoints;
@@ -21,13 +22,18 @@ public static class AttachmentApis
 {
     private const int ChunkSize = 5 * 1024 * 1024;
 
+    /// <summary>Uploads an image attachment and sends an image message.</summary>
     public static async Task<ZaloSendResult> SendImageAttachmentAsync(
         ZaloHttpClient http, ZaloSession session,
         string threadId, ZaloThreadType threadType, byte[] fileBytes, string fileName, string? caption,
         CancellationToken ct)
     {
-        var photoId = await UploadImageAsync(http, session, threadId, threadType, fileBytes, fileName, ct);
-        return await SendImageMessageAsync(http, session, threadId, threadType, photoId, caption ?? "", ct);
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(fileBytes);
+
+        string photoId = await UploadImageAsync(http, session, threadId, threadType, fileBytes, fileName, ct).ConfigureAwait(false);
+        return await SendImageMessageAsync(http, session, threadId, threadType, photoId, caption ?? "", ct).ConfigureAwait(false);
     }
 
     private static async Task<string> UploadImageAsync(
@@ -35,22 +41,25 @@ public static class AttachmentApis
         string threadId, ZaloThreadType threadType, byte[] fileBytes, string fileName,
         CancellationToken ct)
     {
-        var fileBaseUrl = session.ServiceMap["file"][0];
-        var isGroup = threadType == ZaloThreadType.Group;
-        var urlPath = isGroup ? "api/group/photo_original/upload" : "api/message/photo_original/upload";
-        var typeParam = isGroup ? "11" : "2";
+        string fileBaseUrl = session.ServiceMap["file"][0];
+        bool isGroup = threadType == ZaloThreadType.Group;
+        string urlPath = isGroup ? "api/group/photo_original/upload" : "api/message/photo_original/upload";
+        string typeParam = isGroup ? "11" : "2";
 
-        var totalSize = fileBytes.Length;
-        var totalChunk = (int)Math.Ceiling((double)totalSize / ChunkSize);
-        if (totalChunk == 0) totalChunk = 1;
-        var clientId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        int totalSize = fileBytes.Length;
+        int totalChunk = (int)Math.Ceiling((double)totalSize / ChunkSize);
+        if (totalChunk == 0)
+        {
+            totalChunk = 1;
+        }
+        long clientId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        var baseUrl = $"{fileBaseUrl.TrimEnd('/')}/{urlPath}";
+        string baseUrl = $"{fileBaseUrl.TrimEnd('/')}/{urlPath}";
         string? lastPhotoId = null;
 
         for (int i = 0; i < totalChunk; i++)
         {
-            var dataParams = new Dictionary<string, object>
+            Dictionary<string, object> dataParams = new()
             {
                 ["totalChunk"] = totalChunk,
                 ["fileName"] = fileName,
@@ -62,34 +71,44 @@ public static class AttachmentApis
                 ["chunkId"] = i + 1
             };
 
-            if (isGroup) dataParams["grid"] = threadId;
-            else dataParams["toid"] = threadId;
+            if (isGroup)
+            {
+                dataParams["grid"] = threadId;
+            }
+            else
+            {
+                dataParams["toid"] = threadId;
+            }
 
-            var paramsJson = JsonSerializer.Serialize(dataParams);
-            var encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, paramsJson);
+            string paramsJson = JsonSerializer.Serialize(dataParams, EndpointJsonContext.Default.DictionaryStringObject);
+            string encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, paramsJson);
 
-            var chunkLen = Math.Min(ChunkSize, totalSize - (i * ChunkSize));
-            var chunkBytes = new byte[chunkLen];
+            int chunkLen = Math.Min(ChunkSize, totalSize - (i * ChunkSize));
+            byte[] chunkBytes = new byte[chunkLen];
             Array.Copy(fileBytes, i * ChunkSize, chunkBytes, 0, chunkLen);
 
-            using var content = new MultipartFormDataContent();
-            var byteContent = new ByteArrayContent(chunkBytes);
+            using MultipartFormDataContent content = new();
+            using ByteArrayContent byteContent = new(chunkBytes);
             byteContent.Headers.ContentType = MediaTypeHeaderValue.Parse("application/octet-stream");
             content.Add(byteContent, "chunkContent", fileName);
 
-            var requestUrl = $"{baseUrl}?type={typeParam}&params={Uri.EscapeDataString(encryptedParams)}";
-            var resp = await http.RequestAsync(requestUrl, HttpMethod.Post, body: content, ct: ct);
-            var json = await ZaloHttpClient.ReadJsonAsync(resp, ct);
+            string requestUrl = $"{baseUrl}?type={typeParam}&params={Uri.EscapeDataString(encryptedParams)}";
+            HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Post, body: content, ct: ct).ConfigureAwait(false);
+            System.Text.Json.Nodes.JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
 
-            var errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
+            int errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
             if (errorCode != 0)
-                throw new ZaloApiError(json?["error_message"]?.GetValue<string>() ?? "uploadImage failed", errorCode);
+            {
+                throw new ZaloApiException(json?["error_message"]?.GetValue<string>() ?? "uploadImage failed", errorCode);
+            }
 
             lastPhotoId = json?["data"]?["photoId"]?.GetValue<string>();
         }
 
         if (string.IsNullOrEmpty(lastPhotoId) || lastPhotoId == "-1")
-            throw new ZaloApiError("Failed to get photoId after upload");
+        {
+            throw new ZaloApiException("Failed to get photoId after upload");
+        }
 
         return lastPhotoId;
     }
@@ -99,10 +118,10 @@ public static class AttachmentApis
         string threadId, ZaloThreadType threadType, string photoId, string text,
         CancellationToken ct)
     {
-        var ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var cliMsg = Guid.NewGuid().ToString("N");
+        long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        string cliMsg = Guid.NewGuid().ToString("N");
 
-        var data = new Dictionary<string, object>
+        Dictionary<string, object> data = new()
         {
             ["clientId"] = cliMsg,
             ["imei"] = session.Material.Imei,
@@ -113,44 +132,50 @@ public static class AttachmentApis
         };
 
         if (threadType == ZaloThreadType.Group)
+        {
             data["grid"] = threadId;
+        }
 
-        var url = threadType == ZaloThreadType.Group
+        string url = threadType == ZaloThreadType.Group
             ? $"{session.ServiceMap["group"][0]}/api/group"
             : $"{session.ServiceMap["chat"][0]}/api/message";
 
-        var dataJson = JsonSerializer.Serialize(data);
-        var encrypted = ZaloCipher.EncodeAes(session.Material.SecretKey, dataJson);
+        string dataJson = JsonSerializer.Serialize(data, EndpointJsonContext.Default.DictionaryStringObject);
+        string encrypted = ZaloCipher.EncodeAes(session.Material.SecretKey, dataJson);
 
-        var signDict = data.ToDictionary(k => k.Key, v => (object?)v.Value);
+        Dictionary<string, object?> signDict = data.ToDictionary(k => k.Key, v => (object?)v.Value);
         signDict["ts"] = ts;
-        var signKey = Hashing.GetSignKey("sendmessage", signDict);
+        string signKey = Hashing.GetSignKey("sendmessage", signDict);
 
-        var queryParams = new Dictionary<string, string>
+        Dictionary<string, string> queryParams = new()
         {
             ["params"] = encrypted,
-            ["ts"] = ts.ToString(),
+            ["ts"] = ts.ToString(CultureInfo.InvariantCulture),
             ["signkey"] = signKey,
             ["nretry"] = "0",
-            ["type"] = ZaloHttpClient.ApiType.ToString(),
-            ["client_version"] = ZaloHttpClient.ApiVersion.ToString(),
+            ["type"] = ZaloHttpClient.ApiType.ToString(CultureInfo.InvariantCulture),
+            ["client_version"] = ZaloHttpClient.ApiVersion.ToString(CultureInfo.InvariantCulture),
         };
 
-        var formBody = new FormUrlEncodedContent(queryParams);
-        var sb = new StringBuilder(url).Append('?');
-        foreach (var (k, v) in queryParams)
-            _ = sb.Append(Uri.EscapeDataString(k)).Append('=').Append(Uri.EscapeDataString(v)).Append('&');
+        using FormUrlEncodedContent formBody = new(queryParams);
+        StringBuilder sb = new StringBuilder(url).Append('?');
+        foreach (KeyValuePair<string, string> kvp in queryParams)
+        {
+            _ = sb.Append(Uri.EscapeDataString(kvp.Key)).Append('=').Append(Uri.EscapeDataString(kvp.Value)).Append('&');
+        }
 
-        var fullUrl = sb.ToString().TrimEnd('&');
+        string fullUrl = sb.ToString().TrimEnd('&');
 
-        var resp = await http.RequestAsync(fullUrl, HttpMethod.Post, body: formBody, ct: ct);
-        var json = await ZaloHttpClient.ReadJsonAsync(resp, ct);
+        HttpResponseMessage resp = await http.RequestAsync(fullUrl, HttpMethod.Post, body: formBody, ct: ct).ConfigureAwait(false);
+        System.Text.Json.Nodes.JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
 
-        var errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
+        int errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
         if (errorCode != 0)
-            throw new ZaloApiError(json?["error_message"]?.GetValue<string>() ?? "sendPhoto failed", errorCode);
+        {
+            throw new ZaloApiException(json?["error_message"]?.GetValue<string>() ?? "sendPhoto failed", errorCode);
+        }
 
-        var msgId = json?["data"]?["msgId"]?.ToJsonString()?.Trim('"')
+        string msgId = json?["data"]?["msgId"]?.ToJsonString()?.Trim('"')
                  ?? json?["data"]?["message_id"]?.ToJsonString()?.Trim('"')
                  ?? cliMsg;
 

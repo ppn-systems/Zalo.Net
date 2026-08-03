@@ -8,7 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Zalo.Net.Auth;
 using Zalo.Net.Contracts;
-using Zalo.Net.Contracts.Errors;
+using Zalo.Net.Contracts.Exceptions;
 using Zalo.Net.Cryptography;
 
 namespace Zalo.Net.Endpoints;
@@ -22,15 +22,19 @@ public static class MessageApis
     private const string SendGroupUrl = "https://tt-chat2.zalo.me/api/message/groupsms";
     private const string UserInfoUrl = "https://wpa.chat.zalo.me/api/social/profile/me";
 
+    /// <summary>Sends a text message to a user or group thread.</summary>
     public static async Task<string> SendTextAsync(
         ZaloHttpClient http, ZaloSession session,
         string threadId, ZaloThreadType threadType, string text,
         CancellationToken ct)
     {
-        var ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var cliMsg = Guid.NewGuid().ToString("N");
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
 
-        var data = new Dictionary<string, object>
+        long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        string cliMsg = Guid.NewGuid().ToString("N");
+
+        Dictionary<string, object> data = new()
         {
             ["message"] = text,
             ["clientId"] = cliMsg,
@@ -42,48 +46,58 @@ public static class MessageApis
         };
 
         if (threadType == ZaloThreadType.Group)
+        {
             data["grid"] = threadId;
+        }
 
-        var url = threadType == ZaloThreadType.Group ? SendGroupUrl : SendDmUrl;
-        var (signedParams, body) = BuildSignedRequest(data, session.Material.SecretKey, ts);
-        var fullUrl = BuildUrl(url, signedParams);
+        string url = threadType == ZaloThreadType.Group ? SendGroupUrl : SendDmUrl;
+        (Dictionary<string, string> signedParams, HttpContent body) = BuildSignedRequest(data, session.Material.SecretKey, ts);
+        string fullUrl = BuildUrl(url, signedParams);
 
-        var resp = await http.RequestAsync(fullUrl, HttpMethod.Post, body: body, ct: ct);
-        var json = await ZaloHttpClient.ReadJsonAsync(resp, ct);
+        HttpResponseMessage resp = await http.RequestAsync(fullUrl, HttpMethod.Post, body: body, ct: ct).ConfigureAwait(false);
+        System.Text.Json.Nodes.JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
 
-        var errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
+        int errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
         if (errorCode != 0)
-            throw new ZaloApiError(json?["error_message"]?.GetValue<string>() ?? "sendMessage failed", errorCode);
+        {
+            throw new ZaloApiException(json?["error_message"]?.GetValue<string>() ?? "sendMessage failed", errorCode);
+        }
 
-        var msgId = json?["data"]?["msgId"]?.ToJsonString()?.Trim('"')
+        string msgId = json?["data"]?["msgId"]?.ToJsonString()?.Trim('"')
                  ?? json?["data"]?["message_id"]?.ToJsonString()?.Trim('"')
                  ?? cliMsg;
         return msgId;
     }
 
+    /// <summary>Fetches profile information for a user.</summary>
     public static async Task<(string Uid, string DisplayName, string? AvatarUrl)> GetUserInfoAsync(
         ZaloHttpClient http, ZaloSession session, string userId, CancellationToken ct)
     {
-        var ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        var data = new Dictionary<string, object>
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+
+        long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        Dictionary<string, object> data = new()
         {
             ["uid"] = userId,
             ["imei"] = session.Material.Imei,
         };
-        var (signedParams, _) = BuildSignedRequest(data, session.Material.SecretKey, ts);
-        var url = BuildUrl(UserInfoUrl, signedParams);
+        (Dictionary<string, string> signedParams, _) = BuildSignedRequest(data, session.Material.SecretKey, ts);
+        string url = BuildUrl(UserInfoUrl, signedParams);
 
-        var resp = await http.RequestAsync(url, HttpMethod.Get, ct: ct);
-        var json = await ZaloHttpClient.ReadJsonAsync(resp, ct);
+        HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        System.Text.Json.Nodes.JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
 
         if (json?["data"] is null)
-            throw new ZaloApiError(json?["error_message"]?.GetValue<string>() ?? "getUserInfo failed");
+        {
+            throw new ZaloApiException(json?["error_message"]?.GetValue<string>() ?? "getUserInfo failed");
+        }
 
-        var profile = json["data"]!;
-        var uid = profile["uid"]?.GetValue<string>() ?? userId;
-        var displayName = profile["zaloName"]?.GetValue<string>()
+        System.Text.Json.Nodes.JsonNode profile = json["data"]!;
+        string uid = profile["uid"]?.GetValue<string>() ?? userId;
+        string displayName = profile["zaloName"]?.GetValue<string>()
                        ?? profile["displayName"]?.GetValue<string>() ?? "";
-        var avatar = profile["avatar"]?.GetValue<string>()
+        string? avatar = profile["avatar"]?.GetValue<string>()
                        ?? profile["avatarUrl"]?.GetValue<string>();
 
         return (uid, displayName, avatar);
@@ -92,32 +106,34 @@ public static class MessageApis
     private static (Dictionary<string, string> Params, HttpContent Body) BuildSignedRequest(
         Dictionary<string, object> data, string secretKey, long ts)
     {
-        var dataJson = JsonSerializer.Serialize(data);
-        var encrypted = ZaloCipher.EncodeAes(secretKey, dataJson);
+        string dataJson = JsonSerializer.Serialize(data, EndpointJsonContext.Default.DictionaryStringObject);
+        string encrypted = ZaloCipher.EncodeAes(secretKey, dataJson);
 
-        var signDict = data.ToDictionary(k => k.Key, v => (object?)v.Value);
+        Dictionary<string, object?> signDict = data.ToDictionary(k => k.Key, v => (object?)v.Value);
         signDict["ts"] = ts;
-        var signKey = Hashing.GetSignKey("sendmessage", signDict);
+        string signKey = Hashing.GetSignKey("sendmessage", signDict);
 
-        var queryParams = new Dictionary<string, string>
+        Dictionary<string, string> queryParams = new()
         {
             ["params"] = encrypted,
-            ["ts"] = ts.ToString(),
+            ["ts"] = ts.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["signkey"] = signKey,
             ["nretry"] = "0",
-            ["type"] = ZaloHttpClient.ApiType.ToString(),
-            ["client_version"] = ZaloHttpClient.ApiVersion.ToString(),
+            ["type"] = ZaloHttpClient.ApiType.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["client_version"] = ZaloHttpClient.ApiVersion.ToString(System.Globalization.CultureInfo.InvariantCulture),
         };
 
-        var formBody = new FormUrlEncodedContent(queryParams);
+        FormUrlEncodedContent formBody = new(queryParams);
         return (queryParams, formBody);
     }
 
     private static string BuildUrl(string baseUrl, Dictionary<string, string> @params)
     {
-        var sb = new StringBuilder(baseUrl).Append('?');
-        foreach (var (k, v) in @params)
-            _ = sb.Append(Uri.EscapeDataString(k)).Append('=').Append(Uri.EscapeDataString(v)).Append('&');
+        StringBuilder sb = new StringBuilder(baseUrl).Append('?');
+        foreach (KeyValuePair<string, string> kvp in @params)
+        {
+            _ = sb.Append(Uri.EscapeDataString(kvp.Key)).Append('=').Append(Uri.EscapeDataString(kvp.Value)).Append('&');
+        }
         return sb.ToString().TrimEnd('&');
     }
 }

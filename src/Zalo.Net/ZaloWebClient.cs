@@ -2,12 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Zalo.Net.Auth;
 using Zalo.Net.Contracts;
-using Zalo.Net.Contracts.Errors;
+using Zalo.Net.Contracts.Exceptions;
 using Zalo.Net.Cryptography;
 using Zalo.Net.Endpoints;
 using Zalo.Net.WebSocket;
@@ -26,49 +25,56 @@ public sealed class ZaloWebClient : IDisposable
     private readonly Lock _lock = new();
 
 #pragma warning disable CS0067
+    /// <summary>Occurs when an inbound WebSocket message is received.</summary>
     public event EventHandler<ZaloMessageEvent>? MessageReceived;
+
+    /// <summary>Occurs when the session connection status changes.</summary>
     public event EventHandler<ZaloSessionStatusChanged>? StatusChanged;
 #pragma warning restore CS0067
 
+    /// <summary>Starts QR login flow.</summary>
     public async Task<ZaloQrSession> StartQrLoginAsync(CancellationToken ct)
     {
-        var ua = DefaultUserAgent;
-        var http = new ZaloHttpClient(ua);
+        string ua = DefaultUserAgent;
+        ZaloHttpClient http = new(ua);
 
-        var version = await LoginQrApis.LoadLoginPageAsync(http, ct);
+        string version = await LoginQrApis.LoadLoginPageAsync(http, ct).ConfigureAwait(false);
 
-        await LoginQrApis.GetLoginInfoAsync(http, version, ct);
-        await LoginQrApis.VerifyClientAsync(http, version, ct);
+        await LoginQrApis.GetLoginInfoAsync(http, version, ct).ConfigureAwait(false);
+        await LoginQrApis.VerifyClientAsync(http, version, ct).ConfigureAwait(false);
 
-        var qrData = await LoginQrApis.GenerateQrAsync(http, version, ct);
+        JsonNode qrData = await LoginQrApis.GenerateQrAsync(http, version, ct).ConfigureAwait(false);
 
-        var code = qrData["code"]?.GetValue<string>()
-                     ?? throw new ZaloApiError("QR response missing 'code'");
-        var image = qrData["image"]?.GetValue<string>()
-                     ?? throw new ZaloApiError("QR response missing 'image'");
+        string code = qrData["code"]?.GetValue<string>()
+                     ?? throw new ZaloApiException("QR response missing 'code'");
+        string image = qrData["image"]?.GetValue<string>()
+                     ?? throw new ZaloApiException("QR response missing 'image'");
 
-        image = Regex.Replace(image, "^data:image/png;base64,", "");
+        image = image.Replace("data:image/png;base64,", "", StringComparison.Ordinal);
 
-        var sessionId = Guid.NewGuid();
-        var expiresAt = DateTimeOffset.UtcNow.AddMinutes(5);
+        Guid sessionId = Guid.NewGuid();
+        DateTimeOffset expiresAt = DateTimeOffset.UtcNow.AddMinutes(5);
 
-        var qrSession = new QrSession(http, version, code, ua, expiresAt, sessionId);
+        QrSession qrSession = new(http, version, code, ua, expiresAt, sessionId);
         lock (_lock)
         {
             _qrSessions[sessionId] = qrSession;
         }
 
-        _ = Task.Run(() => RunQrLoginFlowAsync(sessionId, qrSession.Cts.Token));
+        _ = Task.Run(() => this.RunQrLoginFlowAsync(sessionId, qrSession.Cts.Token), CancellationToken.None);
 
         return new ZaloQrSession(sessionId, image, code, expiresAt);
     }
 
-    public Task<ZaloLoginState> PollLoginAsync(Guid sessionId, CancellationToken ct)
+    /// <summary>Polls QR login status.</summary>
+    public Task<ZaloLoginState> PollLoginAsync(Guid sessionId)
     {
         lock (_lock)
         {
-            if (!_qrSessions.TryGetValue(sessionId, out var session))
+            if (!_qrSessions.TryGetValue(sessionId, out QrSession? session))
+            {
                 return Task.FromResult(new ZaloLoginState(sessionId, ZaloLoginStatus.Expired));
+            }
 
             if (DateTimeOffset.UtcNow >= session.ExpiresAt)
             {
@@ -85,7 +91,10 @@ public sealed class ZaloWebClient : IDisposable
         QrSession session;
         lock (_lock)
         {
-            if (!_qrSessions.TryGetValue(sessionId, out session!)) return;
+            if (!_qrSessions.TryGetValue(sessionId, out session!))
+            {
+                return;
+            }
         }
 
         try
@@ -98,46 +107,51 @@ public sealed class ZaloWebClient : IDisposable
                 JsonNode? scanResult = null;
                 try
                 {
-                    scanResult = await LoginQrApis.WaitingScanAsync(session.Http, session.Version, session.Code, sessionCt);
+                    scanResult = await LoginQrApis.WaitingScanAsync(session.Http, session.Version, session.Code, sessionCt).ConfigureAwait(false);
                 }
-                catch (ZaloApiError ex) when (ex.Message.Contains("429"))
+                catch (ZaloApiException ex) when (ex.Message.Contains("429", StringComparison.Ordinal))
                 {
-                    await Task.Delay(4000, sessionCt);
+                    await Task.Delay(4000, sessionCt).ConfigureAwait(false);
                     continue;
                 }
 
-                if (scanResult is null) continue;
+                if (scanResult is null)
+                {
+                    continue;
+                }
 
-                var errorCode = scanResult["error_code"]?.GetValue<int>() ?? -1;
+                int errorCode = scanResult["error_code"]?.GetValue<int>() ?? -1;
                 if (errorCode == -13)
                 {
-                    lock (_lock) session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Declined);
+                    lock (_lock) { session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Declined); }
                     return;
                 }
                 if (errorCode == 8)
                 {
-                    await Task.Delay(1000, sessionCt);
+                    await Task.Delay(1000, sessionCt).ConfigureAwait(false);
                     continue;
                 }
                 if (errorCode != 0)
                 {
-                    await Task.Delay(3000, sessionCt);
+                    await Task.Delay(3000, sessionCt).ConfigureAwait(false);
                     continue;
                 }
 
                 displayName = scanResult["data"]?["displayName"]?.GetValue<string>();
                 avatar = scanResult["data"]?["avatar"]?.GetValue<string>();
-                lock (_lock) session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Scanned, displayName, avatar);
+                lock (_lock) { session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Scanned, displayName, avatar); }
 
                 if (scanResult["data"]?["confirmed"]?.GetValue<bool>() == true)
+                {
                     break;
+                }
 
                 break;
             }
 
             if (sessionCt.IsCancellationRequested || DateTimeOffset.UtcNow >= session.ExpiresAt)
             {
-                lock (_lock) session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Expired);
+                lock (_lock) { session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Expired); }
                 return;
             }
 
@@ -146,55 +160,58 @@ public sealed class ZaloWebClient : IDisposable
                 JsonNode? confirmResult = null;
                 try
                 {
-                    confirmResult = await LoginQrApis.WaitingConfirmAsync(session.Http, session.Version, session.Code, sessionCt);
+                    confirmResult = await LoginQrApis.WaitingConfirmAsync(session.Http, session.Version, session.Code, sessionCt).ConfigureAwait(false);
                 }
-                catch (ZaloApiError ex) when (ex.Message.Contains("429"))
+                catch (ZaloApiException ex) when (ex.Message.Contains("429", StringComparison.Ordinal))
                 {
-                    await Task.Delay(4000, sessionCt);
+                    await Task.Delay(4000, sessionCt).ConfigureAwait(false);
                     continue;
                 }
 
-                if (confirmResult is null) continue;
+                if (confirmResult is null)
+                {
+                    continue;
+                }
 
-                var errorCode = confirmResult["error_code"]?.GetValue<int>() ?? -1;
+                int errorCode = confirmResult["error_code"]?.GetValue<int>() ?? -1;
                 if (errorCode == -13)
                 {
-                    lock (_lock) session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Declined);
+                    lock (_lock) { session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Declined); }
                     return;
                 }
                 if (errorCode == 8)
                 {
-                    await Task.Delay(1000, sessionCt);
+                    await Task.Delay(1000, sessionCt).ConfigureAwait(false);
                     continue;
                 }
                 if (errorCode != 0)
                 {
-                    await Task.Delay(3000, sessionCt);
+                    await Task.Delay(3000, sessionCt).ConfigureAwait(false);
                     continue;
                 }
 
-                await LoginQrApis.CheckSessionAsync(session.Http, sessionCt);
+                await LoginQrApis.CheckSessionAsync(session.Http, sessionCt).ConfigureAwait(false);
 
-                var userInfo = await LoginQrApis.GetUserInfoAsync(session.Http, sessionCt);
-                var uid = userInfo?["uid"]?.GetValue<string>()
+                JsonNode? userInfo = await LoginQrApis.GetUserInfoAsync(session.Http, sessionCt).ConfigureAwait(false);
+                string uid = userInfo?["uid"]?.GetValue<string>()
                                ?? confirmResult["data"]?["userId"]?.GetValue<string>()
                                ?? "";
 
                 displayName = userInfo?["displayName"]?.GetValue<string>() ?? displayName ?? "";
                 avatar = userInfo?["avatar"]?.GetValue<string>() ?? avatar;
 
-                var imei = Hashing.GenerateImei(session.UserAgent);
-                var encryptor = new ParamsEncryptor(ZaloHttpClient.ApiType, imei, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                var enk = encryptor.GetEncryptKey();
+                string imei = Hashing.GenerateImei(session.UserAgent);
+                ParamsEncryptor encryptor = new(ZaloHttpClient.ApiType, imei, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                string enk = encryptor.GetEncryptKey();
 
-                var loginData = await LoginApis.GetLoginInfoAsync(session.Http, imei, "vi", enk, sessionCt);
-                _ = await LoginApis.GetServerInfoAsync(session.Http, imei, sessionCt);
+                JsonNode? loginData = await LoginApis.GetLoginInfoAsync(session.Http, imei, "vi", enk, sessionCt).ConfigureAwait(false);
+                _ = await LoginApis.GetServerInfoAsync(session.Http, imei, sessionCt).ConfigureAwait(false);
 
-                var secretKey = loginData?["zpw_enk"]?.GetValue<string>()
-                                 ?? throw new ZaloApiError("Missing zpw_enk in login response");
+                string secretKey = loginData?["zpw_enk"]?.GetValue<string>()
+                                 ?? throw new ZaloApiException("Missing zpw_enk in login response");
 
-                var cookiesJson = session.Http.Cookies.ToJson();
-                var material = new ZaloSessionMaterial(cookiesJson, secretKey, imei, uid, session.UserAgent);
+                string cookiesJson = session.Http.Cookies.ToJson();
+                ZaloSessionMaterial material = new(cookiesJson, secretKey, imei, uid, session.UserAgent);
 
                 lock (_lock)
                 {
@@ -206,43 +223,47 @@ public sealed class ZaloWebClient : IDisposable
 
             if (sessionCt.IsCancellationRequested || DateTimeOffset.UtcNow >= session.ExpiresAt)
             {
-                lock (_lock) session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Expired);
+                lock (_lock) { session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Expired); }
             }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            lock (_lock) session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Expired);
-            StatusChanged?.Invoke(this, new ZaloSessionStatusChanged("", ZaloConnectionStatus.SessionExpired, ex.Message));
+            lock (_lock) { session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Expired); }
+            this.StatusChanged?.Invoke(this, new ZaloSessionStatusChanged("", ZaloConnectionStatus.SessionExpired, ex.Message));
         }
     }
 
+    /// <summary>Consumes pending session material after successful login.</summary>
     public ZaloSessionMaterial? ConsumePendingMaterial(Guid sessionId)
     {
         lock (_lock)
         {
-            if (_qrSessions.TryGetValue(sessionId, out var session) && session.Material != null)
+            if (_qrSessions.TryGetValue(sessionId, out QrSession? session) && session.Material != null)
             {
-                var material = session.Material;
-                RemoveQrSession(sessionId);
+                ZaloSessionMaterial material = session.Material;
+                this.RemoveQrSession(sessionId);
                 return material;
             }
             return null;
         }
     }
 
-    public async Task<ZaloSession> LoginWithSessionAsync(ZaloSessionMaterial material, CancellationToken ct)
+    /// <summary>Logs in from session material.</summary>
+    public static async Task<ZaloSession> LoginWithSessionAsync(ZaloSessionMaterial material, CancellationToken ct)
     {
-        var cookies = CookieStore.FromJson(material.CookiesJson);
-        var http = new ZaloHttpClient(material.UserAgent, cookies);
+        ArgumentNullException.ThrowIfNull(material);
 
-        var loginData = await LoginApis.GetLoginInfoAsync(http, material.Imei, material.Language, material.SecretKey, ct);
-        var serverData = await LoginApis.GetServerInfoAsync(http, material.Imei, ct);
+        CookieStore cookies = CookieStore.FromJson(material.CookiesJson);
+        using ZaloHttpClient http = new(material.UserAgent, cookies);
 
-        var uid = loginData?["uid"]?.GetValue<string>() ?? material.Uid;
-        var secretKey = loginData?["zpw_enk"]?.GetValue<string>() ?? material.SecretKey;
-        var wsUrls = ExtractWsUrls(loginData);
-        var svcMap = ExtractServiceMap(loginData);
+        JsonNode? loginData = await LoginApis.GetLoginInfoAsync(http, material.Imei, material.Language, material.SecretKey, ct).ConfigureAwait(false);
+        JsonNode? serverData = await LoginApis.GetServerInfoAsync(http, material.Imei, ct).ConfigureAwait(false);
+
+        string uid = loginData?["uid"]?.GetValue<string>() ?? material.Uid;
+        string secretKey = loginData?["zpw_enk"]?.GetValue<string>() ?? material.SecretKey;
+        string[] wsUrls = ExtractWsUrls(loginData);
+        IReadOnlyDictionary<string, string[]> svcMap = ExtractServiceMap(loginData);
         _ = serverData;
 
         return new ZaloSession(
@@ -253,122 +274,168 @@ public sealed class ZaloWebClient : IDisposable
 
     private static string BuildWsUrl(string baseUrl)
     {
-        var sep = baseUrl.Contains('?') ? "&" : "?";
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        string sep = baseUrl.Contains('?', StringComparison.Ordinal) ? "&" : "?";
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         return $"{baseUrl}{sep}zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}&t={now}";
     }
 
+    /// <summary>Starts WebSocket listener.</summary>
     public Task StartListenerAsync(ZaloSession session, CancellationToken ct, Action<ZaloLogLevel, string>? log = null)
     {
+        ArgumentNullException.ThrowIfNull(session);
+
         if (session.WsUrls is not { Length: > 0 })
-            throw new ZaloApiError("No WebSocket URLs in session");
-        var listener = new ZaloWsListener(
+        {
+            throw new ZaloApiException("No WebSocket URLs in session");
+        }
+        ZaloWsListener listener = new(
             session,
-            msg => MessageReceived?.Invoke(this, msg),
-            status => StatusChanged?.Invoke(this, status),
+            msg => this.MessageReceived?.Invoke(this, msg),
+            status => this.StatusChanged?.Invoke(this, status),
             log);
 
-        var wsUrl = BuildWsUrl(session.WsUrls[0]);
+        string wsUrl = BuildWsUrl(session.WsUrls[0]);
         return listener.RunAsync(wsUrl, ct).ContinueWith(_ => { }, ct, TaskContinuationOptions.None, TaskScheduler.Default);
     }
 
-    public async Task<ZaloSendResult> SendTextAsync(
+    /// <summary>Sends a text message.</summary>
+    public static async Task<ZaloSendResult> SendTextAsync(
         ZaloSession session, string threadId, ZaloThreadType threadType, string text, CancellationToken ct)
     {
-        using var http = CreateHttpForSession(session.Material);
-        var msgId = await MessageApis.SendTextAsync(http, session, threadId, threadType, text, ct);
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        string msgId = await MessageApis.SendTextAsync(http, session, threadId, threadType, text, ct).ConfigureAwait(false);
         return new ZaloSendResult(msgId);
     }
 
-    public async Task<ZaloSendResult> SendAttachmentAsync(
+    /// <summary>Sends an image attachment message.</summary>
+    public static async Task<ZaloSendResult> SendAttachmentAsync(
         ZaloSession session, string threadId, ZaloThreadType threadType, byte[] fileBytes, string fileName, string? caption,
         CancellationToken ct)
     {
-        using var http = CreateHttpForSession(session.Material);
-        return await AttachmentApis.SendImageAttachmentAsync(http, session, threadId, threadType, fileBytes, fileName, caption, ct);
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        return await AttachmentApis.SendImageAttachmentAsync(http, session, threadId, threadType, fileBytes, fileName, caption, ct).ConfigureAwait(false);
     }
 
+    /// <summary>Fetches profile information for a user.</summary>
     public static async Task<ZaloUserProfile> GetUserInfoAsync(ZaloSession session, string userId, CancellationToken ct)
     {
-        using var http = CreateHttpForSession(session.Material);
-        var (uid, name, avatar) = await MessageApis.GetUserInfoAsync(http, session, userId, ct);
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        (string uid, string name, string? avatar) = await MessageApis.GetUserInfoAsync(http, session, userId, ct).ConfigureAwait(false);
         return new ZaloUserProfile(uid, name, avatar);
     }
 
-    public async Task RequestOldMessagesAsync(ZaloSession session, ZaloThreadType type,
+    /// <summary>Requests historical message backfill.</summary>
+    public static async Task RequestOldMessagesAsync(ZaloSession session, ZaloThreadType type,
         string? lastMsgId, CancellationToken ct)
     {
-        using var http = CreateHttpForSession(session.Material);
-        _ = await MessageHistoryApis.GetOldMessagesAsync(http, session, type, lastMsgId, ct);
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        _ = await MessageHistoryApis.GetOldMessagesAsync(http, session, type, lastMsgId, ct).ConfigureAwait(false);
     }
 
+    /// <summary>Runs WebSocket listener with automatic exponential backoff reconnects.</summary>
     public async Task RunWithReconnectAsync(ZaloSessionMaterial material, CancellationToken ct)
     {
-        var backoff = TimeSpan.FromSeconds(2);
-        const int MaxBackoffSec = 60;
+        ArgumentNullException.ThrowIfNull(material);
+
+        TimeSpan backoff = TimeSpan.FromSeconds(2);
+        const int maxBackoffSec = 60;
 
         while (!ct.IsCancellationRequested)
         {
             ZaloSession session;
             try
             {
-                session = await LoginWithSessionAsync(material, ct);
+                session = await LoginWithSessionAsync(material, ct).ConfigureAwait(false);
             }
-            catch (ZaloApiError ex) when (IsAuthError(ex))
+            catch (ZaloApiException ex) when (IsAuthError(ex))
             {
-                StatusChanged?.Invoke(this, new ZaloSessionStatusChanged(material.Uid, ZaloConnectionStatus.SessionExpired, ex.Message));
+                this.StatusChanged?.Invoke(this, new ZaloSessionStatusChanged(material.Uid, ZaloConnectionStatus.SessionExpired, ex.Message));
                 return;
             }
             catch (OperationCanceledException) { return; }
 
-            StatusChanged?.Invoke(this, new ZaloSessionStatusChanged(session.Uid, ZaloConnectionStatus.Reconnecting));
+            this.StatusChanged?.Invoke(this, new ZaloSessionStatusChanged(session.Uid, ZaloConnectionStatus.Reconnecting));
 
-            var disconnected = false;
-            var isDuplicate = false;
-            var isExpired = false;
+            bool disconnected = false;
+            bool isDuplicate = false;
+            bool isExpired = false;
 
             void OnStatus(object? _, ZaloSessionStatusChanged e)
             {
-                if (e.Status == ZaloConnectionStatus.DuplicateConnection) isDuplicate = true;
-                if (e.Status == ZaloConnectionStatus.SessionExpired) isExpired = true;
-                if (e.Status == ZaloConnectionStatus.Disconnected) disconnected = true;
+                if (e.Status == ZaloConnectionStatus.DuplicateConnection)
+                {
+                    isDuplicate = true;
+                }
+                if (e.Status == ZaloConnectionStatus.SessionExpired)
+                {
+                    isExpired = true;
+                }
+                if (e.Status == ZaloConnectionStatus.Disconnected)
+                {
+                    disconnected = true;
+                }
             }
-            StatusChanged += OnStatus;
-            try { await StartListenerAsync(session, ct); }
+            this.StatusChanged += OnStatus;
+            try
+            {
+                await this.StartListenerAsync(session, ct).ConfigureAwait(false);
+            }
             catch (OperationCanceledException) { return; }
-            finally { StatusChanged -= OnStatus; }
+            finally { this.StatusChanged -= OnStatus; }
 
-            if (isDuplicate || isExpired || ct.IsCancellationRequested) return;
-            if (!disconnected) return;
+            if (isDuplicate || isExpired || ct.IsCancellationRequested)
+            {
+                return;
+            }
+            if (!disconnected)
+            {
+                return;
+            }
 
-            StatusChanged?.Invoke(this, new ZaloSessionStatusChanged(material.Uid, ZaloConnectionStatus.Reconnecting));
-            try { await Task.Delay(backoff, ct); }
+            this.StatusChanged?.Invoke(this, new ZaloSessionStatusChanged(material.Uid, ZaloConnectionStatus.Reconnecting));
+            try
+            {
+                await Task.Delay(backoff, ct).ConfigureAwait(false);
+            }
             catch (OperationCanceledException) { return; }
 
-            backoff = TimeSpan.FromSeconds(Math.Min(backoff.TotalSeconds * 2, MaxBackoffSec));
+            backoff = TimeSpan.FromSeconds(Math.Min(backoff.TotalSeconds * 2, maxBackoffSec));
         }
     }
 
-    private static bool IsAuthError(ZaloApiError ex)
+    private static bool IsAuthError(ZaloApiException ex)
         => ex.Code is 4 or 2 or -101 or -102;
 
     private static string[] ExtractWsUrls(JsonNode? loginData)
     {
-        var wsNode = loginData?["zpw_ws"];
+        JsonNode? wsNode = loginData?["zpw_ws"];
         return wsNode is JsonArray arr
-            ? arr.Select(n => n?.GetValue<string>() ?? "").Where(s => s.Length > 0).ToArray()
+            ? [.. arr.Select(n => n?.GetValue<string>() ?? "").Where(s => s.Length > 0)]
             : wsNode?.GetValue<string>() is { Length: > 0 } single ? [single] : [];
     }
 
     private static IReadOnlyDictionary<string, string[]> ExtractServiceMap(JsonNode? loginData)
     {
-        var mapNode = loginData?["zpw_service_map_v3"];
-        if (mapNode is not JsonObject obj) return new Dictionary<string, string[]>();
-        var result = new Dictionary<string, string[]>();
-        foreach (var (key, value) in obj)
+        JsonNode? mapNode = loginData?["zpw_service_map_v3"];
+        if (mapNode is not JsonObject obj)
         {
-            if (value is JsonArray arr)
-                result[key] = arr.Select(n => n?.GetValue<string>() ?? "").ToArray();
+            return new Dictionary<string, string[]>();
+        }
+        Dictionary<string, string[]> result = [];
+        foreach (KeyValuePair<string, JsonNode?> kvp in obj)
+        {
+            if (kvp.Value is JsonArray arr)
+            {
+                result[kvp.Key] = [.. arr.Select(n => n?.GetValue<string>() ?? "")];
+            }
         }
         return result;
     }
@@ -380,7 +447,7 @@ public sealed class ZaloWebClient : IDisposable
     {
         lock (_lock)
         {
-            if (_qrSessions.TryGetValue(sessionId, out var s))
+            if (_qrSessions.TryGetValue(sessionId, out QrSession? s))
             {
                 s.Dispose();
                 _ = _qrSessions.Remove(sessionId);
@@ -388,11 +455,15 @@ public sealed class ZaloWebClient : IDisposable
         }
     }
 
+    /// <inheritdoc/>
     public void Dispose()
     {
         lock (_lock)
         {
-            foreach (var s in _qrSessions.Values) s.Dispose();
+            foreach (QrSession s in _qrSessions.Values)
+            {
+                s.Dispose();
+            }
             _qrSessions.Clear();
         }
     }
@@ -411,20 +482,20 @@ public sealed class ZaloWebClient : IDisposable
 
         public QrSession(ZaloHttpClient http, string version, string code, string userAgent, DateTimeOffset expiresAt, Guid sessionId)
         {
-            Http = http;
-            Version = version;
-            Code = code;
-            UserAgent = userAgent;
-            ExpiresAt = expiresAt;
-            CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Pending);
-            Cts = new CancellationTokenSource();
+            this.Http = http;
+            this.Version = version;
+            this.Code = code;
+            this.UserAgent = userAgent;
+            this.ExpiresAt = expiresAt;
+            this.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Pending);
+            this.Cts = new CancellationTokenSource();
         }
 
         public void Dispose()
         {
-            Cts.Cancel();
-            Cts.Dispose();
-            Http.Dispose();
+            this.Cts.Cancel();
+            this.Cts.Dispose();
+            this.Http.Dispose();
         }
     }
 }

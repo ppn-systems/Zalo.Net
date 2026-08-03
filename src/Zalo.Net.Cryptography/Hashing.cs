@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
@@ -19,9 +20,11 @@ public static class Hashing
     /// </summary>
     public static string GetSignKey(string type, IReadOnlyDictionary<string, object?> @params)
     {
-        var keys = @params.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray();
-        var sb = new StringBuilder("zsecure").Append(type);
-        foreach (var k in keys)
+        ArgumentNullException.ThrowIfNull(@params);
+
+        string[] keys = [.. @params.Keys.OrderBy(k => k, StringComparer.Ordinal)];
+        StringBuilder sb = new StringBuilder("zsecure").Append(type);
+        foreach (string k in keys)
         {
             _ = sb.Append(@params[k]);
         }
@@ -33,8 +36,8 @@ public static class Hashing
     /// </summary>
     public static string GenerateImei(string userAgent)
     {
-        var guid = Guid.NewGuid().ToString();
-        var md5 = Md5Hex(userAgent);
+        string guid = Guid.NewGuid().ToString();
+        string md5 = Md5Hex(userAgent);
         return $"{guid}-{md5}";
     }
 
@@ -43,20 +46,23 @@ public static class Hashing
     /// </summary>
     public static async Task<string> ComputeLargeFileMd5Async(Stream stream, CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(stream);
+
         const int chunkSize = 2 * 1024 * 1024;
-        using var md5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
-        var buf = new byte[chunkSize];
+        using IncrementalHash md5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
+        byte[] buf = new byte[chunkSize];
         int read;
-        while ((read = await stream.ReadAsync(buf, ct)) > 0)
+        while ((read = await stream.ReadAsync(buf, ct).ConfigureAwait(false)) > 0)
         {
             md5.AppendData(buf, 0, read);
         }
         return Convert.ToHexString(md5.GetHashAndReset()).ToLowerInvariant();
     }
 
+    [SuppressMessage("Security", "CA5351:Do Not Use Broken Cryptographic Algorithms", Justification = "MD5 required by Zalo protocol specification")]
     internal static string Md5Hex(string input)
     {
-        var hash = MD5.HashData(Encoding.UTF8.GetBytes(input));
+        byte[] hash = MD5.HashData(Encoding.UTF8.GetBytes(input));
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 }

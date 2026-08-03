@@ -1,11 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Net;
 using System.Net.Http;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
-using Zalo.Net.Contracts.Errors;
+using Zalo.Net.Contracts.Exceptions;
 
 namespace Zalo.Net.Auth;
 
@@ -15,21 +16,30 @@ namespace Zalo.Net.Auth;
 /// </summary>
 public sealed class ZaloHttpClient : IDisposable
 {
+    /// <summary>Default Zalo Web API type constant (30).</summary>
     public const int ApiType = 30;
+
+    /// <summary>Default Zalo Web API version constant (671).</summary>
     public const int ApiVersion = 671;
 
     private readonly HttpClient _http;
     private readonly CookieStore _cookies;
     private readonly string _userAgent;
 
+    /// <summary>
+    /// Gets the associated <see cref="CookieStore"/>.
+    /// </summary>
     public CookieStore Cookies => _cookies;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ZaloHttpClient"/> class.
+    /// </summary>
     public ZaloHttpClient(string userAgent, CookieStore? cookies = null)
     {
         _userAgent = userAgent;
         _cookies = cookies ?? new CookieStore();
 
-        var handler = new HttpClientHandler
+        HttpClientHandler handler = new()
         {
             UseCookies = false,
             AllowAutoRedirect = false,
@@ -40,6 +50,9 @@ public sealed class ZaloHttpClient : IDisposable
         _http = new HttpClient(handler, disposeHandler: true);
     }
 
+    /// <summary>
+    /// Sends an HTTP request with default Zalo headers and manual redirect handling.
+    /// </summary>
     public async Task<HttpResponseMessage> RequestAsync(
         string url, HttpMethod method, HttpContent? body = null,
         Dictionary<string, string>? extraHeaders = null,
@@ -47,25 +60,28 @@ public sealed class ZaloHttpClient : IDisposable
         CancellationToken ct = default)
     {
         const int maxRedirects = 5;
-        var currentUrl = url;
+        string currentUrl = url;
 
         for (int i = 0; i < maxRedirects; i++)
         {
-            var req = new HttpRequestMessage(method, currentUrl);
-            AddDefaultHeaders(req, origin);
+            using HttpRequestMessage req = new(method, currentUrl);
+            this.AddDefaultHeaders(req, origin);
             if (extraHeaders != null)
             {
-                foreach (var (k, v) in extraHeaders)
+                foreach (KeyValuePair<string, string> kvp in extraHeaders)
                 {
-                    _ = req.Headers.TryAddWithoutValidation(k, v);
+                    _ = req.Headers.TryAddWithoutValidation(kvp.Key, kvp.Value);
                 }
             }
-            if (body != null && method != HttpMethod.Get) req.Content = body;
+            if (body != null && method != HttpMethod.Get)
+            {
+                req.Content = body;
+            }
 
-            var resp = await _http.SendAsync(req, ct);
+            HttpResponseMessage resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
 
-            var uri = new Uri(currentUrl);
-            if (resp.Headers.TryGetValues("Set-Cookie", out var setCookieValues))
+            Uri uri = new(currentUrl);
+            if (resp.Headers.TryGetValues("Set-Cookie", out IEnumerable<string>? setCookieValues))
             {
                 _cookies.AddCookies($"{uri.Scheme}://{uri.Host}", setCookieValues);
             }
@@ -73,8 +89,11 @@ public sealed class ZaloHttpClient : IDisposable
             if (resp.StatusCode is HttpStatusCode.Found or HttpStatusCode.MovedPermanently
                                 or HttpStatusCode.SeeOther or HttpStatusCode.TemporaryRedirect)
             {
-                var location = resp.Headers.Location?.ToString();
-                if (location is null) return resp;
+                string? location = resp.Headers.Location?.ToString();
+                if (location is null)
+                {
+                    return resp;
+                }
                 currentUrl = location.StartsWith("http", StringComparison.Ordinal) ? location : new Uri(new Uri(currentUrl), location).ToString();
                 method = HttpMethod.Get;
                 body = null;
@@ -85,14 +104,21 @@ public sealed class ZaloHttpClient : IDisposable
             return resp;
         }
 
-        throw new ZaloApiError("Too many redirects");
+        throw new ZaloApiException("Too many redirects");
     }
 
+    /// <summary>
+    /// Reads and parses JSON payload from response.
+    /// </summary>
     public static async Task<JsonNode?> ReadJsonAsync(HttpResponseMessage resp, CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(resp);
+
         if (!resp.IsSuccessStatusCode && resp.StatusCode != HttpStatusCode.Found)
-            throw new ZaloApiError($"HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}");
-        var content = await resp.Content.ReadAsStringAsync(ct);
+        {
+            throw new ZaloApiException(string.Format(CultureInfo.InvariantCulture, "HTTP {0} {1}", (int)resp.StatusCode, resp.ReasonPhrase));
+        }
+        string content = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
         return string.IsNullOrWhiteSpace(content) ? null : JsonNode.Parse(content);
     }
 
@@ -106,5 +132,6 @@ public sealed class ZaloHttpClient : IDisposable
         _ = req.Headers.TryAddWithoutValidation("Cookie", _cookies.GetCookieHeader(origin));
     }
 
+    /// <inheritdoc/>
     public void Dispose() => _http.Dispose();
 }

@@ -5,7 +5,10 @@ namespace Zalo.Net.Contracts;
 /// </summary>
 public enum ZaloThreadType
 {
+    /// <summary>Direct message thread with a single user.</summary>
     User,
+
+    /// <summary>Group chat thread.</summary>
     Group
 }
 
@@ -14,10 +17,19 @@ public enum ZaloThreadType
 /// </summary>
 public enum ZaloLoginStatus
 {
+    /// <summary>QR login initialized, waiting for user scan.</summary>
     Pending,
+
+    /// <summary>QR code scanned by mobile app, waiting for user confirmation.</summary>
     Scanned,
+
+    /// <summary>Login confirmed and session material retrieved successfully.</summary>
     Connected,
+
+    /// <summary>QR code session expired.</summary>
     Expired,
+
+    /// <summary>Login attempt declined by user.</summary>
     Declined
 }
 
@@ -26,10 +38,19 @@ public enum ZaloLoginStatus
 /// </summary>
 public enum ZaloConnectionStatus
 {
+    /// <summary>WebSocket listener is connected.</summary>
     Connected,
+
+    /// <summary>WebSocket listener disconnected.</summary>
     Disconnected,
+
+    /// <summary>Session is attempting automatic reconnection.</summary>
     Reconnecting,
+
+    /// <summary>Session has expired or credentials became invalid.</summary>
     SessionExpired,
+
+    /// <summary>Connection rejected due to duplicate login session elsewhere.</summary>
     DuplicateConnection
 }
 
@@ -38,9 +59,16 @@ public enum ZaloConnectionStatus
 /// </summary>
 public enum ZaloLogLevel
 {
+    /// <summary>Detailed diagnostic information.</summary>
     Debug,
+
+    /// <summary>General informational operational messages.</summary>
     Information,
+
+    /// <summary>Warning messages for non-fatal issues.</summary>
     Warning,
+
+    /// <summary>Error messages for failed operations.</summary>
     Error
 }
 
@@ -80,7 +108,7 @@ public sealed record ZaloSession(
     ZaloSessionMaterial Material,
     string Uid,
     string[] WsUrls,
-    IReadOnlyDictionary<string, string[]> ServiceMap,
+    System.Collections.Generic.IReadOnlyDictionary<string, string[]> ServiceMap,
     int PingIntervalMs);
 
 /// <summary>
@@ -105,7 +133,7 @@ public sealed record ZaloMessageEvent(
     ZaloThreadType ThreadType,
     string TimestampMs,
     object? Content,
-    IReadOnlyList<ZaloAttachment>? Attachments,
+    System.Collections.Generic.IReadOnlyList<ZaloAttachment>? Attachments,
     bool IsSelf);
 
 /// <summary>

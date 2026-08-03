@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using System.Text;
@@ -7,7 +8,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
-using Zalo.Net.Contracts.Errors;
+using Zalo.Net.Contracts.Exceptions;
 using Zalo.Net.Cryptography;
 
 namespace Zalo.Net.Auth;
@@ -20,40 +21,51 @@ public static class LoginApis
     private const string LoginInfoUrl = "https://wpa.chat.zalo.me/api/login/getLoginInfo";
     private const string ServerInfoUrl = "https://wpa.chat.zalo.me/api/login/getServerInfo";
 
+    /// <summary>Gets login info payload.</summary>
     public static async Task<JsonNode?> GetLoginInfoAsync(
         ZaloHttpClient http, string imei, string language, string encryptKey,
         CancellationToken ct = default)
     {
-        var (encParams, enk) = await BuildEncryptedParams(imei, language, encryptKey, "getlogininfo");
+        ArgumentNullException.ThrowIfNull(http);
 
-        var url = BuildUrl(LoginInfoUrl, encParams, new()
+        (Dictionary<string, string> encParams, string enk) = await BuildEncryptedParams(imei, language, encryptKey, "getlogininfo").ConfigureAwait(false);
+
+        string url = BuildUrl(LoginInfoUrl, encParams, new()
         {
             ["nretry"] = "0",
-            ["type"] = ZaloHttpClient.ApiType.ToString(),
-            ["client_version"] = ZaloHttpClient.ApiVersion.ToString(),
+            ["type"] = ZaloHttpClient.ApiType.ToString(CultureInfo.InvariantCulture),
+            ["client_version"] = ZaloHttpClient.ApiVersion.ToString(CultureInfo.InvariantCulture),
         });
 
-        var resp = await http.RequestAsync(url, HttpMethod.Get, ct: ct);
-        var json = await ZaloHttpClient.ReadJsonAsync(resp, ct);
+        HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
 
-        var errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
+        int errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
         if (errorCode != 0)
-            throw new ZaloApiError(json?["error_message"]?.GetValue<string>() ?? "getLoginInfo failed", errorCode);
+        {
+            throw new ZaloApiException(json?["error_message"]?.GetValue<string>() ?? "getLoginInfo failed", errorCode);
+        }
 
-        var encryptedData = json?["data"]?.GetValue<string>();
-        if (encryptedData is null) throw new ZaloApiError("getLoginInfo: missing data field");
+        string encryptedData = json?["data"]?.GetValue<string>()
+                             ?? throw new ZaloApiException("getLoginInfo: missing data field");
 
-        var decrypted = ZaloCipher.DecodeAesUtf8Key(enk, encryptedData)
-                        ?? throw new ZaloApiError("getLoginInfo: failed to decrypt response");
+        string decrypted = ZaloCipher.DecodeAesUtf8Key(enk, encryptedData)
+                        ?? throw new ZaloApiException("getLoginInfo: failed to decrypt response");
 
-        var parsed = JsonNode.Parse(decrypted);
+        JsonNode? parsed = JsonNode.Parse(decrypted);
 
         try
         {
             if (parsed is JsonObject o)
             {
-                if (o.ContainsKey("data")) return o["data"];
-                if (o.ContainsKey("zpw_enk")) return o;
+                if (o.ContainsKey("data"))
+                {
+                    return o["data"];
+                }
+                if (o.ContainsKey("zpw_enk"))
+                {
+                    return o;
+                }
             }
         }
         catch { /* fallback to parsed */ }
@@ -61,11 +73,14 @@ public static class LoginApis
         return parsed;
     }
 
+    /// <summary>Gets server info payload.</summary>
     public static async Task<JsonNode?> GetServerInfoAsync(
         ZaloHttpClient http, string imei,
         CancellationToken ct = default)
     {
-        var signKey = Hashing.GetSignKey("getserverinfo", new Dictionary<string, object?>
+        ArgumentNullException.ThrowIfNull(http);
+
+        string signKey = Hashing.GetSignKey("getserverinfo", new Dictionary<string, object?>
         {
             ["imei"] = imei,
             ["type"] = ZaloHttpClient.ApiType,
@@ -73,27 +88,28 @@ public static class LoginApis
             ["computer_name"] = "Web",
         });
 
-        var url = BuildUrl(ServerInfoUrl, new Dictionary<string, string>
+        string url = BuildUrl(ServerInfoUrl, new Dictionary<string, string>
         {
             ["imei"] = imei,
-            ["type"] = ZaloHttpClient.ApiType.ToString(),
-            ["client_version"] = ZaloHttpClient.ApiVersion.ToString(),
+            ["type"] = ZaloHttpClient.ApiType.ToString(CultureInfo.InvariantCulture),
+            ["client_version"] = ZaloHttpClient.ApiVersion.ToString(CultureInfo.InvariantCulture),
             ["computer_name"] = "Web",
             ["signkey"] = signKey,
         }, null);
 
-        var resp = await http.RequestAsync(url, HttpMethod.Get, ct: ct);
-        var json = await ZaloHttpClient.ReadJsonAsync(resp, ct);
+        HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
 
         return json?["data"] is null
-            ? throw new ZaloApiError(json?["error_message"]?.GetValue<string>() ?? "getServerInfo failed")
+            ? throw new ZaloApiException(json?["error_message"]?.GetValue<string>() ?? "getServerInfo failed")
             : json["data"];
     }
 
     private static Task<(Dictionary<string, string> Params, string Enk)> BuildEncryptedParams(
-        string imei, string language, string? existingEnk, string signType)
+        string imei, string language, string? encryptKey, string signType)
     {
-        var data = new Dictionary<string, object?>
+        _ = encryptKey;
+        Dictionary<string, object?> data = new()
         {
             ["computer_name"] = "Web",
             ["imei"] = imei,
@@ -101,20 +117,20 @@ public static class LoginApis
             ["ts"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
         };
 
-        var encryptor = new ParamsEncryptor(ZaloHttpClient.ApiType, imei, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-        var enk = encryptor.GetEncryptKey();
-        var dataJson = JsonSerializer.Serialize(data);
-        var encrypted = encryptor.EncryptData(dataJson);
-        var (zcid, zcidExt, encVer) = encryptor.GetParams();
+        ParamsEncryptor encryptor = new(ZaloHttpClient.ApiType, imei, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        string enk = encryptor.GetEncryptKey();
+        string dataJson = JsonSerializer.Serialize(data, AuthJsonContext.Default.DictionaryStringObject);
+        string encrypted = encryptor.EncryptData(dataJson);
+        (string zcid, string zcidExt, string encVer) = encryptor.GetParams();
 
-        var @params = new Dictionary<string, string>
+        Dictionary<string, string> @params = new()
         {
             ["params"] = encrypted,
             ["zcid"] = zcid,
             ["zcid_ext"] = zcidExt,
             ["enc_ver"] = encVer,
-            ["type"] = ZaloHttpClient.ApiType.ToString(),
-            ["client_version"] = ZaloHttpClient.ApiVersion.ToString(),
+            ["type"] = ZaloHttpClient.ApiType.ToString(CultureInfo.InvariantCulture),
+            ["client_version"] = ZaloHttpClient.ApiVersion.ToString(CultureInfo.InvariantCulture),
         };
 
         @params["signkey"] = Hashing.GetSignKey(signType, @params.ToDictionary(k => k.Key, v => (object?)v.Value));
@@ -125,12 +141,18 @@ public static class LoginApis
     private static string BuildUrl(string baseUrl, Dictionary<string, string> @params,
         Dictionary<string, string>? extra)
     {
-        var sb = new StringBuilder(baseUrl).Append('?');
-        foreach (var (k, v) in @params)
-            _ = sb.Append(Uri.EscapeDataString(k)).Append('=').Append(Uri.EscapeDataString(v)).Append('&');
+        StringBuilder sb = new StringBuilder(baseUrl).Append('?');
+        foreach (KeyValuePair<string, string> kvp in @params)
+        {
+            _ = sb.Append(Uri.EscapeDataString(kvp.Key)).Append('=').Append(Uri.EscapeDataString(kvp.Value)).Append('&');
+        }
         if (extra != null)
-            foreach (var (k, v) in extra)
-                _ = sb.Append(Uri.EscapeDataString(k)).Append('=').Append(Uri.EscapeDataString(v)).Append('&');
+        {
+            foreach (KeyValuePair<string, string> kvp in extra)
+            {
+                _ = sb.Append(Uri.EscapeDataString(kvp.Key)).Append('=').Append(Uri.EscapeDataString(kvp.Value)).Append('&');
+            }
+        }
         return sb.ToString().TrimEnd('&');
     }
 }

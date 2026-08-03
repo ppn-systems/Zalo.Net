@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using System.Text;
 
@@ -16,42 +17,58 @@ public sealed class ParamsEncryptor
     private readonly string _zcidExt;
     private string? _encryptKey;
 
+    /// <summary>
+    /// Initializes a new instance of the <see cref="ParamsEncryptor"/> class.
+    /// </summary>
     public ParamsEncryptor(int type, string imei, long firstLaunchTime)
     {
         _zcid = CreateZcid(type, imei, firstLaunchTime);
         _zcidExt = RandomHexString();
-        CreateEncryptKey();
+        this.CreateEncryptKey();
     }
 
     internal ParamsEncryptor(int type, string imei, long firstLaunchTime, string zcidExt)
     {
         _zcid = CreateZcid(type, imei, firstLaunchTime);
         _zcidExt = zcidExt;
-        CreateEncryptKey();
+        this.CreateEncryptKey();
     }
 
+    /// <summary>
+    /// Gets the derived 32-character encryption key.
+    /// </summary>
     public string GetEncryptKey()
         => _encryptKey ?? throw new InvalidOperationException("encryptKey not derived");
 
+    /// <summary>
+    /// Gets the parameter tuple (zcid, zcid_ext, enc_ver).
+    /// </summary>
     public (string Zcid, string ZcidExt, string EncVer) GetParams()
         => (_zcid, _zcidExt, "v2");
 
+    /// <summary>
+    /// Encrypts JSON parameter payload with the derived key.
+    /// </summary>
     public string EncryptData(string jsonData)
-        => ZaloCipher.EncodeAesUtf8Key(GetEncryptKey(), jsonData, hex: false);
+        => ZaloCipher.EncodeAesUtf8Key(this.GetEncryptKey(), jsonData, hex: false);
 
     private static string CreateZcid(int type, string imei, long firstLaunchTime)
     {
-        if (string.IsNullOrEmpty(imei)) throw new ArgumentException("IMEI is required", nameof(imei));
-        var msg = $"{type},{imei},{firstLaunchTime}";
+        if (string.IsNullOrEmpty(imei))
+        {
+            throw new ArgumentException("IMEI is required", nameof(imei));
+        }
+        string msg = $"{type},{imei},{firstLaunchTime}";
         return ZaloCipher.EncodeAesUtf8Key(ZcidAesKey, msg, hex: true, uppercase: true);
     }
 
+    [SuppressMessage("Design", "CA1031:Do not catch general exception types", Justification = "Retry mechanism handles generation failures up to 3 times")]
     private void CreateEncryptKey(int retry = 0)
     {
         try
         {
-            var md5ExtHex = ComputeMd5Hex(_zcidExt).ToUpperInvariant();
-            if (TryBuildKey(md5ExtHex, _zcid, out var key))
+            string md5ExtHex = ComputeMd5Hex(_zcidExt).ToUpperInvariant();
+            if (TryBuildKey(md5ExtHex, _zcid, out string? key))
             {
                 _encryptKey = key;
                 return;
@@ -59,23 +76,38 @@ public sealed class ParamsEncryptor
         }
         catch { /* fall through to retry */ }
 
-        if (retry < 3) CreateEncryptKey(retry + 1);
+        if (retry < 3)
+        {
+            this.CreateEncryptKey(retry + 1);
+        }
     }
 
-    private static bool TryBuildKey(string n, string zcid, out string key)
+    private static bool TryBuildKey(string n, string zcid, [NotNullWhen(true)] out string? key)
     {
         key = string.Empty;
-        var (nEven, _) = ProcessStr(n);
-        var (zcidEven, zcidOdd) = ProcessStr(zcid);
+        (List<char>? nEven, _) = ProcessStr(n);
+        (List<char>? zcidEven, List<char>? zcidOdd) = ProcessStr(zcid);
 
-        if (nEven is null || zcidEven is null || zcidOdd is null) return false;
+        if (nEven is null || zcidEven is null || zcidOdd is null)
+        {
+            return false;
+        }
 
-        var sb = new StringBuilder(32);
-        for (int i = 0; i < 8 && i < nEven.Count; i++) _ = sb.Append(nEven[i]);
-        for (int i = 0; i < 12 && i < zcidEven.Count; i++) _ = sb.Append(zcidEven[i]);
-        var zcidOddRev = new List<char>(zcidOdd);
+        StringBuilder sb = new(32);
+        for (int i = 0; i < 8 && i < nEven.Count; i++)
+        {
+            _ = sb.Append(nEven[i]);
+        }
+        for (int i = 0; i < 12 && i < zcidEven.Count; i++)
+        {
+            _ = sb.Append(zcidEven[i]);
+        }
+        List<char> zcidOddRev = [.. zcidOdd];
         zcidOddRev.Reverse();
-        for (int i = 0; i < 12 && i < zcidOddRev.Count; i++) _ = sb.Append(zcidOddRev[i]);
+        for (int i = 0; i < 12 && i < zcidOddRev.Count; i++)
+        {
+            _ = sb.Append(zcidOddRev[i]);
+        }
 
         key = sb.ToString();
         return key.Length == 32;
@@ -83,9 +115,12 @@ public sealed class ParamsEncryptor
 
     private static (List<char>? Even, List<char>? Odd) ProcessStr(string? s)
     {
-        if (string.IsNullOrEmpty(s)) return (null, null);
-        var even = new List<char>();
-        var odd = new List<char>();
+        if (string.IsNullOrEmpty(s))
+        {
+            return (null, null);
+        }
+        List<char> even = [];
+        List<char> odd = [];
         for (int i = 0; i < s.Length; i++)
         {
             (i % 2 == 0 ? even : odd).Add(s[i]);
@@ -95,14 +130,15 @@ public sealed class ParamsEncryptor
 
     private static string RandomHexString()
     {
-        var len = Random.Shared.Next(6, 13);
+        int len = Random.Shared.Next(6, 13);
         return Convert.ToHexString(RandomNumberGenerator.GetBytes((len + 1) / 2))
                       .ToLowerInvariant()[..len];
     }
 
+    [SuppressMessage("Security", "CA5351:Do Not Use Broken Cryptographic Algorithms", Justification = "MD5 required by Zalo protocol specification")]
     internal static string ComputeMd5Hex(string input)
     {
-        var hash = MD5.HashData(Encoding.UTF8.GetBytes(input));
+        byte[] hash = MD5.HashData(Encoding.UTF8.GetBytes(input));
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 }

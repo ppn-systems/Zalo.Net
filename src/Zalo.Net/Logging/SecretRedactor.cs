@@ -13,7 +13,11 @@ public static class SecretRedactor
 
     public static bool ContainsPotentialSecret(string logMessage)
     {
-        if (logMessage == null) return false;
+        if (logMessage == null)
+        {
+            return false;
+        }
+
         return logMessage.Contains("imei", StringComparison.OrdinalIgnoreCase)
             || logMessage.Contains("zpsid", StringComparison.OrdinalIgnoreCase)
             || logMessage.Contains("zpw_sek", StringComparison.OrdinalIgnoreCase)
