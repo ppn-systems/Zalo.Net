@@ -124,8 +124,8 @@ public static class MessageApis
 
         bool isGroup = threadType == ZaloThreadType.Group;
         string host = isGroup ? GetHost(session, "group", DefaultGroupHost) : GetHost(session, "chat", DefaultChatHost);
-        string path = isGroup ? "/api/group/sendmsg" : "/api/message/sms";
-        string url = MakeUrl(host, path);
+        string path = isGroup ? "/api/group/quote" : "/api/message/quote";
+        string url = MakeUrl(host, path) + "&nretry=0";
 
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         JsonObject payload = new()
@@ -138,7 +138,6 @@ public static class MessageApis
             ["qmsgType"] = 1,
             ["qmsgTs"] = quoteTs > 0 ? quoteTs : now,
             ["qmsg"] = quoteContent ?? "",
-            ["qmsgAttach"] = "{\"msgBubbleLayoutType\":1}",
             ["ttl"] = 0
         };
 
@@ -146,6 +145,7 @@ public static class MessageApis
         {
             payload["grid"] = threadId;
             payload["visibility"] = 0;
+            payload["qmsgAttach"] = "{\"msgBubbleLayoutType\":1}";
         }
         else
         {
