@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -63,47 +64,57 @@ public static class MessageHistoryApis
             throw new ZaloApiException("Failed to encrypt getOldMessages payload");
         }
 
-        HttpResponseMessage? lastResp = null;
         JsonNode? node = null;
+        string? lastError = null;
 
         foreach (string path in paths)
         {
             string baseUrl = MakeUrl(host, path);
-            string requestUrl = $"{baseUrl}&params={Uri.EscapeDataString(encryptedParams)}";
+
+            // 1. Try POST request with form-encoded body
             try
             {
-                HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+                using FormUrlEncodedContent formBody = new([new KeyValuePair<string, string>("params", encryptedParams)]);
+                using HttpResponseMessage resp = await http.RequestAsync(baseUrl, HttpMethod.Post, body: formBody, ct: ct).ConfigureAwait(false);
                 if (resp.IsSuccessStatusCode)
                 {
-                    node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
-                    if (node is not null)
+                    JsonNode? candidate = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+                    if (candidate?["error_code"]?.GetValue<int>() == 0)
                     {
+                        node = candidate;
                         break;
                     }
                 }
-                lastResp = resp;
             }
-            catch (ZaloApiException ex) when (ex.Code == 404 || ex.Message.Contains("404", StringComparison.OrdinalIgnoreCase))
+            catch (Exception ex)
             {
-                // Try next fallback path
+                lastError = ex.Message;
             }
-        }
 
-        if (node is null && lastResp is not null)
-        {
-            node = await ZaloHttpClient.ReadJsonAsync(lastResp, ct).ConfigureAwait(false);
+            // 2. Try GET request with query params
+            try
+            {
+                string requestUrl = $"{baseUrl}&params={Uri.EscapeDataString(encryptedParams)}";
+                using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+                if (resp.IsSuccessStatusCode)
+                {
+                    JsonNode? candidate = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+                    if (candidate?["error_code"]?.GetValue<int>() == 0)
+                    {
+                        node = candidate;
+                        break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                lastError = ex.Message;
+            }
         }
 
         if (node is null)
         {
-            throw new ZaloApiException("Không thể tải lịch sử tin nhắn nhóm từ máy chủ Zalo.");
-        }
-
-        int errorCode = node["error_code"]?.GetValue<int>() ?? -1;
-        if (errorCode != 0)
-        {
-            string msg = node["error_message"]?.GetValue<string>() ?? $"Error {errorCode}";
-            throw new ZaloApiException(msg, errorCode);
+            throw new ZaloApiException($"Khong the tai lich su tin nhan nhom tu Zalo Server ({lastError ?? "404 Not Found"}).");
         }
 
         JsonNode? dataNode = node["data"];
