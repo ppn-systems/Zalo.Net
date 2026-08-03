@@ -53,21 +53,21 @@ public static class ReactionApis
 {
     private static (int rType, string icon) GetReactionDetails(ZaloReactionType reaction) => reaction switch
     {
-        ZaloReactionType.Haha => (0, "/:-))"),
-        ZaloReactionType.Like => (3, ":-b"),
-        ZaloReactionType.Heart => (5, "<3"),
-        ZaloReactionType.Wow => (32, ":-O"),
-        ZaloReactionType.Cry => (2, ";-("),
-        ZaloReactionType.Angry => (20, ":-||"),
+        ZaloReactionType.Haha => (0, ":>"),
+        ZaloReactionType.Like => (3, "/-strong"),
+        ZaloReactionType.Heart => (5, "/-heart"),
+        ZaloReactionType.Wow => (32, ":o"),
+        ZaloReactionType.Cry => (2, ":-(("),
+        ZaloReactionType.Angry => (20, ":-h"),
         ZaloReactionType.Kiss => (8, ":-*"),
-        ZaloReactionType.TearsOfJoy => (7, ":-D"),
-        ZaloReactionType.Shit => (66, "💩"),
-        ZaloReactionType.Rose => (120, "🌹"),
-        ZaloReactionType.BrokenHeart => (65, "💔"),
-        ZaloReactionType.Dislike => (4, "👎"),
-        ZaloReactionType.Love => (29, "😍"),
-        ZaloReactionType.Confused => (51, "🤔"),
-        _ => ((int)reaction, "👍")
+        ZaloReactionType.TearsOfJoy => (7, ":'"),
+        ZaloReactionType.Shit => (66, "/-shit"),
+        ZaloReactionType.Rose => (120, "/-rose"),
+        ZaloReactionType.BrokenHeart => (65, "/-break"),
+        ZaloReactionType.Dislike => (4, "/-weak"),
+        ZaloReactionType.Love => (29, ";xx"),
+        ZaloReactionType.Confused => (51, ";-/"),
+        _ => ((int)reaction, "/-heart")
     };
 
     /// <summary>Adds a reaction (emoji) to a message.</summary>
