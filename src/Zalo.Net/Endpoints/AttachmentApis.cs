@@ -63,21 +63,30 @@ public static class AttachmentApis
         return node.GetValue<string>();
     }
 
+    private static string? GetPropString(JsonNode? node, string propName)
+    {
+        if (node is JsonObject obj && obj.TryGetPropertyValue(propName, out JsonNode? child))
+        {
+            return GetNodeString(child);
+        }
+        return null;
+    }
+
     private static JsonNode? DecryptDataNode(ZaloSession session, JsonNode? node)
     {
-        if (node is null)
+        if (node is not JsonObject root)
         {
             return null;
         }
-        JsonNode? dataNode = node["data"];
-        if (dataNode is null)
+
+        if (!root.TryGetPropertyValue("data", out JsonNode? dataNode) || dataNode is null)
         {
-            return node;
+            return root;
         }
 
-        if (dataNode is JsonValue)
+        if (dataNode is JsonValue val)
         {
-            string encStr = dataNode.GetValue<string>();
+            string encStr = val.ToString();
             if (!string.IsNullOrWhiteSpace(encStr))
             {
                 string? decrypted = ZaloCipher.DecodeAes(session.Material.SecretKey, encStr)
@@ -87,19 +96,19 @@ public static class AttachmentApis
                     try
                     {
                         JsonNode? decodedJson = JsonNode.Parse(decrypted);
-                        if (decodedJson is JsonObject obj && obj.ContainsKey("data"))
+                        if (decodedJson is JsonObject obj && obj.TryGetPropertyValue("data", out JsonNode? innerData) && innerData is JsonObject)
                         {
-                            return obj["data"];
+                            return innerData;
                         }
                         return decodedJson;
                     }
                     catch
                     {
-                        return node;
+                        return root;
                     }
                 }
             }
-            return node;
+            return root;
         }
 
         return dataNode;
@@ -189,36 +198,42 @@ public static class AttachmentApis
             using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Post, body: content, ct: ct).ConfigureAwait(false);
             JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
 
-            int errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
+            int errorCode = -1;
+            if (json is JsonObject jObj && jObj.TryGetPropertyValue("error_code", out JsonNode? errNode) && errNode is JsonValue errVal)
+            {
+                if (!errVal.TryGetValue(out errorCode))
+                {
+                    errorCode = -1;
+                }
+            }
+
             if (errorCode != 0)
             {
-                throw new ZaloApiException(json?["error_message"]?.GetValue<string>() ?? "upload file failed", errorCode);
+                string errMsg = GetPropString(json, "error_message") ?? "upload file failed";
+                throw new ZaloApiException(errMsg, errorCode);
             }
 
             JsonNode? dataNode = DecryptDataNode(session, json) ?? json;
-            photoId = GetNodeString(dataNode?["fileId"])
-                   ?? GetNodeString(dataNode?["photoId"])
-                   ?? GetNodeString(dataNode?["file_id"])
-                   ?? GetNodeString(dataNode?["photo_id"])
-                   ?? GetNodeString(json?["fileId"])
-                   ?? GetNodeString(json?["photoId"])
-                   ?? GetNodeString(json?["file_id"])
-                   ?? GetNodeString(json?["photo_id"])
-                   ?? GetNodeString(json?["data"]?["fileId"])
-                   ?? GetNodeString(json?["data"]?["photoId"]);
+            photoId = GetPropString(dataNode, "fileId")
+                   ?? GetPropString(dataNode, "photoId")
+                   ?? GetPropString(dataNode, "file_id")
+                   ?? GetPropString(dataNode, "photo_id")
+                   ?? GetPropString(json, "fileId")
+                   ?? GetPropString(json, "photoId")
+                   ?? GetPropString(json, "file_id")
+                   ?? GetPropString(json, "photo_id");
 
-            normalUrl = GetNodeString(dataNode?["normalUrl"])
-                     ?? GetNodeString(dataNode?["fileUrl"])
-                     ?? GetNodeString(dataNode?["url"])
-                     ?? GetNodeString(dataNode?["downloadUrl"])
-                     ?? GetNodeString(json?["normalUrl"])
-                     ?? GetNodeString(json?["fileUrl"])
-                     ?? GetNodeString(json?["url"])
-                     ?? GetNodeString(json?["data"]?["fileUrl"])
+            normalUrl = GetPropString(dataNode, "normalUrl")
+                     ?? GetPropString(dataNode, "fileUrl")
+                     ?? GetPropString(dataNode, "url")
+                     ?? GetPropString(dataNode, "downloadUrl")
+                     ?? GetPropString(json, "normalUrl")
+                     ?? GetPropString(json, "fileUrl")
+                     ?? GetPropString(json, "url")
                      ?? "";
 
-            hdUrl = GetNodeString(dataNode?["hdUrl"]) ?? normalUrl;
-            thumbUrl = GetNodeString(dataNode?["thumbUrl"]) ?? normalUrl;
+            hdUrl = GetPropString(dataNode, "hdUrl") ?? normalUrl;
+            thumbUrl = GetPropString(dataNode, "thumbUrl") ?? normalUrl;
         }
 
         if (string.IsNullOrEmpty(photoId) || photoId == "-1")
@@ -319,17 +334,26 @@ public static class AttachmentApis
         using HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Post, body: body, ct: ct).ConfigureAwait(false);
         JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
 
-        int errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
+        int errorCode = -1;
+        if (json is JsonObject jObj && jObj.TryGetPropertyValue("error_code", out JsonNode? errNode) && errNode is JsonValue errVal)
+        {
+            if (!errVal.TryGetValue(out errorCode))
+            {
+                errorCode = -1;
+            }
+        }
+
         if (errorCode != 0)
         {
-            throw new ZaloApiException(json?["error_message"]?.GetValue<string>() ?? "sendFileMessage failed", errorCode);
+            string errMsg = GetPropString(json, "error_message") ?? "sendFileMessage failed";
+            throw new ZaloApiException(errMsg, errorCode);
         }
 
         JsonNode? dataNode = DecryptDataNode(session, json) ?? json;
-        string msgId = GetNodeString(dataNode?["msgId"])
-                    ?? GetNodeString(dataNode?["message_id"])
-                    ?? GetNodeString(json?["msgId"])
-                    ?? GetNodeString(json?["message_id"])
+        string msgId = GetPropString(dataNode, "msgId")
+                    ?? GetPropString(dataNode, "message_id")
+                    ?? GetPropString(json, "msgId")
+                    ?? GetPropString(json, "message_id")
                     ?? now.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         return new ZaloSendResult(msgId);
