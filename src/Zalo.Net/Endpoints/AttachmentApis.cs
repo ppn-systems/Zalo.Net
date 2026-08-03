@@ -339,7 +339,10 @@ public static class AttachmentApis
             }
         }
 
-        Console.WriteLine($"[DEBUG LOG] Upload Result -> fileId='{finalId}', fileUrl='{normalUrl}'");
+        if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Internal.Debug))
+        {
+            ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Internal.Debug, $"Upload result: fileId='{finalId}', hasUrl={!string.IsNullOrEmpty(normalUrl)}");
+        }
         return new UploadResult(finalId, normalUrl ?? "", hdUrl ?? "", thumbUrl ?? "", checksum, totalSize);
     }
 
