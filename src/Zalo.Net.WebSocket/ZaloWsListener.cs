@@ -198,36 +198,44 @@ public sealed class ZaloWsListener
     private static async Task<(byte[] Bytes, WebSocketMessageType Type)> ReceiveFullFrameAsync(
         ClientWebSocket ws, byte[] buf, CancellationToken ct)
     {
-        List<byte[]> segments = [];
-        int total = 0;
+        WebSocketReceiveResult result = await ws.ReceiveAsync(new ArraySegment<byte>(buf), ct).ConfigureAwait(false);
+        if (result.MessageType == WebSocketMessageType.Close)
+        {
+            return ([], WebSocketMessageType.Close);
+        }
+
+        if (result.EndOfMessage)
+        {
+            byte[] frame = new byte[result.Count];
+            Buffer.BlockCopy(buf, 0, frame, 0, result.Count);
+            return (frame, result.MessageType);
+        }
+
+        List<byte[]> segments = [buf[..result.Count]];
+        int total = result.Count;
 
         while (true)
         {
-            WebSocketReceiveResult result = await ws.ReceiveAsync(new ArraySegment<byte>(buf), ct).ConfigureAwait(false);
-            segments.Add([.. buf[..result.Count]]);
+            result = await ws.ReceiveAsync(new ArraySegment<byte>(buf), ct).ConfigureAwait(false);
+            if (result.MessageType == WebSocketMessageType.Close)
+            {
+                return ([], WebSocketMessageType.Close);
+            }
+
+            segments.Add(buf[..result.Count]);
             total += result.Count;
 
             if (result.EndOfMessage)
             {
-                if (result.MessageType == WebSocketMessageType.Close)
-                {
-                    return ([], WebSocketMessageType.Close);
-                }
-                if (segments.Count == 1)
-                {
-                    return (segments[0], result.MessageType);
-                }
                 byte[] out_ = new byte[total];
                 int off = 0;
                 foreach (byte[] s in segments)
                 {
-                    s.CopyTo(out_, off);
+                    Buffer.BlockCopy(s, 0, out_, off, s.Length);
                     off += s.Length;
                 }
                 return (out_, result.MessageType);
             }
-
-            buf = ArrayPool<byte>.Shared.Rent((total * 2) + InitialBufferSize);
         }
     }
 

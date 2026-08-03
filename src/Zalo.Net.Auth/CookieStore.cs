@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 using System;
@@ -79,15 +79,19 @@ public sealed class CookieStore
     public string GetAllCookiesHeader()
     {
         HashSet<string> seenKeys = new(StringComparer.OrdinalIgnoreCase);
-        List<string> pairs = [];
+        System.Text.StringBuilder sb = new();
         foreach (Cookie c in _jar.GetAllCookies())
         {
             if (!string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.Value) && seenKeys.Add(c.Name))
             {
-                pairs.Add($"{c.Name}={c.Value}");
+                if (sb.Length > 0)
+                {
+                    _ = sb.Append("; ");
+                }
+                _ = sb.Append(c.Name).Append('=').Append(c.Value);
             }
         }
-        return string.Join("; ", pairs);
+        return sb.ToString();
     }
 
     /// <summary>

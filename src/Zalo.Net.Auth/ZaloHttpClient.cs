@@ -137,8 +137,8 @@ public sealed class ZaloHttpClient : IDisposable
         {
             throw new ZaloApiException(string.Format(CultureInfo.InvariantCulture, "HTTP {0} {1}", (int)resp.StatusCode, resp.ReasonPhrase));
         }
-        string content = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-        return string.IsNullOrWhiteSpace(content) ? null : JsonNode.Parse(content);
+        await using System.IO.Stream stream = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+        return await JsonNode.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
     }
 
     private void AddDefaultHeaders(HttpRequestMessage req, string currentUrl, string origin)
