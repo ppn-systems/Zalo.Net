@@ -370,12 +370,27 @@ internal static class Program
 
     private static async Task HandleGetHistoryAsync(ZaloSession session, CancellationToken ct)
     {
+        try
+        {
+            System.Console.WriteLine("[THÔNG BÁO] Đang tự động tải danh sách các nhóm chat...");
+            IReadOnlyList<ZaloGroupInfo> remoteGroups = await ZaloWebClient.GetAllGroupsAsync(session, ct).ConfigureAwait(false);
+
+            foreach (ZaloGroupInfo g in remoteGroups)
+            {
+                s_registry.AddOrUpdate(g.Name, g.GroupId, ZaloThreadType.Group);
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[CẢNH BÁO] Không thể tự động lấy danh sách nhóm trực tuyến: {ex.Message}");
+        }
+
         string targetId = "";
         List<QuickTarget> groups = [.. s_registry.GetAll().Where(t => t.ThreadType == ZaloThreadType.Group)];
 
         if (groups.Count > 0)
         {
-            System.Console.WriteLine("\n[DANH SÁCH NHÓM GẦN ĐÂY]");
+            System.Console.WriteLine("\n[DANH SÁCH NHÓM CỦA BẠN]");
             ConsoleTable groupTable = new("STT", "Tên nhóm", "Group ID");
             foreach (QuickTarget g in groups)
             {
@@ -384,7 +399,7 @@ internal static class Program
             groupTable.AddRow("0", "Nhập Group ID thủ công", "-");
             groupTable.Print(ConsoleColor.DarkCyan, ConsoleColor.Yellow);
 
-            System.Console.Write("[NHẬP] Chọn số thứ tự nhóm (hoặc dán Group ID): ");
+            System.Console.Write("[NHẬP] Chọn số thứ tự nhóm: ");
             string? input = System.Console.ReadLine()?.Trim();
             if (string.IsNullOrEmpty(input))
             {

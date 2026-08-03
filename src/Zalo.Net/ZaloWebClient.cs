@@ -348,6 +348,15 @@ public sealed class ZaloWebClient : IDisposable
 
     #region Group Management (Group 2)
 
+    /// <summary>Fetches all group chats the user belongs to.</summary>
+    public static async Task<IReadOnlyList<ZaloGroupInfo>> GetAllGroupsAsync(ZaloSession session, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        return await GroupApis.GetAllGroupsAsync(http, session, ct).ConfigureAwait(false);
+    }
+
     /// <summary>Creates a new Zalo group chat.</summary>
     public static async Task<ZaloGroupCreateResult> CreateGroupAsync(
         ZaloSession session, string groupName, IEnumerable<string> memberIds, CancellationToken ct)

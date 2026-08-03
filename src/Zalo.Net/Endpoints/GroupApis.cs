@@ -341,4 +341,76 @@ internal static class GroupApis
             throw new ZaloApiException(msg, errorCode);
         }
     }
+
+    public static async Task<IReadOnlyList<ZaloGroupInfo>> GetAllGroupsAsync(
+        ZaloHttpClient http, ZaloSession session, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+
+        string host = GetGroupHost(session);
+        string url = MakeUrl(host, "/api/group/getlg/v4");
+
+        using HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+
+        List<string> groupIds = [];
+        if (node?["data"]?["gridVerMap"] is JsonObject gridVerMap)
+        {
+            foreach (KeyValuePair<string, JsonNode?> kvp in gridVerMap)
+            {
+                if (!string.IsNullOrEmpty(kvp.Key))
+                {
+                    groupIds.Add(kvp.Key);
+                }
+            }
+        }
+
+        if (groupIds.Count == 0)
+        {
+            return [];
+        }
+
+        string getMgUrl = MakeUrl(host, "/api/group/getmg-v2");
+        JsonObject gridMap = [];
+        foreach (string id in groupIds)
+        {
+            gridMap[id] = 0;
+        }
+
+        JsonObject payload = new()
+        {
+            ["gridVerMap"] = gridMap.ToJsonString()
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (!string.IsNullOrEmpty(encryptedParams))
+        {
+            using FormUrlEncodedContent formBody = new([new KeyValuePair<string, string>("params", encryptedParams)]);
+            using HttpResponseMessage mgResp = await http.RequestAsync(getMgUrl, HttpMethod.Post, body: formBody, ct: ct).ConfigureAwait(false);
+            JsonNode? mgNode = await ZaloHttpClient.ReadJsonAsync(mgResp, ct).ConfigureAwait(false);
+            JsonNode? dataNode = DecryptDataNode(session, mgNode) ?? mgNode?["data"];
+
+            if (dataNode?["gridInfoMap"] is JsonObject infoMap)
+            {
+                List<ZaloGroupInfo> result = [];
+                foreach (KeyValuePair<string, JsonNode?> kvp in infoMap)
+                {
+                    if (kvp.Value is JsonObject item)
+                    {
+                        string gId = kvp.Key;
+                        string gName = item["name"]?.GetValue<string>() ?? item["gname"]?.GetValue<string>() ?? $"Group {gId}";
+                        string? avatar = item["avatar"]?.GetValue<string>() ?? item["gavatar"]?.GetValue<string>();
+                        int memCount = item["totalMem"]?.GetValue<int>() ?? item["memCount"]?.GetValue<int>() ?? 0;
+                        string ownerId = item["creatorId"]?.GetValue<string>() ?? item["ownerId"]?.GetValue<string>() ?? "";
+
+                        result.Add(new ZaloGroupInfo(gId, gName, avatar, memCount, ownerId));
+                    }
+                }
+                return result;
+            }
+        }
+
+        return [.. groupIds.Select(id => new ZaloGroupInfo(id, $"Group {id}", null, 0, ""))];
+    }
 }
