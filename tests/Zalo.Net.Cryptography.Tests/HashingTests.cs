@@ -28,6 +28,10 @@ public class HashingTests
     }
 
     [Fact]
+    public void GetSignKey_NullParams_ThrowsArgumentNullException()
+        => _ = Assert.Throws<ArgumentNullException>(() => Hashing.GetSignKey("getlogininfo", null!));
+
+    [Fact]
     public void GenerateImei_ValidUserAgent_ProducesExpectedFormat()
     {
         string ua = "Mozilla/5.0";
@@ -37,6 +41,16 @@ public class HashingTests
         Assert.Contains("-", imei, StringComparison.Ordinal);
         string[] parts = imei.Split('-');
         Assert.True(parts.Length >= 2);
+    }
+
+    [Fact]
+    public void GenerateImei_MultipleCalls_GeneratesUniqueImeis()
+    {
+        string ua = "Mozilla/5.0";
+        string imei1 = Hashing.GenerateImei(ua);
+        string imei2 = Hashing.GenerateImei(ua);
+
+        Assert.NotEqual(imei1, imei2);
     }
 
     [Fact]
@@ -50,4 +64,8 @@ public class HashingTests
         Assert.NotNull(hash);
         Assert.Equal(32, hash.Length);
     }
+
+    [Fact]
+    public async Task ComputeLargeFileMd5Async_NullStream_ThrowsArgumentNullException()
+        => _ = await Assert.ThrowsAsync<ArgumentNullException>(() => Hashing.ComputeLargeFileMd5Async(null!));
 }

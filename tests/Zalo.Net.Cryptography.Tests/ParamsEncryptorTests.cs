@@ -68,4 +68,11 @@ public sealed class ParamsEncryptorTests
         Assert.Equal(md5.ToLowerInvariant(), md5);
         Assert.Equal(32, md5.Length);
     }
+
+    [Fact]
+    public void Constructor_NullOrEmptyImei_ThrowsArgumentException()
+    {
+        _ = Assert.Throws<ArgumentException>(() => new ParamsEncryptor(Type, "", FirstLaunchTime));
+        _ = Assert.Throws<ArgumentException>(() => new ParamsEncryptor(Type, null!, FirstLaunchTime));
+    }
 }

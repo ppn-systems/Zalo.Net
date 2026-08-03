@@ -27,4 +27,41 @@ public class ZaloModelsTests
         Assert.Equal("code123", session.QrCode);
         Assert.Equal(expires, session.ExpiresAt);
     }
+
+    [Fact]
+    public void ZaloUserProfile_RecordProperties_VerifyFields()
+    {
+        ZaloUserProfile profile = new("uid123", "Nguyen Van A", "https://avatar.com/a.jpg");
+
+        Assert.Equal("uid123", profile.Uid);
+        Assert.Equal("Nguyen Van A", profile.DisplayName);
+        Assert.Equal("https://avatar.com/a.jpg", profile.AvatarUrl);
+    }
+
+    [Fact]
+    public void ZaloSendResult_RecordProperties_VerifyFields()
+    {
+        ZaloSendResult result = new("msg_999");
+        Assert.Equal("msg_999", result.MsgId);
+    }
+
+    [Fact]
+    public void ZaloSessionStatusChanged_RecordProperties_VerifyFields()
+    {
+        ZaloSessionStatusChanged evt = new("uid123", ZaloConnectionStatus.Reconnecting, "Connection lost");
+
+        Assert.Equal("uid123", evt.Uid);
+        Assert.Equal(ZaloConnectionStatus.Reconnecting, evt.Status);
+        Assert.Equal("Connection lost", evt.Reason);
+    }
+
+    [Fact]
+    public void ZaloAttachment_RecordProperties_VerifyFields()
+    {
+        ZaloAttachment attachment = new("https://zalo.me/file.pdf", "file.pdf", "share.file");
+
+        Assert.Equal("https://zalo.me/file.pdf", attachment.Url);
+        Assert.Equal("file.pdf", attachment.FileName);
+        Assert.Equal("share.file", attachment.Type);
+    }
 }

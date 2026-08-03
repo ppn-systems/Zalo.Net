@@ -1,6 +1,3 @@
-using Org.BouncyCastle.Crypto.Engines;
-using Org.BouncyCastle.Crypto.Modes;
-using Org.BouncyCastle.Crypto.Parameters;
 using System;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
@@ -9,6 +6,9 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Threading.Tasks;
+using Org.BouncyCastle.Crypto.Engines;
+using Org.BouncyCastle.Crypto.Modes;
+using Org.BouncyCastle.Crypto.Parameters;
 using Xunit;
 
 namespace Zalo.Net.Cryptography.Tests;
@@ -44,7 +44,7 @@ public sealed class WsFrameCodecTests
     [SuppressMessage("AOT", "IL3050:Calling members annotated with 'RequiresDynamicCodeAttribute' may break in AOT", Justification = "Test helper")]
     public async Task DecodeFrameBody_Encrypt0_ParsesPlainJson()
     {
-        const string innerJson = """{"msgs":[{"msgId":"1234567890123456789","content":"hello"}]}""";
+        const string innerJson = /*lang=json,strict*/ """{"msgs":[{"msgId":"1234567890123456789","content":"hello"}]}""";
         string envelope = $$"""{"data":{{System.Text.Json.JsonSerializer.Serialize(innerJson)}},"encrypt":0}""";
         ReadOnlyMemory<byte> body = new(Encoding.UTF8.GetBytes(envelope));
 
@@ -58,7 +58,7 @@ public sealed class WsFrameCodecTests
     [Fact]
     public async Task DecodeFrameBody_BigIntMsgId_PreservedAsString()
     {
-        const string innerJson = """{"msgId":"9007199254740993","cliMsgId":"9007199254740994"}""";
+        const string innerJson = /*lang=json,strict*/ """{"msgId":"9007199254740993","cliMsgId":"9007199254740994"}""";
         byte[] deflated = DeflateZlib(Encoding.UTF8.GetBytes(innerJson));
         string b64 = Convert.ToBase64String(deflated);
         string envelope = $$"""{"data":"{{b64}}","encrypt":1}""";
@@ -76,7 +76,7 @@ public sealed class WsFrameCodecTests
     [Fact]
     public async Task DecodeFrameBody_Encrypt2_AesGcmRoundTrip()
     {
-        const string innerJson = """{"msgs":[{"msgId":"1111222233334444","content":"test"}]}""";
+        const string innerJson = /*lang=json,strict*/ """{"msgs":[{"msgId":"1111222233334444","content":"test"}]}""";
         byte[] keyBytes = new byte[32];
         RandomNumberGenerator.Fill(keyBytes);
         string cipherKey = Convert.ToBase64String(keyBytes);
@@ -96,7 +96,7 @@ public sealed class WsFrameCodecTests
     [Fact]
     public async Task DecodeFrameBody_Encrypt3_AesGcmNoInflate()
     {
-        const string innerJson = """{"key":"somekey"}""";
+        const string innerJson = /*lang=json,strict*/ """{"key":"somekey"}""";
         byte[] keyBytes = new byte[32];
         RandomNumberGenerator.Fill(keyBytes);
         string cipherKey = Convert.ToBase64String(keyBytes);
@@ -116,6 +116,15 @@ public sealed class WsFrameCodecTests
     {
         string fakeData = Convert.ToBase64String(new byte[64]);
         string envelope = $$"""{"data":"{{fakeData}}","encrypt":2}""";
+        ReadOnlyMemory<byte> body = new(Encoding.UTF8.GetBytes(envelope));
+        _ = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => WsFrameCodec.DecodeFrameBodyAsync(body, cipherKey: null));
+    }
+
+    [Fact]
+    public async Task DecodeFrameBody_UnknownEncryptType_ThrowsInvalidOperationException()
+    {
+        string envelope = /*lang=json,strict*/ """{"data":"hello","encrypt":99}""";
         ReadOnlyMemory<byte> body = new(Encoding.UTF8.GetBytes(envelope));
         _ = await Assert.ThrowsAsync<InvalidOperationException>(
             () => WsFrameCodec.DecodeFrameBodyAsync(body, cipherKey: null));
