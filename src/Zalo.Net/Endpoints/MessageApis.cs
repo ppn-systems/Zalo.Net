@@ -106,6 +106,71 @@ public static class MessageApis
         return msgId;
     }
 
+    /// <summary>Sends a reply/quote message quoting an existing message.</summary>
+    public static async Task<string> SendQuoteAsync(
+        ZaloHttpClient http, ZaloSession session,
+        string threadId, ZaloThreadType threadType, string text,
+        string quoteMsgId, string quoteCliMsgId, string quoteSenderUid, string quoteContent,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(text);
+        ArgumentException.ThrowIfNullOrWhiteSpace(quoteMsgId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(quoteCliMsgId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(quoteSenderUid);
+
+        bool isGroup = threadType == ZaloThreadType.Group;
+        string host = isGroup ? GetHost(session, "group", DefaultGroupHost) : GetHost(session, "chat", DefaultChatHost);
+        string path = isGroup ? "/api/group/sendmsg" : "/api/message/sms";
+        string url = MakeUrl(host, path);
+
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        JsonObject payload = new()
+        {
+            ["message"] = text,
+            ["clientId"] = now,
+            ["qmsgOwner"] = quoteSenderUid,
+            ["qmsgId"] = quoteMsgId,
+            ["qmsgCliId"] = quoteCliMsgId,
+            ["qmsgType"] = 1,
+            ["qmsgTs"] = now,
+            ["qmsg"] = quoteContent ?? "",
+            ["ttl"] = 0
+        };
+
+        if (isGroup)
+        {
+            payload["grid"] = threadId;
+            payload["visibility"] = 0;
+        }
+        else
+        {
+            payload["toid"] = threadId;
+            payload["imei"] = session.Material.Imei;
+        }
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Mã hóa tham số trích dẫn tin nhắn thất bại.");
+        }
+
+        using FormUrlEncodedContent body = new([new KeyValuePair<string, string>("params", encryptedParams)]);
+        using HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Post, body: body, ct: ct).ConfigureAwait(false);
+        JsonNode? root = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+
+        int errorCode = root?["error_code"]?.GetValue<int>() ?? -1;
+        if (errorCode != 0)
+        {
+            string message = root?["error_message"]?.GetValue<string>() ?? "Unknown error";
+            throw new ZaloApiException($"Zalo Server Error {errorCode}: {message}");
+        }
+
+        return root?["data"]?["msgId"]?.GetValue<string>() ?? now.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     /// <summary>Fetches profile information for a user.</summary>
     public static async Task<(string Uid, string DisplayName, string? AvatarUrl)> GetUserInfoAsync(
         ZaloHttpClient http, ZaloSession session, string userId, CancellationToken ct)

@@ -331,6 +331,51 @@ public sealed class ZaloWebClient : IDisposable
         return new ZaloUserProfile(uid, name, avatar);
     }
 
+    /// <summary>Sends a reply/quote message quoting an existing message.</summary>
+    public static async Task<string> SendQuoteMessageAsync(
+        ZaloSession session, string threadId, ZaloThreadType threadType, string text,
+        string quoteMsgId, string quoteCliMsgId, string quoteSenderUid, string quoteContent,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        return await MessageApis.SendQuoteAsync(http, session, threadId, threadType, text, quoteMsgId, quoteCliMsgId, quoteSenderUid, quoteContent, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Recalls/undos a previously sent message.</summary>
+    public static async Task UndoMessageAsync(
+        ZaloSession session, string threadId, string msgId, string cliMsgId, ZaloThreadType type,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        await UndoApis.UndoMessageAsync(http, session, threadId, msgId, cliMsgId, type, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Adds a reaction (emoji) to a message.</summary>
+    public static async Task AddReactionAsync(
+        ZaloSession session, string threadId, string msgId, string cliMsgId, ZaloThreadType type,
+        ZaloReactionType reaction, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        await ReactionApis.AddReactionAsync(http, session, threadId, msgId, cliMsgId, type, reaction, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Sends a Zalo sticker message.</summary>
+    public static async Task SendStickerAsync(
+        ZaloSession session, string threadId, int stickerId, int cateId, int stickerType, ZaloThreadType type,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        await StickerApis.SendStickerAsync(http, session, threadId, stickerId, cateId, stickerType, type, ct).ConfigureAwait(false);
+    }
+
     #region Group Management (Group 2)
 
     /// <summary>Fetches all group chats the user belongs to.</summary>

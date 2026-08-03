@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Zalo.Net;
 using Zalo.Net.Contracts;
+using Zalo.Net.Endpoints;
 
 namespace Zalo.Console;
 
@@ -193,6 +194,11 @@ internal static class Program
             menuTable.AddRow("2", "  Gửi hình ảnh đính kèm");
             menuTable.AddRow("3", "  Gửi File / Hóa đơn / Hợp đồng đính kèm");
             menuTable.AddRow("4", "  Giám sát tin nhắn Realtime (WebSocket CRM)");
+            menuTable.AddRow("--", "[TÍNH NĂNG TƯƠNG TÁC TIN NHẮN (INTERACTION)]");
+            menuTable.AddRow("14", " Thu hồi tin nhắn (Undo / Recall)");
+            menuTable.AddRow("15", " Trả lời / Trích dẫn tin nhắn (Quote / Reply)");
+            menuTable.AddRow("16", " Thả cảm xúc / Reaction (Heart/Like/Haha...)");
+            menuTable.AddRow("17", " Gửi Sticker / Nhãn dán");
             menuTable.AddRow("--", "[QUẢN LÝ BẠN BÈ & KHÁCH HÀNG (CRM)]");
             menuTable.AddRow("5", "  Danh sách bạn bè");
             menuTable.AddRow("6", "  Tra cứu thông tin người dùng qua SĐT");
@@ -272,6 +278,22 @@ internal static class Program
                     }
                     System.Console.WriteLine("[THÔNG BÁO] Đã xóa file session.json. Khởi động lại ứng dụng để quét mã mới.");
                     return;
+
+                case "14":
+                    await HandleUndoMessageAsync(session, ct).ConfigureAwait(false);
+                    break;
+
+                case "15":
+                    await HandleSendQuoteMessageAsync(session, ct).ConfigureAwait(false);
+                    break;
+
+                case "16":
+                    await HandleAddReactionAsync(session, ct).ConfigureAwait(false);
+                    break;
+
+                case "17":
+                    await HandleSendStickerAsync(session, ct).ConfigureAwait(false);
+                    break;
 
                 default:
                     break;
@@ -930,6 +952,125 @@ internal static class Program
             {
                 System.Console.WriteLine($"[LỖI] Tra cứu thông tin không thành công: {ex.Message}");
             }
+        }
+    }
+
+    private static async Task HandleUndoMessageAsync(ZaloSession session, CancellationToken ct)
+    {
+        (string targetId, ZaloThreadType threadType) = ResolveTargetSelection();
+        if (string.IsNullOrEmpty(targetId)) return;
+
+        System.Console.Write("[NHẬP] Nhập Message ID (msgId): ");
+        string? msgId = System.Console.ReadLine()?.Trim();
+        System.Console.Write("[NHẬP] Nhập Client Message ID (cliMsgId): ");
+        string? cliMsgId = System.Console.ReadLine()?.Trim();
+
+        if (string.IsNullOrEmpty(msgId) || string.IsNullOrEmpty(cliMsgId)) return;
+
+        try
+        {
+            await ZaloWebClient.UndoMessageAsync(session, targetId, msgId, cliMsgId, threadType, ct).ConfigureAwait(false);
+            System.Console.WriteLine($"[THÀNH CÔNG] Đã thu hồi tin nhắn ({msgId}) thành công!");
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[LỖI] Thu hồi tin nhắn thất bại: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleSendQuoteMessageAsync(ZaloSession session, CancellationToken ct)
+    {
+        (string targetId, ZaloThreadType threadType) = ResolveTargetSelection();
+        if (string.IsNullOrEmpty(targetId)) return;
+
+        System.Console.Write("[NHẬP] Nhập nội dung tin nhắn trả lời: ");
+        string? text = System.Console.ReadLine()?.Trim();
+        System.Console.Write("[NHẬP] Nhập Message ID tin nhắn được trích dẫn (msgId): ");
+        string? quoteMsgId = System.Console.ReadLine()?.Trim();
+        System.Console.Write("[NHẬP] Nhập Client Message ID tin nhắn được trích dẫn (cliMsgId): ");
+        string? quoteCliMsgId = System.Console.ReadLine()?.Trim();
+        System.Console.Write("[NHẬP] Nhập UID người gửi tin nhắn gốc (quoteSenderUid): ");
+        string? quoteSenderUid = System.Console.ReadLine()?.Trim();
+        System.Console.Write("[NHẬP] Nhập nội dung tin nhắn gốc (trích dẫn): ");
+        string? quoteContent = System.Console.ReadLine()?.Trim();
+
+        if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(quoteMsgId) || string.IsNullOrEmpty(quoteCliMsgId) || string.IsNullOrEmpty(quoteSenderUid)) return;
+
+        try
+        {
+            string sentMsgId = await ZaloWebClient.SendQuoteMessageAsync(session, targetId, threadType, text, quoteMsgId, quoteCliMsgId, quoteSenderUid, quoteContent ?? "", ct).ConfigureAwait(false);
+            System.Console.WriteLine($"[THÀNH CÔNG] Đã gửi tin nhắn trích dẫn trả lời! (MsgID: {sentMsgId})");
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[LỖI] Gửi tin nhắn trích dẫn thất bại: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleAddReactionAsync(ZaloSession session, CancellationToken ct)
+    {
+        (string targetId, ZaloThreadType threadType) = ResolveTargetSelection();
+        if (string.IsNullOrEmpty(targetId)) return;
+
+        System.Console.Write("[NHẬP] Nhập Message ID (msgId): ");
+        string? msgId = System.Console.ReadLine()?.Trim();
+        System.Console.Write("[NHẬP] Nhập Client Message ID (cliMsgId): ");
+        string? cliMsgId = System.Console.ReadLine()?.Trim();
+
+        System.Console.WriteLine("Chọn cảm xúc (Reaction): 1: Heart ❤️ | 2: Like 👍 | 3: Haha 😄 | 4: Wow 😮 | 5: Cry 😢 | 6: Angry 😡");
+        System.Console.Write("[NHẬP] Lựa chọn: ");
+        string? reactChoice = System.Console.ReadLine()?.Trim();
+
+        ZaloReactionType reaction = reactChoice switch
+        {
+            "1" => ZaloReactionType.Heart,
+            "2" => ZaloReactionType.Like,
+            "3" => ZaloReactionType.Haha,
+            "4" => ZaloReactionType.Wow,
+            "5" => ZaloReactionType.Cry,
+            "6" => ZaloReactionType.Angry,
+            _ => ZaloReactionType.Heart
+        };
+
+        if (string.IsNullOrEmpty(msgId) || string.IsNullOrEmpty(cliMsgId)) return;
+
+        try
+        {
+            await ZaloWebClient.AddReactionAsync(session, targetId, msgId, cliMsgId, threadType, reaction, ct).ConfigureAwait(false);
+            System.Console.WriteLine($"[THÀNH CÔNG] Đã thả cảm xúc {reaction} cho tin nhắn ({msgId}) thành công!");
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[LỖI] Thả cảm xúc thất bại: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleSendStickerAsync(ZaloSession session, CancellationToken ct)
+    {
+        (string targetId, ZaloThreadType threadType) = ResolveTargetSelection();
+        if (string.IsNullOrEmpty(targetId)) return;
+
+        System.Console.Write("[NHẬP] Nhập Sticker ID (ví dụ: 24068): ");
+        string? stIdStr = System.Console.ReadLine()?.Trim();
+        System.Console.Write("[NHẬP] Nhập Category ID (cateId, ví dụ: 622): ");
+        string? cateIdStr = System.Console.ReadLine()?.Trim();
+        System.Console.Write("[NHẬP] Nhập Sticker Type (ví dụ: 1): ");
+        string? typeStr = System.Console.ReadLine()?.Trim();
+
+        _ = int.TryParse(stIdStr, out int stickerId);
+        _ = int.TryParse(cateIdStr, out int cateId);
+        _ = int.TryParse(typeStr, out int stickerType);
+
+        if (stickerId <= 0) return;
+
+        try
+        {
+            await ZaloWebClient.SendStickerAsync(session, targetId, stickerId, cateId, stickerType > 0 ? stickerType : 1, threadType, ct).ConfigureAwait(false);
+            System.Console.WriteLine($"[THÀNH CÔNG] Đã gửi sticker (ID: {stickerId}) thành công!");
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[LỖI] Gửi sticker thất bại: {ex.Message}");
         }
     }
 
