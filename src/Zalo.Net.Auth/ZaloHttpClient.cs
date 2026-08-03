@@ -65,7 +65,7 @@ public sealed class ZaloHttpClient : IDisposable
         for (int i = 0; i < maxRedirects; i++)
         {
             using HttpRequestMessage req = new(method, currentUrl);
-            this.AddDefaultHeaders(req, origin);
+            this.AddDefaultHeaders(req, currentUrl, origin);
             if (extraHeaders != null)
             {
                 foreach (KeyValuePair<string, string> kvp in extraHeaders)
@@ -122,14 +122,20 @@ public sealed class ZaloHttpClient : IDisposable
         return string.IsNullOrWhiteSpace(content) ? null : JsonNode.Parse(content);
     }
 
-    private void AddDefaultHeaders(HttpRequestMessage req, string origin)
+    private void AddDefaultHeaders(HttpRequestMessage req, string currentUrl, string origin)
     {
         _ = req.Headers.TryAddWithoutValidation("Accept", "application/json, text/plain, */*");
         _ = req.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
         _ = req.Headers.TryAddWithoutValidation("Origin", origin);
         _ = req.Headers.TryAddWithoutValidation("Referer", origin + "/");
         _ = req.Headers.TryAddWithoutValidation("User-Agent", _userAgent);
-        _ = req.Headers.TryAddWithoutValidation("Cookie", _cookies.GetCookieHeader(origin));
+
+        string cookieHeader = _cookies.GetCookieHeader(currentUrl);
+        if (string.IsNullOrEmpty(cookieHeader))
+        {
+            cookieHeader = _cookies.GetCookieHeader("https://chat.zalo.me");
+        }
+        _ = req.Headers.TryAddWithoutValidation("Cookie", cookieHeader);
     }
 
     /// <inheritdoc/>
