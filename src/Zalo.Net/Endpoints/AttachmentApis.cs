@@ -1,11 +1,8 @@
 using System;
 using System.Collections.Generic;
-using System.Globalization;
-using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Text;
-using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Zalo.Net.Auth;
@@ -21,6 +18,25 @@ namespace Zalo.Net.Endpoints;
 public static class AttachmentApis
 {
     private const int ChunkSize = 5 * 1024 * 1024;
+    private const string DefaultChatHost = "https://chat-wpa.chat.zalo.me";
+    private const string DefaultGroupHost = "https://group-wpa.chat.zalo.me";
+    private const string DefaultFileHost = "https://file-wpa.chat.zalo.me";
+
+    private static string GetHost(ZaloSession session, string serviceKey, string defaultHost)
+    {
+        if (session.ServiceMap.TryGetValue(serviceKey, out string[]? hosts) && hosts.Length > 0)
+        {
+            return hosts[0].StartsWith("http", StringComparison.OrdinalIgnoreCase) ? hosts[0] : $"https://{hosts[0]}";
+        }
+        return defaultHost;
+    }
+
+    private static string MakeUrl(string baseUrl, string path)
+    {
+        string baseClean = baseUrl.EndsWith('/') ? baseUrl[..^1] : baseUrl;
+        string sep = path.Contains('?', StringComparison.Ordinal) ? "&" : "?";
+        return $"{baseClean}{path}{sep}zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}";
+    }
 
     /// <summary>Uploads an image attachment and sends an image message.</summary>
     public static async Task<ZaloSendResult> SendImageAttachmentAsync(
@@ -41,9 +57,9 @@ public static class AttachmentApis
         string threadId, ZaloThreadType threadType, byte[] fileBytes, string fileName,
         CancellationToken ct)
     {
-        string fileBaseUrl = session.ServiceMap["file"][0];
+        string fileBaseUrl = GetHost(session, "file", DefaultFileHost);
         bool isGroup = threadType == ZaloThreadType.Group;
-        string urlPath = isGroup ? "api/group/photo_original/upload" : "api/message/photo_original/upload";
+        string urlPath = isGroup ? "/api/group/photo_original/upload" : "/api/message/photo_original/upload";
         string typeParam = isGroup ? "11" : "2";
 
         int totalSize = fileBytes.Length;
@@ -54,12 +70,12 @@ public static class AttachmentApis
         }
         long clientId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        string baseUrl = $"{fileBaseUrl.TrimEnd('/')}/{urlPath}";
+        string baseUrl = MakeUrl(fileBaseUrl, urlPath);
         string? lastPhotoId = null;
 
         for (int i = 0; i < totalChunk; i++)
         {
-            Dictionary<string, object> dataParams = new()
+            JsonObject dataParams = new()
             {
                 ["totalChunk"] = totalChunk,
                 ["fileName"] = fileName,
@@ -80,8 +96,11 @@ public static class AttachmentApis
                 dataParams["toid"] = threadId;
             }
 
-            string paramsJson = JsonSerializer.Serialize(dataParams, EndpointJsonContext.Default.DictionaryStringObject);
-            string encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, paramsJson);
+            string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, dataParams.ToJsonString());
+            if (string.IsNullOrEmpty(encryptedParams))
+            {
+                throw new ZaloApiException("Failed to encrypt uploadImage payload");
+            }
 
             int chunkLen = Math.Min(ChunkSize, totalSize - (i * ChunkSize));
             byte[] chunkBytes = new byte[chunkLen];
@@ -92,9 +111,9 @@ public static class AttachmentApis
             byteContent.Headers.ContentType = MediaTypeHeaderValue.Parse("application/octet-stream");
             content.Add(byteContent, "chunkContent", fileName);
 
-            string requestUrl = $"{baseUrl}?type={typeParam}&params={Uri.EscapeDataString(encryptedParams)}";
+            string requestUrl = $"{baseUrl}&type={typeParam}&params={Uri.EscapeDataString(encryptedParams)}";
             HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Post, body: content, ct: ct).ConfigureAwait(false);
-            System.Text.Json.Nodes.JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+            JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
 
             int errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
             if (errorCode != 0)
@@ -118,56 +137,40 @@ public static class AttachmentApis
         string threadId, ZaloThreadType threadType, string photoId, string text,
         CancellationToken ct)
     {
-        long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        string cliMsg = Guid.NewGuid().ToString("N");
+        bool isGroup = threadType == ZaloThreadType.Group;
+        string host = isGroup ? GetHost(session, "group", DefaultGroupHost) : GetHost(session, "chat", DefaultChatHost);
+        string path = isGroup ? "/api/group/photo_original/send" : "/api/message/photo_original/send";
+        string url = MakeUrl(host, path);
 
-        Dictionary<string, object> data = new()
-        {
-            ["clientId"] = cliMsg,
-            ["imei"] = session.Material.Imei,
-            ["toid"] = threadId,
-            ["msgType"] = "chat.photo",
-            ["message"] = text,
-            ["photoId"] = photoId
-        };
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        JsonObject payload = isGroup
+            ? new JsonObject
+            {
+                ["photoId"] = photoId,
+                ["clientId"] = now,
+                ["desc"] = text,
+                ["grid"] = threadId,
+                ["ttl"] = 0
+            }
+            : new JsonObject
+            {
+                ["photoId"] = photoId,
+                ["clientId"] = now,
+                ["desc"] = text,
+                ["toid"] = threadId,
+                ["imei"] = session.Material.Imei,
+                ["ttl"] = 0
+            };
 
-        if (threadType == ZaloThreadType.Group)
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
         {
-            data["grid"] = threadId;
+            throw new ZaloApiException("Failed to encrypt sendImageMessage payload");
         }
 
-        string url = threadType == ZaloThreadType.Group
-            ? $"{session.ServiceMap["group"][0]}/api/group"
-            : $"{session.ServiceMap["chat"][0]}/api/message";
-
-        string dataJson = JsonSerializer.Serialize(data, EndpointJsonContext.Default.DictionaryStringObject);
-        string encrypted = ZaloCipher.EncodeAes(session.Material.SecretKey, dataJson);
-
-        Dictionary<string, object?> signDict = data.ToDictionary(k => k.Key, v => (object?)v.Value);
-        signDict["ts"] = ts;
-        string signKey = Hashing.GetSignKey("sendmessage", signDict);
-
-        Dictionary<string, string> queryParams = new()
-        {
-            ["params"] = encrypted,
-            ["ts"] = ts.ToString(CultureInfo.InvariantCulture),
-            ["signkey"] = signKey,
-            ["nretry"] = "0",
-            ["type"] = ZaloHttpClient.ApiType.ToString(CultureInfo.InvariantCulture),
-            ["client_version"] = ZaloHttpClient.ApiVersion.ToString(CultureInfo.InvariantCulture),
-        };
-
-        using FormUrlEncodedContent formBody = new(queryParams);
-        StringBuilder sb = new StringBuilder(url).Append('?');
-        foreach (KeyValuePair<string, string> kvp in queryParams)
-        {
-            _ = sb.Append(Uri.EscapeDataString(kvp.Key)).Append('=').Append(Uri.EscapeDataString(kvp.Value)).Append('&');
-        }
-
-        string fullUrl = sb.ToString().TrimEnd('&');
-
-        HttpResponseMessage resp = await http.RequestAsync(fullUrl, HttpMethod.Post, body: formBody, ct: ct).ConfigureAwait(false);
-        System.Text.Json.Nodes.JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        using FormUrlEncodedContent body = new([new KeyValuePair<string, string>("params", encryptedParams)]);
+        using HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Post, body: body, ct: ct).ConfigureAwait(false);
+        JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
 
         int errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
         if (errorCode != 0)
@@ -175,9 +178,20 @@ public static class AttachmentApis
             throw new ZaloApiException(json?["error_message"]?.GetValue<string>() ?? "sendPhoto failed", errorCode);
         }
 
-        string msgId = json?["data"]?["msgId"]?.ToJsonString()?.Trim('"')
-                 ?? json?["data"]?["message_id"]?.ToJsonString()?.Trim('"')
-                 ?? cliMsg;
+        JsonNode? dataNode = json?["data"];
+        if (dataNode?.GetValueKind() == System.Text.Json.JsonValueKind.String)
+        {
+            string encStr = dataNode.GetValue<string>();
+            string? decrypted = ZaloCipher.DecodeAes(session.Material.SecretKey, encStr);
+            if (!string.IsNullOrWhiteSpace(decrypted))
+            {
+                try { dataNode = JsonNode.Parse(decrypted); } catch { }
+            }
+        }
+
+        string msgId = dataNode?["msgId"]?.GetValue<string>()
+                    ?? dataNode?["message_id"]?.GetValue<string>()
+                    ?? now.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         return new ZaloSendResult(msgId);
     }
