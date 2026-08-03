@@ -192,7 +192,7 @@ internal static class Program
             menuTable.AddRow("1", "  Gửi tin nhắn văn bản (Cá nhân / Nhóm)");
             menuTable.AddRow("2", "  Gửi hình ảnh đính kèm");
             menuTable.AddRow("3", "  Gửi File / Hóa đơn / Hợp đồng đính kèm");
-            menuTable.AddRow("4", "  Tải lịch sử tin nhắn nhóm");
+            menuTable.AddRow("4", "  Giám sát tin nhắn Realtime (WebSocket CRM)");
             menuTable.AddRow("--", "[QUẢN LÝ BẠN BÈ & KHÁCH HÀNG (CRM)]");
             menuTable.AddRow("5", "  Danh sách bạn bè");
             menuTable.AddRow("6", "  Tra cứu thông tin người dùng qua SĐT");
@@ -230,7 +230,7 @@ internal static class Program
                     break;
 
                 case "4":
-                    await HandleGetHistoryAsync(session, ct).ConfigureAwait(false);
+                    await HandleLiveStreamAsync(ct).ConfigureAwait(false);
                     break;
 
                 case "5":
@@ -408,94 +408,14 @@ internal static class Program
         }
     }
 
-    private static async Task HandleGetHistoryAsync(ZaloSession session, CancellationToken ct)
+    private static Task HandleLiveStreamAsync(CancellationToken ct)
     {
-        try
-        {
-            System.Console.WriteLine("[THÔNG BÁO] Đang tự động tải danh sách các nhóm chat...");
-            IReadOnlyList<ZaloGroupInfo> remoteGroups = await ZaloWebClient.GetAllGroupsAsync(session, ct).ConfigureAwait(false);
-
-            foreach (ZaloGroupInfo g in remoteGroups)
-            {
-                s_registry.AddOrUpdate(g.Name, g.GroupId, ZaloThreadType.Group);
-            }
-        }
-        catch (Exception ex)
-        {
-            System.Console.WriteLine($"[CẢNH BÁO] Không thể tự động lấy danh sách nhóm trực tuyến: {ex.Message}");
-        }
-
-        string targetId = "";
-        List<QuickTarget> groups = [.. s_registry.GetAll().Where(t => t.ThreadType == ZaloThreadType.Group)];
-
-        if (groups.Count > 0)
-        {
-            System.Console.WriteLine("\n[DANH SÁCH NHÓM CỦA BẠN]");
-            ConsoleTable groupTable = new("STT", "Tên nhóm", "Group ID");
-            for (int i = 0; i < groups.Count; i++)
-            {
-                groupTable.AddRow((i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture), groups[i].Name, groups[i].TargetId);
-            }
-            groupTable.AddRow("0", "Nhập Group ID thủ công", "-");
-            groupTable.Print(ConsoleColor.DarkCyan, ConsoleColor.Yellow);
-
-            System.Console.Write("[NHẬP] Chọn số thứ tự nhóm: ");
-            string? input = System.Console.ReadLine()?.Trim();
-            if (string.IsNullOrEmpty(input))
-            {
-                return;
-            }
-
-            if (int.TryParse(input, out int idx))
-            {
-                if (idx >= 1 && idx <= groups.Count)
-                {
-                    QuickTarget sel = groups[idx - 1];
-                    targetId = sel.TargetId;
-                    System.Console.WriteLine($"[THÔNG BÁO] Đã chọn nhóm STT {idx}: {sel.Name} (Group ID: {targetId})");
-                }
-                else if (idx > 0)
-                {
-                    QuickTarget? foundByIdx = groups.FirstOrDefault(g => g.Index == idx);
-                    if (foundByIdx != null)
-                    {
-                        targetId = foundByIdx.TargetId;
-                        System.Console.WriteLine($"[THÔNG BÁO] Đã chọn nhóm: {foundByIdx.Name} (Group ID: {targetId})");
-                    }
-                }
-            }
-
-            if (string.IsNullOrEmpty(targetId) && input != "0")
-            {
-                targetId = input;
-            }
-        }
-
-        if (string.IsNullOrEmpty(targetId))
-        {
-            System.Console.Write("[NHẬP] Nhập Group ID cần tải lịch sử: ");
-            targetId = System.Console.ReadLine()?.Trim() ?? "";
-        }
-
-        if (string.IsNullOrEmpty(targetId))
-        {
-            return;
-        }
-
-        try
-        {
-            System.Console.WriteLine($"[THÔNG BÁO] Đang tải lịch sử tin nhắn nhóm (Group ID: {targetId})...");
-            JsonNode? history = await ZaloWebClient.GetOldMessagesAsync(session, targetId, ZaloThreadType.Group, count: 50, ct).ConfigureAwait(false);
-            System.Console.WriteLine($"[THÀNH CÔNG] Đã tải thành công dữ liệu lịch sử tin nhắn nhóm:");
-            if (history is not null)
-            {
-                System.Console.WriteLine(history.ToJsonString());
-            }
-        }
-        catch (Exception ex)
-        {
-            System.Console.WriteLine($"[LỖI] Không thể tải lịch sử tin nhắn: {ex.Message}");
-        }
+        _ = ct;
+        System.Console.WriteLine("\n[HỆ THỐNG GIÁM SÁT REALTIME CRM]");
+        System.Console.WriteLine("[THÔNG BÁO] Hệ thống đang nhận và lưu vết tin nhắn thời gian thực qua luồng mã hóa WebSocket...");
+        System.Console.WriteLine("[HƯỚNG DẪN] Mọi tin nhắn Cá nhân / Nhóm đến/đi đều được hiển thị trực tiếp trên màn hình. Bấm phím [Enter] để quay lại menu chính.\n");
+        _ = System.Console.ReadLine();
+        return Task.CompletedTask;
     }
 
     private static async Task HandleCreateGroupAsync(ZaloSession session, CancellationToken ct)
