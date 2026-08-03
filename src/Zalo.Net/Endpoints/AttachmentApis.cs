@@ -72,7 +72,7 @@ public static class AttachmentApis
         JsonNode? dataNode = node["data"];
         if (dataNode is null)
         {
-            return null;
+            return node;
         }
 
         if (dataNode is JsonValue)
@@ -95,11 +95,11 @@ public static class AttachmentApis
                     }
                     catch
                     {
-                        return null;
+                        return node;
                     }
                 }
             }
-            return null;
+            return node;
         }
 
         return dataNode;
@@ -195,9 +195,28 @@ public static class AttachmentApis
                 throw new ZaloApiException(json?["error_message"]?.GetValue<string>() ?? "upload file failed", errorCode);
             }
 
-            JsonNode? dataNode = DecryptDataNode(session, json) ?? (json?["data"] is JsonObject ? json["data"] : null);
-            photoId = GetNodeString(dataNode?["photoId"]) ?? GetNodeString(dataNode?["fileId"]) ?? GetNodeString(dataNode?["photo_id"]);
-            normalUrl = GetNodeString(dataNode?["normalUrl"]) ?? GetNodeString(dataNode?["fileUrl"]) ?? GetNodeString(dataNode?["url"]);
+            JsonNode? dataNode = DecryptDataNode(session, json) ?? json;
+            photoId = GetNodeString(dataNode?["fileId"])
+                   ?? GetNodeString(dataNode?["photoId"])
+                   ?? GetNodeString(dataNode?["file_id"])
+                   ?? GetNodeString(dataNode?["photo_id"])
+                   ?? GetNodeString(json?["fileId"])
+                   ?? GetNodeString(json?["photoId"])
+                   ?? GetNodeString(json?["file_id"])
+                   ?? GetNodeString(json?["photo_id"])
+                   ?? GetNodeString(json?["data"]?["fileId"])
+                   ?? GetNodeString(json?["data"]?["photoId"]);
+
+            normalUrl = GetNodeString(dataNode?["normalUrl"])
+                     ?? GetNodeString(dataNode?["fileUrl"])
+                     ?? GetNodeString(dataNode?["url"])
+                     ?? GetNodeString(dataNode?["downloadUrl"])
+                     ?? GetNodeString(json?["normalUrl"])
+                     ?? GetNodeString(json?["fileUrl"])
+                     ?? GetNodeString(json?["url"])
+                     ?? GetNodeString(json?["data"]?["fileUrl"])
+                     ?? "";
+
             hdUrl = GetNodeString(dataNode?["hdUrl"]) ?? normalUrl;
             thumbUrl = GetNodeString(dataNode?["thumbUrl"]) ?? normalUrl;
         }
@@ -306,9 +325,11 @@ public static class AttachmentApis
             throw new ZaloApiException(json?["error_message"]?.GetValue<string>() ?? "sendFileMessage failed", errorCode);
         }
 
-        JsonNode? dataNode = DecryptDataNode(session, json) ?? (json?["data"] is JsonObject ? json["data"] : null);
+        JsonNode? dataNode = DecryptDataNode(session, json) ?? json;
         string msgId = GetNodeString(dataNode?["msgId"])
                     ?? GetNodeString(dataNode?["message_id"])
+                    ?? GetNodeString(json?["msgId"])
+                    ?? GetNodeString(json?["message_id"])
                     ?? now.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         return new ZaloSendResult(msgId);
