@@ -166,5 +166,10 @@ public static class ReactionApis
             string msg = json?["error_message"]?.GetValue<string>() ?? "Không rõ nguyên nhân";
             throw new ZaloApiException($"Zalo Server báo lỗi thả cảm xúc ({errorCode}): {msg}");
         }
+
+        if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Message.ReactionSent))
+        {
+            ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Message.ReactionSent, new { TargetThreadId = threadId, TargetThreadType = type.ToString(), TargetMsgId = msgId, ReactionName = reaction.ToString() });
+        }
     }
 }

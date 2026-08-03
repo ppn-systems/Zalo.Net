@@ -175,6 +175,11 @@ internal static class GroupApis
         string[] successMembers = ToStringArray(data?["sucessMembers"] ?? data?["successMembers"]);
         string[] errorMembers = ToStringArray(data?["errorMembers"]);
 
+        if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Group.Created))
+        {
+            ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Group.Created, new { CreatedGroupId = groupId, Name = groupName });
+        }
+
         return new ZaloGroupCreateResult(groupId, successMembers, errorMembers);
     }
 
@@ -212,6 +217,11 @@ internal static class GroupApis
         {
             string msg = node["error_message"]?.GetValue<string>() ?? $"Error {errorCode}";
             throw new ZaloApiException(msg, errorCode);
+        }
+
+        if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Group.Left))
+        {
+            ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Group.Left, new { TargetGroupId = groupId });
         }
     }
 
@@ -258,6 +268,11 @@ internal static class GroupApis
             string msg = node["error_message"]?.GetValue<string>() ?? $"Error {errorCode}";
             throw new ZaloApiException(msg, errorCode);
         }
+
+        if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Group.MemberAdded))
+        {
+            ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Group.MemberAdded, new { TargetGroupId = groupId, MemberCount = members.Length });
+        }
     }
 
     public static async Task RemoveUserFromGroupAsync(
@@ -301,6 +316,11 @@ internal static class GroupApis
         {
             string msg = node["error_message"]?.GetValue<string>() ?? $"Error {errorCode}";
             throw new ZaloApiException(msg, errorCode);
+        }
+
+        if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Group.MemberRemoved))
+        {
+            ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Group.MemberRemoved, new { TargetGroupId = groupId, MemberCount = members.Length });
         }
     }
 

@@ -103,6 +103,11 @@ public static class MessageApis
         string msgId = dataNode?["msgId"]?.GetValue<string>()
                     ?? dataNode?["message_id"]?.GetValue<string>()
                     ?? now.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Message.TextSent))
+        {
+            ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Message.TextSent, new { TargetThreadId = threadId, TargetThreadType = threadType.ToString(), OutboundMsgId = msgId });
+        }
         return msgId;
     }
 
@@ -185,6 +190,11 @@ public static class MessageApis
         string msgId = dataNode?["msgId"]?.GetValue<string>()
                     ?? dataNode?["message_id"]?.GetValue<string>()
                     ?? now.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Message.QuoteSent))
+        {
+            ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Message.QuoteSent, new { TargetThreadId = threadId, TargetThreadType = threadType.ToString(), OutboundMsgId = msgId, OriginalQuoteMsgId = quoteMsgId });
+        }
         return msgId;
     }
 

@@ -83,5 +83,10 @@ public static class StickerApis
             string msg = json?["error_message"]?.GetValue<string>() ?? "Không rõ nguyên nhân";
             throw new ZaloApiException($"Zalo Server báo lỗi gửi sticker ({errorCode}): {msg}");
         }
+
+        if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Message.StickerSent))
+        {
+            ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Message.StickerSent, new { TargetThreadId = threadId, TargetThreadType = type.ToString(), StickerId = stickerId });
+        }
     }
 }

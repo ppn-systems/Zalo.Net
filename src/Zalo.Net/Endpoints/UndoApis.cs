@@ -84,5 +84,10 @@ public static class UndoApis
             string msg = json?["error_message"]?.GetValue<string>() ?? "Không rõ nguyên nhân";
             throw new ZaloApiException($"Zalo Server báo lỗi thu hồi tin nhắn ({errorCode}): {msg}");
         }
+
+        if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Message.UndoSent))
+        {
+            ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Message.UndoSent, new { TargetThreadId = threadId, TargetThreadType = type.ToString(), RecalledMsgId = msgId });
+        }
     }
 }

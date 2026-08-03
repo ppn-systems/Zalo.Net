@@ -267,6 +267,11 @@ public sealed class ZaloWebClient : IDisposable
         IReadOnlyDictionary<string, string[]> svcMap = ExtractServiceMap(loginData);
         _ = serverData;
 
+        if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Auth.SessionLoaded))
+        {
+            ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Auth.SessionLoaded, new { AuthenticatedUid = uid });
+        }
+
         return new ZaloSession(
             material with { SecretKey = secretKey, Uid = uid },
             uid, wsUrls, svcMap,
