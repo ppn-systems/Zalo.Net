@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="Zalo.Net.Auth.Tests/Zalo.Net.Auth.Tests.csproj" />
+  <Project Path="Zalo.Net.Contracts.Tests/Zalo.Net.Contracts.Tests.csproj" />
+  <Project Path="Zalo.Net.Cryptography.Tests/Zalo.Net.Cryptography.Tests.csproj" />
+  <Project Path="Zalo.Net.WebSocket.Tests/Zalo.Net.WebSocket.Tests.csproj" />
+  <Project Path="Zalo.Net.Tests/Zalo.Net.Tests.csproj" />
+</Solution>

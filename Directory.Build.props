@@ -1,0 +1,49 @@
+<Project>
+    <!-- Nhúng file version riêng biệt để dễ dàng cho bot CI/CD đọc và sửa -->
+    <Import Project="Version.props" Condition="Exists('$(MSBuildThisFileDirectory)Version.props')" />
+
+    <PropertyGroup>
+        <!-- Compiler Settings -->
+        <TargetFramework Condition="'$(TargetFrameworks)' == ''">net10.0</TargetFramework>
+        <LangVersion>preview</LangVersion>
+        <Nullable>enable</Nullable>
+        <ImplicitUsings>disable</ImplicitUsings>
+        <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+        <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+        <AnalysisLevel>latest</AnalysisLevel>
+        <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    
+        <!-- Ép buộc toàn bộ code phải tương thích với AOT và Trimming -->
+        <IsAotCompatible>true</IsAotCompatible>
+        <IsTrimmable>true</IsTrimmable>
+
+        <UseArtifactsOutput>true</UseArtifactsOutput>
+        <NoWarn>$(NoWarn);CS1591;CA5351;CA5350;CA2007;CA1031;CA2000</NoWarn>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
+        <NoWarn>$(NoWarn);IL2026;IL3050;IL2075;IDE0005;CA1307</NoWarn>
+    </PropertyGroup>
+
+    <!-- Debug: Ép FULL thông tin và Source Code vào DLL để dễ fix lỗi lúc dev -->
+    <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+        <DebugType>embedded</DebugType>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <IncludeSymbols>false</IncludeSymbols>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+        <DebugType>portable</DebugType>
+        <EmbedUntrackedSources>false</EmbedUntrackedSources>
+        <Deterministic>true</Deterministic>
+        <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+    </PropertyGroup>
+
+    <!-- Thông tin tác giả mặc định -->
+    <PropertyGroup>
+        <Authors>PPN Corporation</Authors>
+        <Company>PPN Corporation</Company>
+		<GenerateDocumentationFile>true</GenerateDocumentationFile>
+		<Copyright>Copyright (c) 2026 PPN Corporation. All rights reserved.</Copyright>
+    </PropertyGroup>
+</Project>

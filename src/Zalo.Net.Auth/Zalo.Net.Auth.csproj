@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Zalo.Net.Contracts\Zalo.Net.Contracts.csproj" />
+    <ProjectReference Include="..\Zalo.Net.Cryptography\Zalo.Net.Cryptography.csproj" />
+  </ItemGroup>
+
+</Project>

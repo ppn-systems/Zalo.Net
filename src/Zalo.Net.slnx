@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="Zalo.Net.Auth/Zalo.Net.Auth.csproj" Id="aa0875a3-8d97-490a-8743-aee74fd3ecf7" />
+  <Project Path="Zalo.Net.Contracts/Zalo.Net.Contracts.csproj" Id="286eb3d5-f284-407d-9b19-60830f5747b7" />
+  <Project Path="Zalo.Net.Cryptography/Zalo.Net.Cryptography.csproj" Id="93a13c85-2e13-4fb8-af2e-497ef99ab4d1" />
+  <Project Path="Zalo.Net.WebSocket/Zalo.Net.WebSocket.csproj" Id="e7e16c37-0edc-4f6f-81a5-825facb5a165" />
+  <Project Path="Zalo.Net/Zalo.Net.csproj" />
+</Solution>
