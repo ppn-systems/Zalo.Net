@@ -22,6 +22,15 @@ public class ZaloWebClientTests
     }
 
     [Fact]
+    public void Constructor_WithProxy_AssignsProxyProperty()
+    {
+        System.Net.WebProxy proxy = new("http://127.0.0.1:8080");
+        using ZaloWebClient client = new(proxy);
+
+        Assert.Same(proxy, client.Proxy);
+    }
+
+    [Fact]
     public void ConsumePendingMaterial_UnknownSession_ReturnsNull()
     {
         using ZaloWebClient client = new();

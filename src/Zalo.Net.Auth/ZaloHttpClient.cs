@@ -33,20 +33,28 @@ public sealed class ZaloHttpClient : IDisposable
     public CookieStore Cookies => _cookies;
 
     /// <summary>
+    /// Gets the configured <see cref="IWebProxy"/> if assigned.
+    /// </summary>
+    public IWebProxy? Proxy { get; }
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="ZaloHttpClient"/> class.
     /// </summary>
-    public ZaloHttpClient(string userAgent, CookieStore? cookies = null)
+    public ZaloHttpClient(string userAgent, CookieStore? cookies = null, IWebProxy? proxy = null)
     {
         _userAgent = userAgent;
         _cookies = cookies ?? new CookieStore();
+        this.Proxy = proxy;
 
-        HttpClientHandler handler = new()
+        SocketsHttpHandler handler = new()
         {
             UseCookies = false,
             AllowAutoRedirect = false,
             AutomaticDecompression = DecompressionMethods.GZip
                                    | DecompressionMethods.Deflate
                                    | DecompressionMethods.Brotli,
+            Proxy = proxy,
+            UseProxy = proxy != null
         };
         _http = new HttpClient(handler, disposeHandler: true);
     }

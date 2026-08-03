@@ -103,14 +103,15 @@ public sealed record ZaloLoginState(
     string? ErrorMessage = null);
 
 /// <summary>
-/// Active Zalo session details including service mappings and WS endpoints.
+/// Active Zalo session details including service mappings, WS endpoints, and optional Proxy routing.
 /// </summary>
 public sealed record ZaloSession(
     ZaloSessionMaterial Material,
     string Uid,
     string[] WsUrls,
     System.Collections.Generic.IReadOnlyDictionary<string, string[]> ServiceMap,
-    int PingIntervalMs);
+    int PingIntervalMs,
+    System.Net.IWebProxy? Proxy = null);
 
 /// <summary>
 /// Represents a message media or file attachment.

@@ -133,6 +133,11 @@ public sealed class ZaloWsListener
         ws.Options.SetRequestHeader("Cookie", this.ExtractCookieHeader());
         ws.Options.SetRequestHeader("Origin", "https://chat.zalo.me");
         ws.Options.SetRequestHeader("Accept-Language", "vi-VN,vi;q=0.9");
+
+        if (_session.Proxy != null)
+        {
+            ws.Options.Proxy = _session.Proxy;
+        }
     }
 
     private string ExtractCookieHeader()
