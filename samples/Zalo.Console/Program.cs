@@ -131,6 +131,11 @@ internal static class Program
                                 System.Console.WriteLine("🚫 Bạn đã từ chối đăng nhập trên điện thoại.");
                                 return null;
                             case ZaloLoginStatus.Expired:
+                                if (!string.IsNullOrEmpty(state.ErrorMessage))
+                                {
+                                    System.Console.WriteLine($"❌ Lỗi luồng đăng nhập: {state.ErrorMessage}");
+                                    return null;
+                                }
                                 System.Console.WriteLine("⌛ Mã QR cũ đã hết hạn! Đang tạo lại mã QR mới...");
                                 qrExpired = true;
                                 break;

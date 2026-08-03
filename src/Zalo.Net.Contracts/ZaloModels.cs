@@ -99,7 +99,8 @@ public sealed record ZaloLoginState(
     System.Guid SessionId,
     ZaloLoginStatus Status,
     string? DisplayName = null,
-    string? AvatarUrl = null);
+    string? AvatarUrl = null,
+    string? ErrorMessage = null);
 
 /// <summary>
 /// Active Zalo session details including service mappings and WS endpoints.

@@ -97,10 +97,11 @@ public sealed class ZaloWebClient : IDisposable
             }
         }
 
+        string? displayName = null;
+        string? avatar = null;
+
         try
         {
-            string? displayName = null;
-            string? avatar = null;
 
             while (!sessionCt.IsCancellationRequested && DateTimeOffset.UtcNow < session.ExpiresAt)
             {
@@ -229,7 +230,7 @@ public sealed class ZaloWebClient : IDisposable
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            lock (_lock) { session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Expired); }
+            lock (_lock) { session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Expired, displayName, avatar, ex.Message); }
             this.StatusChanged?.Invoke(this, new ZaloSessionStatusChanged("", ZaloConnectionStatus.SessionExpired, ex.Message));
         }
     }
