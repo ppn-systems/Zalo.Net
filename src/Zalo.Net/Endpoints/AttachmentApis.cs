@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json.Nodes;
@@ -13,7 +14,7 @@ using Zalo.Net.Cryptography;
 namespace Zalo.Net.Endpoints;
 
 /// <summary>
-/// Endpoint helpers for image attachment upload and image message sending.
+/// Endpoint helpers for image attachment and document file upload and sending.
 /// </summary>
 public static class AttachmentApis
 {
@@ -43,6 +44,12 @@ public static class AttachmentApis
         return $"{baseClean}{path}{sep}zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}";
     }
 
+    private static bool IsImageExtension(string fileName)
+    {
+        string ext = Path.GetExtension(fileName).TrimStart('.').ToLowerInvariant();
+        return ext is "jpg" or "jpeg" or "png" or "webp" or "gif" or "bmp";
+    }
+
     private static string? GetNodeString(JsonNode? node)
     {
         if (node is null)
@@ -68,7 +75,7 @@ public static class AttachmentApis
             return null;
         }
 
-        if (dataNode.GetValueKind() == System.Text.Json.JsonValueKind.String)
+        if (dataNode is JsonValue)
         {
             string encStr = dataNode.GetValue<string>();
             if (!string.IsNullOrWhiteSpace(encStr))
@@ -88,16 +95,17 @@ public static class AttachmentApis
                     }
                     catch
                     {
-                        // Fallback to raw data node
+                        return null;
                     }
                 }
             }
+            return null;
         }
 
         return dataNode;
     }
 
-    /// <summary>Uploads an image attachment and sends an image message.</summary>
+    /// <summary>Uploads an image or document file attachment and sends an attachment message.</summary>
     public static async Task<ZaloSendResult> SendImageAttachmentAsync(
         ZaloHttpClient http, ZaloSession session,
         string threadId, ZaloThreadType threadType, byte[] fileBytes, string fileName, string? caption,
@@ -107,18 +115,22 @@ public static class AttachmentApis
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(fileBytes);
 
-        UploadResult upload = await UploadImageAsync(http, session, threadId, threadType, fileBytes, fileName, ct).ConfigureAwait(false);
-        return await SendImageMessageAsync(http, session, threadId, threadType, upload, caption ?? "", ct).ConfigureAwait(false);
+        UploadResult upload = await UploadFileAsync(http, session, threadId, threadType, fileBytes, fileName, ct).ConfigureAwait(false);
+        return await SendFileMessageAsync(http, session, threadId, threadType, upload, fileName, caption ?? "", ct).ConfigureAwait(false);
     }
 
-    private static async Task<UploadResult> UploadImageAsync(
+    private static async Task<UploadResult> UploadFileAsync(
         ZaloHttpClient http, ZaloSession session,
         string threadId, ZaloThreadType threadType, byte[] fileBytes, string fileName,
         CancellationToken ct)
     {
         string fileBaseUrl = GetHost(session, "file", DefaultFileHost);
         bool isGroup = threadType == ZaloThreadType.Group;
-        string urlPath = isGroup ? "/api/group/photo_original/upload" : "/api/message/photo_original/upload";
+        bool isImage = IsImageExtension(fileName);
+
+        string urlPath = isImage
+            ? (isGroup ? "/api/group/photo_original/upload" : "/api/message/photo_original/upload")
+            : (isGroup ? "/api/group/asyncfile/upload" : "/api/message/asyncfile/upload");
         string typeParam = isGroup ? "11" : "2";
 
         int totalSize = fileBytes.Length;
@@ -161,7 +173,7 @@ public static class AttachmentApis
             string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, dataParams.ToJsonString());
             if (string.IsNullOrEmpty(encryptedParams))
             {
-                throw new ZaloApiException("Failed to encrypt uploadImage payload");
+                throw new ZaloApiException("Failed to encrypt upload file payload");
             }
 
             int chunkLen = Math.Min(ChunkSize, totalSize - (i * ChunkSize));
@@ -180,71 +192,108 @@ public static class AttachmentApis
             int errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
             if (errorCode != 0)
             {
-                throw new ZaloApiException(json?["error_message"]?.GetValue<string>() ?? "uploadImage failed", errorCode);
+                throw new ZaloApiException(json?["error_message"]?.GetValue<string>() ?? "upload file failed", errorCode);
             }
 
-            JsonNode? dataNode = DecryptDataNode(session, json) ?? json?["data"];
+            JsonNode? dataNode = DecryptDataNode(session, json) ?? (json?["data"] is JsonObject ? json["data"] : null);
             photoId = GetNodeString(dataNode?["photoId"]) ?? GetNodeString(dataNode?["fileId"]) ?? GetNodeString(dataNode?["photo_id"]);
-            normalUrl = GetNodeString(dataNode?["normalUrl"]) ?? GetNodeString(dataNode?["url"]);
+            normalUrl = GetNodeString(dataNode?["normalUrl"]) ?? GetNodeString(dataNode?["fileUrl"]) ?? GetNodeString(dataNode?["url"]);
             hdUrl = GetNodeString(dataNode?["hdUrl"]) ?? normalUrl;
             thumbUrl = GetNodeString(dataNode?["thumbUrl"]) ?? normalUrl;
         }
 
         if (string.IsNullOrEmpty(photoId) || photoId == "-1")
         {
-            throw new ZaloApiException("Failed to get photoId after upload");
+            throw new ZaloApiException("Failed to get fileId/photoId after upload");
         }
 
         return new UploadResult(photoId, normalUrl ?? "", hdUrl ?? "", thumbUrl ?? "", totalSize);
     }
 
-    private static async Task<ZaloSendResult> SendImageMessageAsync(
+    private static async Task<ZaloSendResult> SendFileMessageAsync(
         ZaloHttpClient http, ZaloSession session,
-        string threadId, ZaloThreadType threadType, UploadResult upload, string text,
+        string threadId, ZaloThreadType threadType, UploadResult upload, string fileName, string text,
         CancellationToken ct)
     {
         bool isGroup = threadType == ZaloThreadType.Group;
+        bool isImage = IsImageExtension(fileName);
         string fileHost = GetHost(session, "file", DefaultFileHost);
-        string path = isGroup ? "/api/group/photo_original/send" : "/api/message/photo_original/send";
+
+        string path = isImage
+            ? (isGroup ? "/api/group/photo_original/send" : "/api/message/photo_original/send")
+            : (isGroup ? "/api/group/asyncfile/msg" : "/api/message/asyncfile/msg");
         string url = MakeUrl(fileHost, path);
 
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        JsonObject payload = isGroup
-            ? new JsonObject
-            {
-                ["photoId"] = upload.PhotoId,
-                ["clientId"] = now.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                ["desc"] = text,
-                ["grid"] = threadId,
-                ["rawUrl"] = upload.NormalUrl,
-                ["hdUrl"] = upload.HdUrl,
-                ["thumbUrl"] = upload.ThumbUrl,
-                ["oriUrl"] = upload.NormalUrl,
-                ["hdSize"] = upload.TotalSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                ["zsource"] = -1,
-                ["ttl"] = 0,
-                ["jcp"] = "{\"convertible\":\"jxl\"}"
-            }
-            : new JsonObject
-            {
-                ["photoId"] = upload.PhotoId,
-                ["clientId"] = now.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                ["desc"] = text,
-                ["toid"] = threadId,
-                ["rawUrl"] = upload.NormalUrl,
-                ["hdUrl"] = upload.HdUrl,
-                ["thumbUrl"] = upload.ThumbUrl,
-                ["normalUrl"] = upload.NormalUrl,
-                ["hdSize"] = upload.TotalSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                ["zsource"] = -1,
-                ["ttl"] = 0,
-                ["jcp"] = "{\"convertible\":\"jxl\"}"
-            };
+        JsonObject payload;
+
+        if (isImage)
+        {
+            payload = isGroup
+                ? new JsonObject
+                {
+                    ["photoId"] = upload.PhotoId,
+                    ["clientId"] = now.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["desc"] = text,
+                    ["grid"] = threadId,
+                    ["rawUrl"] = upload.NormalUrl,
+                    ["hdUrl"] = upload.HdUrl,
+                    ["thumbUrl"] = upload.ThumbUrl,
+                    ["oriUrl"] = upload.NormalUrl,
+                    ["hdSize"] = upload.TotalSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["zsource"] = -1,
+                    ["ttl"] = 0,
+                    ["jcp"] = "{\"convertible\":\"jxl\"}"
+                }
+                : new JsonObject
+                {
+                    ["photoId"] = upload.PhotoId,
+                    ["clientId"] = now.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["desc"] = text,
+                    ["toid"] = threadId,
+                    ["rawUrl"] = upload.NormalUrl,
+                    ["hdUrl"] = upload.HdUrl,
+                    ["thumbUrl"] = upload.ThumbUrl,
+                    ["normalUrl"] = upload.NormalUrl,
+                    ["hdSize"] = upload.TotalSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["zsource"] = -1,
+                    ["ttl"] = 0,
+                    ["jcp"] = "{\"convertible\":\"jxl\"}"
+                };
+        }
+        else
+        {
+            payload = isGroup
+                ? new JsonObject
+                {
+                    ["fileId"] = upload.PhotoId,
+                    ["clientId"] = now.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["desc"] = text,
+                    ["grid"] = threadId,
+                    ["fileUrl"] = upload.NormalUrl,
+                    ["fileSize"] = upload.TotalSize,
+                    ["fileName"] = fileName,
+                    ["zsource"] = -1,
+                    ["ttl"] = 0
+                }
+                : new JsonObject
+                {
+                    ["fileId"] = upload.PhotoId,
+                    ["clientId"] = now.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["desc"] = text,
+                    ["toid"] = threadId,
+                    ["fileUrl"] = upload.NormalUrl,
+                    ["fileSize"] = upload.TotalSize,
+                    ["fileName"] = fileName,
+                    ["zsource"] = -1,
+                    ["ttl"] = 0
+                };
+        }
 
         string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
         if (string.IsNullOrEmpty(encryptedParams))
         {
-            throw new ZaloApiException("Failed to encrypt sendImageMessage payload");
+            throw new ZaloApiException("Failed to encrypt sendFileMessage payload");
         }
 
         using FormUrlEncodedContent body = new([new KeyValuePair<string, string>("params", encryptedParams)]);
@@ -254,10 +303,10 @@ public static class AttachmentApis
         int errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
         if (errorCode != 0)
         {
-            throw new ZaloApiException(json?["error_message"]?.GetValue<string>() ?? "sendPhoto failed", errorCode);
+            throw new ZaloApiException(json?["error_message"]?.GetValue<string>() ?? "sendFileMessage failed", errorCode);
         }
 
-        JsonNode? dataNode = DecryptDataNode(session, json) ?? json?["data"];
+        JsonNode? dataNode = DecryptDataNode(session, json) ?? (json?["data"] is JsonObject ? json["data"] : null);
         string msgId = GetNodeString(dataNode?["msgId"])
                     ?? GetNodeString(dataNode?["message_id"])
                     ?? now.ToString(System.Globalization.CultureInfo.InvariantCulture);
