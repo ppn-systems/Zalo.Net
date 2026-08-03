@@ -432,9 +432,9 @@ internal static class Program
         {
             System.Console.WriteLine("\n[DANH SÁCH NHÓM CỦA BẠN]");
             ConsoleTable groupTable = new("STT", "Tên nhóm", "Group ID");
-            foreach (QuickTarget g in groups)
+            for (int i = 0; i < groups.Count; i++)
             {
-                groupTable.AddRow(g.Index.ToString(System.Globalization.CultureInfo.InvariantCulture), g.Name, g.TargetId);
+                groupTable.AddRow((i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture), groups[i].Name, groups[i].TargetId);
             }
             groupTable.AddRow("0", "Nhập Group ID thủ công", "-");
             groupTable.Print(ConsoleColor.DarkCyan, ConsoleColor.Yellow);
@@ -446,12 +446,22 @@ internal static class Program
                 return;
             }
 
-            if (int.TryParse(input, out int idx) && idx > 0)
+            if (int.TryParse(input, out int idx))
             {
-                QuickTarget? found = groups.FirstOrDefault(g => g.Index == idx);
-                if (found != null)
+                if (idx >= 1 && idx <= groups.Count)
                 {
-                    targetId = found.TargetId;
+                    QuickTarget sel = groups[idx - 1];
+                    targetId = sel.TargetId;
+                    System.Console.WriteLine($"[THÔNG BÁO] Đã chọn nhóm STT {idx}: {sel.Name} (Group ID: {targetId})");
+                }
+                else if (idx > 0)
+                {
+                    QuickTarget? foundByIdx = groups.FirstOrDefault(g => g.Index == idx);
+                    if (foundByIdx != null)
+                    {
+                        targetId = foundByIdx.TargetId;
+                        System.Console.WriteLine($"[THÔNG BÁO] Đã chọn nhóm: {foundByIdx.Name} (Group ID: {targetId})");
+                    }
                 }
             }
 
@@ -474,7 +484,7 @@ internal static class Program
 
         try
         {
-            System.Console.WriteLine("[THÔNG BÁO] Đang tải lịch sử tin nhắn nhóm...");
+            System.Console.WriteLine($"[THÔNG BÁO] Đang tải lịch sử tin nhắn nhóm (Group ID: {targetId})...");
             JsonNode? history = await ZaloWebClient.GetOldMessagesAsync(session, targetId, ZaloThreadType.Group, count: 50, ct).ConfigureAwait(false);
             System.Console.WriteLine($"[THÀNH CÔNG] Đã tải thành công dữ liệu lịch sử tin nhắn nhóm:");
             if (history is not null)
