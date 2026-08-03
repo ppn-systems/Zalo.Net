@@ -100,7 +100,12 @@ internal static class GroupApis
             {
                 try
                 {
-                    return JsonNode.Parse(decrypted);
+                    JsonNode? decodedJson = JsonNode.Parse(decrypted);
+                    if (decodedJson is JsonObject obj && obj.ContainsKey("data"))
+                    {
+                        return obj["data"];
+                    }
+                    return decodedJson;
                 }
                 catch
                 {

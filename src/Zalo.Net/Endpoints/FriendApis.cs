@@ -41,7 +41,7 @@ internal static class FriendApis
         JsonNode? dataNode = node["data"];
         if (dataNode is null)
         {
-            return null;
+            return node;
         }
 
         if (dataNode.GetValueKind() == System.Text.Json.JsonValueKind.String)
@@ -58,7 +58,12 @@ internal static class FriendApis
             {
                 try
                 {
-                    return JsonNode.Parse(decrypted);
+                    JsonNode? decodedJson = JsonNode.Parse(decrypted);
+                    if (decodedJson is JsonObject obj && obj.ContainsKey("data"))
+                    {
+                        return obj["data"];
+                    }
+                    return decodedJson;
                 }
                 catch
                 {
@@ -120,8 +125,14 @@ internal static class FriendApis
             {
                 continue;
             }
-            string userId = item["userId"]?.GetValue<string>() ?? item["uid"]?.GetValue<string>() ?? "";
-            string displayName = item["displayName"]?.GetValue<string>() ?? item["zaloName"]?.GetValue<string>() ?? "";
+            string userId = item["userId"]?.GetValue<string>()
+                         ?? item["uid"]?.GetValue<string>()
+                         ?? item["fId"]?.GetValue<string>()
+                         ?? "";
+            string displayName = item["displayName"]?.GetValue<string>()
+                               ?? item["zaloName"]?.GetValue<string>()
+                               ?? item["dName"]?.GetValue<string>()
+                               ?? "";
             string? avatar = item["avatar"]?.GetValue<string>();
             string? phone = item["phoneNumber"]?.GetValue<string>();
             string? alias = item["alias"]?.GetValue<string>();
@@ -179,8 +190,14 @@ internal static class FriendApis
         }
 
         JsonNode? data = DecryptDataNode(session, node);
-        string uid = data?["uid"]?.GetValue<string>() ?? data?["userId"]?.GetValue<string>() ?? "";
-        string displayName = data?["displayName"]?.GetValue<string>() ?? data?["zaloName"]?.GetValue<string>() ?? "";
+        string uid = data?["uid"]?.GetValue<string>()
+                  ?? data?["userId"]?.GetValue<string>()
+                  ?? data?["fId"]?.GetValue<string>()
+                  ?? "";
+        string displayName = data?["displayName"]?.GetValue<string>()
+                           ?? data?["zaloName"]?.GetValue<string>()
+                           ?? data?["dName"]?.GetValue<string>()
+                           ?? "";
         string? avatar = data?["avatar"]?.GetValue<string>();
 
         return new ZaloUserProfile(uid, displayName, avatar);
