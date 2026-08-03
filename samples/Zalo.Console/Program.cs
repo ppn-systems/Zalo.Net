@@ -1089,6 +1089,11 @@ internal static class Program
         string quoteSenderUid = targetMsg?.SenderUid ?? "";
         string quoteContent = targetMsg?.Content ?? "";
 
+        if (threadType == ZaloThreadType.User && (string.IsNullOrEmpty(quoteSenderUid) || quoteSenderUid == "0" || quoteSenderUid == "Bạn (Chính mình)"))
+        {
+            quoteSenderUid = targetId;
+        }
+
         if (targetMsg == null)
         {
             (targetId, threadType) = ResolveTargetSelection();
