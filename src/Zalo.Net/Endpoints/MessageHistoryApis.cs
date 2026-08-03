@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Net.Http;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -49,13 +48,13 @@ public static class MessageHistoryApis
         }
 
         string host = GetHost(session, "group", DefaultGroupHost);
-        string[] paths = ["/api/group/history", "/api/group/getmsglog", "/api/group/getmsg"];
+        string url = MakeUrl(host, "/api/group/history");
 
+        // Payload matched 1:1 with zca-js getGroupChatHistory: grid and count ONLY (no imei)
         JsonObject payload = new()
         {
             ["grid"] = threadId,
-            ["count"] = count > 0 ? count : 50,
-            ["imei"] = session.Material.Imei
+            ["count"] = count > 0 ? count : 50
         };
 
         string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
@@ -64,57 +63,16 @@ public static class MessageHistoryApis
             throw new ZaloApiException("Failed to encrypt getOldMessages payload");
         }
 
-        JsonNode? node = null;
-        string? lastError = null;
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false)
+                      ?? throw new ZaloApiException("Invalid JSON response from getGroupChatHistory");
 
-        foreach (string path in paths)
+        int errorCode = node["error_code"]?.GetValue<int>() ?? -1;
+        if (errorCode != 0)
         {
-            string baseUrl = MakeUrl(host, path);
-
-            // 1. Try POST request with form-encoded body
-            try
-            {
-                using FormUrlEncodedContent formBody = new([new KeyValuePair<string, string>("params", encryptedParams)]);
-                using HttpResponseMessage resp = await http.RequestAsync(baseUrl, HttpMethod.Post, body: formBody, ct: ct).ConfigureAwait(false);
-                if (resp.IsSuccessStatusCode)
-                {
-                    JsonNode? candidate = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
-                    if (candidate?["error_code"]?.GetValue<int>() == 0)
-                    {
-                        node = candidate;
-                        break;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                lastError = ex.Message;
-            }
-
-            // 2. Try GET request with query params
-            try
-            {
-                string requestUrl = $"{baseUrl}&params={Uri.EscapeDataString(encryptedParams)}";
-                using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
-                if (resp.IsSuccessStatusCode)
-                {
-                    JsonNode? candidate = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
-                    if (candidate?["error_code"]?.GetValue<int>() == 0)
-                    {
-                        node = candidate;
-                        break;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                lastError = ex.Message;
-            }
-        }
-
-        if (node is null)
-        {
-            throw new ZaloApiException($"Khong the tai lich su tin nhan nhom tu Zalo Server ({lastError ?? "404 Not Found"}).");
+            string msg = node["error_message"]?.GetValue<string>() ?? node["message"]?.GetValue<string>() ?? $"Error {errorCode}";
+            throw new ZaloApiException(msg, errorCode);
         }
 
         JsonNode? dataNode = node["data"];
