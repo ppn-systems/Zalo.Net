@@ -144,6 +144,26 @@ public sealed class ZaloWsListenerTests
         Assert.Equal("777", events[0].MsgId);
     }
 
+    [Fact]
+    public async Task Cmd501Frame_MultipleMessages_RaisesMultipleEvents()
+    {
+        List<ZaloMessageEvent> events = [];
+        ZaloWsListener listener = new(MakeSession(), events.Add, _ => { });
+
+        const string innerJson = """
+            {"data":{"msgs":[
+                {"msgId":"101","cliMsgId":"102","uidFrom":"u1","idTo":"u2","content":"msg1"},
+                {"msgId":"201","cliMsgId":"202","uidFrom":"u3","idTo":"u4","content":"msg2"}
+            ]}}
+            """;
+        byte[] frame = BuildFrame(501, 0, innerJson, encrypt: 0, keyBytes: null);
+        await InvokeDispatch(listener, frame);
+
+        Assert.Equal(2, events.Count);
+        Assert.Equal("101", events[0].MsgId);
+        Assert.Equal("201", events[1].MsgId);
+    }
+
     private static ZaloSession MakeSession(string? cipherKey = null) =>
         new(new ZaloSessionMaterial("[]", cipherKey ?? "", "imei", "uid", "ua"),
             "uid", ["wss://ws.zalo.me"], new Dictionary<string, string[]>(), 20_000);

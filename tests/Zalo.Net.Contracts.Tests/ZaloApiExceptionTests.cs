@@ -32,4 +32,13 @@ public class ZaloApiExceptionTests
         Assert.Equal(code, ex.Code);
         Assert.Same(inner, ex.InnerException);
     }
+
+    [Fact]
+    public void Constructor_WithMessageOnly_DefaultCodeIsNull()
+    {
+        ZaloApiException ex = new("Simple error");
+
+        Assert.Equal("Simple error", ex.Message);
+        Assert.Null(ex.Code);
+    }
 }

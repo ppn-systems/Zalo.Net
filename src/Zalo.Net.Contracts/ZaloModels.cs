@@ -156,3 +156,31 @@ public sealed record ZaloUserProfile(
     string Uid,
     string DisplayName,
     string? AvatarUrl);
+
+/// <summary>
+/// Result returned after creating a new Zalo group.
+/// </summary>
+public sealed record ZaloGroupCreateResult(
+    string GroupId,
+    System.Collections.Generic.IReadOnlyList<string> SuccessMembers,
+    System.Collections.Generic.IReadOnlyList<string> ErrorMembers);
+
+/// <summary>
+/// Information describing a Zalo group chat.
+/// </summary>
+public sealed record ZaloGroupInfo(
+    string GroupId,
+    string Name,
+    string? AvatarUrl,
+    int MemberCount,
+    string OwnerId);
+
+/// <summary>
+/// Detailed contact information for a Zalo friend.
+/// </summary>
+public sealed record ZaloFriendInfo(
+    string UserId,
+    string DisplayName,
+    string? AvatarUrl,
+    string? PhoneNumber = null,
+    string? Alias = null);

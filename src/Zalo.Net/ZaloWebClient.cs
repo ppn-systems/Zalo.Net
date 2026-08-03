@@ -340,6 +340,124 @@ public sealed class ZaloWebClient : IDisposable
         _ = await MessageHistoryApis.GetOldMessagesAsync(http, session, type, lastMsgId, ct).ConfigureAwait(false);
     }
 
+    #region Group Management (Group 2)
+
+    /// <summary>Creates a new Zalo group chat.</summary>
+    public static async Task<ZaloGroupCreateResult> CreateGroupAsync(
+        ZaloSession session, string groupName, IEnumerable<string> memberIds, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        return await GroupApis.CreateGroupAsync(http, session, groupName, memberIds, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Leaves a Zalo group chat.</summary>
+    public static async Task LeaveGroupAsync(
+        ZaloSession session, string groupId, bool silent = false, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        await GroupApis.LeaveGroupAsync(http, session, groupId, silent, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Adds user(s) to an existing Zalo group chat.</summary>
+    public static async Task AddUserToGroupAsync(
+        ZaloSession session, string groupId, IEnumerable<string> memberIds, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        await GroupApis.AddUserToGroupAsync(http, session, groupId, memberIds, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Removes user(s) from a Zalo group chat.</summary>
+    public static async Task RemoveUserFromGroupAsync(
+        ZaloSession session, string groupId, IEnumerable<string> memberIds, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        await GroupApis.RemoveUserFromGroupAsync(http, session, groupId, memberIds, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Changes the display name of a Zalo group chat.</summary>
+    public static async Task ChangeGroupNameAsync(
+        ZaloSession session, string groupId, string newName, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        await GroupApis.ChangeGroupNameAsync(http, session, groupId, newName, ct).ConfigureAwait(false);
+    }
+
+    #endregion
+
+    #region Friends & Contacts Management (Group 4)
+
+    /// <summary>Retrieves all friends in the user's Zalo contact list.</summary>
+    public static async Task<IReadOnlyList<ZaloFriendInfo>> GetAllFriendsAsync(
+        ZaloSession session, int count = 20000, int page = 1, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        return await FriendApis.GetAllFriendsAsync(http, session, count, page, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Finds a Zalo user profile by phone number.</summary>
+    public static async Task<ZaloUserProfile> FindUserByPhoneAsync(
+        ZaloSession session, string phoneNumber, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        return await FriendApis.FindUserByPhoneAsync(http, session, phoneNumber, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Sends a friend request to a user.</summary>
+    public static async Task SendFriendRequestAsync(
+        ZaloSession session, string userId, string? message = null, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        await FriendApis.SendFriendRequestAsync(http, session, userId, message, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Accepts an incoming friend request from a user.</summary>
+    public static async Task AcceptFriendRequestAsync(
+        ZaloSession session, string userId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        await FriendApis.AcceptFriendRequestAsync(http, session, userId, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Blocks a user.</summary>
+    public static async Task BlockUserAsync(
+        ZaloSession session, string userId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        await FriendApis.BlockUserAsync(http, session, userId, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>Unblocks a user.</summary>
+    public static async Task UnblockUserAsync(
+        ZaloSession session, string userId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        await FriendApis.UnblockUserAsync(http, session, userId, ct).ConfigureAwait(false);
+    }
+
+    #endregion
+
     /// <summary>Runs WebSocket listener with automatic exponential backoff reconnects.</summary>
     public async Task RunWithReconnectAsync(ZaloSessionMaterial material, CancellationToken ct)
     {

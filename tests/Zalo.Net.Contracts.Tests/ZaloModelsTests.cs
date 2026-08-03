@@ -64,4 +64,38 @@ public class ZaloModelsTests
         Assert.Equal("file.pdf", attachment.FileName);
         Assert.Equal("share.file", attachment.Type);
     }
+
+    [Fact]
+    public void ZaloGroupCreateResult_RecordProperties_VerifyFields()
+    {
+        ZaloGroupCreateResult result = new("g123", ["m1", "m2"], []);
+
+        Assert.Equal("g123", result.GroupId);
+        Assert.Equal(2, result.SuccessMembers.Count);
+        Assert.Empty(result.ErrorMembers);
+    }
+
+    [Fact]
+    public void ZaloGroupInfo_RecordProperties_VerifyFields()
+    {
+        ZaloGroupInfo group = new("g123", "Team Group", "https://avatar.com/g.jpg", 10, "owner1");
+
+        Assert.Equal("g123", group.GroupId);
+        Assert.Equal("Team Group", group.Name);
+        Assert.Equal("https://avatar.com/g.jpg", group.AvatarUrl);
+        Assert.Equal(10, group.MemberCount);
+        Assert.Equal("owner1", group.OwnerId);
+    }
+
+    [Fact]
+    public void ZaloFriendInfo_RecordProperties_VerifyFields()
+    {
+        ZaloFriendInfo friend = new("u999", "Tran Van B", "https://avatar.com/b.jpg", "84901234567", "Friend B");
+
+        Assert.Equal("u999", friend.UserId);
+        Assert.Equal("Tran Van B", friend.DisplayName);
+        Assert.Equal("https://avatar.com/b.jpg", friend.AvatarUrl);
+        Assert.Equal("84901234567", friend.PhoneNumber);
+        Assert.Equal("Friend B", friend.Alias);
+    }
 }

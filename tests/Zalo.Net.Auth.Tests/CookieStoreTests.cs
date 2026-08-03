@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json;
 using Xunit;
 
 namespace Zalo.Net.Auth.Tests;
@@ -75,4 +76,30 @@ public sealed class CookieStoreTests
         string header = store.GetCookieHeader("https://google.com");
         Assert.DoesNotContain("zpsid", header, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void AddCookies_ReplacesExistingCookie_WithSameKey()
+    {
+        CookieStore store = new();
+        store.AddCookies("https://chat.zalo.me", ["zpsid=old_val; path=/; domain=.zalo.me"]);
+        store.AddCookies("https://chat.zalo.me", ["zpsid=new_val; path=/; domain=.zalo.me"]);
+
+        string header = store.GetCookieHeader("https://chat.zalo.me");
+        Assert.Contains("zpsid=new_val", header, StringComparison.Ordinal);
+        Assert.DoesNotContain("old_val", header, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GetCookieHeader_SubdomainMatching_ReturnsParentDomainCookies()
+    {
+        CookieStore store = new();
+        store.AddCookies("https://zalo.me", ["shared=parent_val; path=/; domain=.zalo.me"]);
+
+        string header = store.GetCookieHeader("https://chat.zalo.me");
+        Assert.Contains("shared=parent_val", header, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FromJson_InvalidJson_ThrowsJsonException()
+        => _ = Assert.ThrowsAny<JsonException>(() => CookieStore.FromJson("Invalid { Json ]"));
 }
