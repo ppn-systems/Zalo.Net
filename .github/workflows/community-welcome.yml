@@ -1,0 +1,77 @@
+name: "Community: Welcome contributors"
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  issues:
+    types: [opened]
+  pull_request_target:
+    types: [opened]
+  discussion:
+    types: [created]
+
+permissions:
+  issues: write
+  pull-requests: write
+  discussions: write
+
+jobs:
+  welcome:
+    name: "Greet first-time contributor"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/first-interaction@v3
+        if: github.event_name == 'issues' || github.event_name == 'pull_request_target'
+        continue-on-error: true
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          issue_message: |
+            👋 Hi **@${{ github.actor }}**, thanks for opening your first issue!
+            - Please read our [Contributing Guidelines](https://github.com/ppn-systems/Zalo.Net/blob/master/CONTRIBUTING.md).
+            - Check out our [Code of Conduct](https://github.com/ppn-systems/Zalo.Net/blob/master/CODE_OF_CONDUCT.md).
+            - Need help? See the [project documentation](https://github.com/ppn-systems/Zalo.Net#readme) or join Discussions.
+
+            We appreciate your contribution!
+          pr_message: |
+            👋 Hi **@${{ github.actor }}**, thank you for submitting your first pull request!
+            - Please ensure your PR follows our [Contributing Guidelines](https://github.com/ppn-systems/Zalo.Net/blob/master/CONTRIBUTING.md).
+            - CI checks will run automatically — watch for any failures.
+            - If your PR addresses an issue, please mention it in the description (e.g. `Closes #123`).
+
+            Our maintainers will review your contribution as soon as possible. Thanks for helping!
+
+      - name: "Welcome first-time discussion author"
+        if: github.event_name == 'discussion' && (github.event.discussion.author_association == 'FIRST_TIMER' || github.event.discussion.author_association == 'FIRST_TIME_CONTRIBUTOR')
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const actor = context.actor;
+            const discussionNodeId = context.payload.discussion?.node_id;
+
+            if (!discussionNodeId) {
+              core.info("No discussion node ID in payload; skipping.");
+              return;
+            }
+
+            const body = [
+              `👋 Hi **@${actor}**, thanks for starting your first discussion!`,
+              `- Please read our [Contributing Guidelines](https://github.com/ppn-systems/Zalo.Net/blob/master/CONTRIBUTING.md).`,
+              `- Check out our [Code of Conduct](https://github.com/ppn-systems/Zalo.Net/blob/master/CODE_OF_CONDUCT.md).`,
+              `- Need help? See the [project documentation](https://github.com/ppn-systems/Zalo.Net#readme).`,
+              ``,
+              `We appreciate your contribution!`
+            ].join("\n");
+
+            await github.graphql(
+              `mutation($discussionId: ID!, $body: String!) {
+                 addDiscussionComment(input: { discussionId: $discussionId, body: $body }) {
+                   comment {
+                     id
+                   }
+                 }
+               }`,
+              {
+                discussionId: discussionNodeId,
+                body,
+              }
+            );

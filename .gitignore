@@ -1,0 +1,65 @@
+# Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+bld/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+# Visual Studio specific
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Visual Studio Code
+.vscode/
+
+# Rider specific
+.idea/
+
+# Configuration files
+*.dotSettings.user
+
+# Other files
+*.pidb
+*.booproj
+*.swp
+*.temp
+*.tmp
+*.bak
+*.log
+*.db
+
+# file config
+*.snk
+nuget.key
+appsettings.json
+cert/
+nugets/
+artifacts/
+docs/Zalo.Net.Benchmarks/*.log
+docs/Zalo.Net.Benchmarks/results/*.csv
+benchmarks/BenchmarkDotNet.Artifacts
+.dotnet/
+BenchmarkDotNet.Artifacts
+site/
+.dotnethome/
+scratch/
+**/build/
+.nuget/
+build_errors*.txt
+*.trx
+.claude/settings.local.json
+*.exe
+/package.json
+/package-lock.json
+/.mcp.json
+/node_modules
+/scratch.cs
