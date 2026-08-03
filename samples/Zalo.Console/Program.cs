@@ -41,6 +41,8 @@ internal static class Program
         System.Console.OutputEncoding = Encoding.UTF8;
         System.Console.InputEncoding = Encoding.UTF8;
 
+        ZaloConsoleDiagnosticsObserver.EnableConsoleDiagnostics();
+
         PrintHeader();
 
         using ZaloWebClient client = new();
@@ -133,13 +135,7 @@ internal static class Program
             System.Console.ResetColor();
         };
 
-        _ = Task.Run(() => client.StartListenerAsync(session, cts.Token, (level, msg) =>
-        {
-            if (level >= ZaloLogLevel.Information || msg.Contains("601", StringComparison.Ordinal) || msg.Contains("FILE", StringComparison.OrdinalIgnoreCase))
-            {
-                System.Console.WriteLine($"[WS LOG] {level}: {msg}");
-            }
-        }), cts.Token);
+        _ = Task.Run(() => client.StartListenerAsync(session, cts.Token), cts.Token);
 
         await InteractiveMenuAsync(session, cts.Token).ConfigureAwait(false);
     }

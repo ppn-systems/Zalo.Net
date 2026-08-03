@@ -6,6 +6,7 @@ using System.Net.Http;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
+using Zalo.Net.Contracts;
 using Zalo.Net.Contracts.Exceptions;
 
 namespace Zalo.Net.Auth;
@@ -59,6 +60,9 @@ public sealed class ZaloHttpClient : IDisposable
         string origin = "https://chat.zalo.me",
         CancellationToken ct = default)
     {
+        ArgumentNullException.ThrowIfNull(url);
+        ArgumentNullException.ThrowIfNull(method);
+
         const int maxRedirects = 5;
         string currentUrl = url;
 
@@ -78,7 +82,17 @@ public sealed class ZaloHttpClient : IDisposable
                 req.Content = body;
             }
 
+            if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Http.RequestSent))
+            {
+                ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Http.RequestSent, new { Url = currentUrl, MethodName = method.Method });
+            }
+
             HttpResponseMessage resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+
+            if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Http.ResponseReceived))
+            {
+                ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Http.ResponseReceived, new { Url = currentUrl, StatusCode = (int)resp.StatusCode });
+            }
 
             Uri uri = new(currentUrl);
             if (resp.Headers.TryGetValues("Set-Cookie", out IEnumerable<string>? setCookieValues))

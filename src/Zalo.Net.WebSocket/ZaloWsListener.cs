@@ -1,7 +1,6 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
-using System.Linq;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -24,7 +23,6 @@ public sealed class ZaloWsListener
     private readonly ZaloSession _session;
     private readonly Action<ZaloMessageEvent> _onMessage;
     private readonly Action<ZaloSessionStatusChanged> _onStatus;
-    private readonly Action<ZaloLogLevel, string>? _log;
 
     /// <summary>Gets or sets the send throttle function.</summary>
     public Func<CancellationToken, Task>? SendThrottle { get; set; }
@@ -39,13 +37,11 @@ public sealed class ZaloWsListener
     public ZaloWsListener(
         ZaloSession session,
         Action<ZaloMessageEvent> onMessage,
-        Action<ZaloSessionStatusChanged> onStatus,
-        Action<ZaloLogLevel, string>? log = null)
+        Action<ZaloSessionStatusChanged> onStatus)
     {
         _session = session;
         _onMessage = onMessage;
         _onStatus = onStatus;
-        _log = log;
     }
 
     /// <summary>Disconnect reason enum.</summary>
@@ -82,7 +78,10 @@ public sealed class ZaloWsListener
         }
 
         _onStatus(new ZaloSessionStatusChanged(_session.Uid, ZaloConnectionStatus.Connected));
-        _log?.Invoke(ZaloLogLevel.Information, $"Zalo WS connected: uid={_session.Uid}");
+        if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.WebSocket.Connected))
+        {
+            ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.WebSocket.Connected, new { SessionUid = _session.Uid });
+        }
 
         using CancellationTokenSource pingCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         Task pingTask = this.PingLoopAsync(ws, _session.PingIntervalMs, pingCts.Token);
@@ -238,9 +237,7 @@ public sealed class ZaloWsListener
         switch (cmd)
         {
             case 1 when subCmd == 1:
-                _log?.Invoke(ZaloLogLevel.Debug, $"Zalo WS frame: cmd={cmd} subCmd={subCmd} thread=none");
                 state.Key = await ExtractCipherKeyAsync(body).ConfigureAwait(false);
-                _log?.Invoke(ZaloLogLevel.Debug, $"Zalo WS cipherKey set: {(state.Key is null ? "NULL" : $"len={state.Key.Length}")}");
                 break;
 
             case 501:
@@ -248,12 +245,18 @@ public sealed class ZaloWsListener
                 try
                 {
                     JsonNode? payload = await WsFrameCodec.DecodeFrameBodyAsync(body, state.Key, ct).ConfigureAwait(false);
-                    _log?.Invoke(ZaloLogLevel.Debug, $"Zalo WS frame: cmd={cmd} subCmd={subCmd} thread={this.ExtractThreadIdForLog(payload, ZaloThreadType.User)}");
+                    if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.WebSocket.FrameDecoded))
+                    {
+                        ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.WebSocket.FrameDecoded, new { Cmd = cmd, SubCmd = subCmd, FrameLength = body.Length });
+                    }
                     this.DispatchMessages(payload, ZaloThreadType.User);
                 }
                 catch (Exception ex)
                 {
-                    _log?.Invoke(ZaloLogLevel.Warning, $"Zalo WS decode FAILED: cmd={cmd} subCmd={subCmd} err={ex.GetType().Name}:{ex.Message}");
+                    if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.WebSocket.FrameError))
+                    {
+                        ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.WebSocket.FrameError, new { Cmd = cmd, SubCmd = subCmd, Error = ex.Message });
+                    }
                 }
                 break;
 
@@ -262,12 +265,18 @@ public sealed class ZaloWsListener
                 try
                 {
                     JsonNode? payload = await WsFrameCodec.DecodeFrameBodyAsync(body, state.Key, ct).ConfigureAwait(false);
-                    _log?.Invoke(ZaloLogLevel.Debug, $"Zalo WS frame: cmd={cmd} subCmd={subCmd} thread={this.ExtractThreadIdForLog(payload, ZaloThreadType.Group)}");
+                    if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.WebSocket.FrameDecoded))
+                    {
+                        ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.WebSocket.FrameDecoded, new { Cmd = cmd, SubCmd = subCmd, FrameLength = body.Length });
+                    }
                     this.DispatchMessages(payload, ZaloThreadType.Group);
                 }
                 catch (Exception ex)
                 {
-                    _log?.Invoke(ZaloLogLevel.Warning, $"Zalo WS decode FAILED: cmd={cmd} subCmd={subCmd} err={ex.GetType().Name}:{ex.Message}");
+                    if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.WebSocket.FrameError))
+                    {
+                        ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.WebSocket.FrameError, new { Cmd = cmd, SubCmd = subCmd, Error = ex.Message });
+                    }
                 }
                 break;
 
@@ -275,17 +284,18 @@ public sealed class ZaloWsListener
                 try
                 {
                     JsonNode? payload = await WsFrameCodec.DecodeFrameBodyAsync(body, state.Key, ct).ConfigureAwait(false);
-                    _log?.Invoke(ZaloLogLevel.Debug, $"Zalo WS control frame: cmd={cmd} subCmd={subCmd}");
                     this.DispatchControls(payload);
                 }
                 catch (Exception ex)
                 {
-                    _log?.Invoke(ZaloLogLevel.Warning, $"Zalo WS decode FAILED: cmd={cmd} subCmd={subCmd} err={ex.GetType().Name}:{ex.Message}");
+                    if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.WebSocket.FrameError))
+                    {
+                        ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.WebSocket.FrameError, new { Cmd = cmd, SubCmd = subCmd, Error = ex.Message });
+                    }
                 }
                 break;
 
             default:
-                _log?.Invoke(ZaloLogLevel.Debug, $"Zalo WS frame (unhandled): cmd={cmd} subCmd={subCmd} len={body.Length}");
                 break;
         }
     }
@@ -328,7 +338,10 @@ public sealed class ZaloWsListener
 
                     if (!string.IsNullOrEmpty(fileId) && !string.IsNullOrEmpty(fileUrl))
                     {
-                        _log?.Invoke(ZaloLogLevel.Information, $"[WS FILE DONE] fileId={fileId}, url={fileUrl}");
+                        if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Internal.Information))
+                        {
+                            ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Internal.Information, new { FileId = fileId, FileUrl = fileUrl });
+                        }
                         ZaloFileDoneRegistry.Set(fileId, fileUrl);
                     }
                 }
@@ -336,24 +349,7 @@ public sealed class ZaloWsListener
         }
     }
 
-    private string ExtractThreadIdForLog(JsonNode? payload, ZaloThreadType type)
-    {
-        if (payload is null)
-        {
-            return "unknown";
-        }
-        JsonNode? data = payload["data"];
-        string arrName = type == ZaloThreadType.Group ? "groupMsgs" : "msgs";
-        JsonArray? msgs = data?[arrName] as JsonArray;
-        JsonNode? firstMsg = msgs?.FirstOrDefault() ?? data;
-        if (firstMsg is null)
-        {
-            return "unknown";
-        }
 
-        ZaloMessageEvent? evt = this.ParseMessageEvent(firstMsg, type);
-        return evt?.ThreadId ?? "unknown";
-    }
 
     private static Task<string?> ExtractCipherKeyAsync(ReadOnlyMemory<byte> body)
     {

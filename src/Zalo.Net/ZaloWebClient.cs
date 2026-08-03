@@ -281,7 +281,7 @@ public sealed class ZaloWebClient : IDisposable
     }
 
     /// <summary>Starts WebSocket listener.</summary>
-    public Task StartListenerAsync(ZaloSession session, CancellationToken ct, Action<ZaloLogLevel, string>? log = null)
+    public Task StartListenerAsync(ZaloSession session, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(session);
 
@@ -292,8 +292,7 @@ public sealed class ZaloWebClient : IDisposable
         ZaloWsListener listener = new(
             session,
             msg => this.MessageReceived?.Invoke(this, msg),
-            status => this.StatusChanged?.Invoke(this, status),
-            log);
+            status => this.StatusChanged?.Invoke(this, status));
 
         string wsUrl = BuildWsUrl(session.WsUrls[0]);
         return listener.RunAsync(wsUrl, ct).ContinueWith(_ => { }, ct, TaskContinuationOptions.None, TaskScheduler.Default);
