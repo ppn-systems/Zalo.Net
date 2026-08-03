@@ -290,6 +290,19 @@ public sealed class ZaloWsListener
         }
     }
 
+    private static string? GetStringSafe(JsonNode? node)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+        if (node is JsonValue val)
+        {
+            return val.ToString();
+        }
+        return node.GetValue<string>();
+    }
+
     private void DispatchControls(JsonNode? payload)
     {
         if (payload is null)
@@ -301,10 +314,18 @@ public sealed class ZaloWsListener
         {
             foreach (JsonNode? control in controls)
             {
-                if (control?["content"]?["act_type"]?.GetValue<string>() == "file_done")
+                JsonNode? content = control?["content"];
+                string? actType = GetStringSafe(content?["act_type"]);
+                if (actType == "file_done")
                 {
-                    string? fileId = control?["content"]?["fileId"]?.GetValue<string>();
-                    string? fileUrl = control?["content"]?["data"]?["url"]?.GetValue<string>();
+                    string? fileId = GetStringSafe(content?["fileId"])
+                                  ?? GetStringSafe(content?["file_id"])
+                                  ?? GetStringSafe(content?["data"]?["fileId"]);
+
+                    string? fileUrl = GetStringSafe(content?["data"]?["url"])
+                                   ?? GetStringSafe(content?["fileUrl"])
+                                   ?? GetStringSafe(content?["url"]);
+
                     if (!string.IsNullOrEmpty(fileId) && !string.IsNullOrEmpty(fileUrl))
                     {
                         _log?.Invoke(ZaloLogLevel.Information, $"[WS FILE DONE] fileId={fileId}, url={fileUrl}");
