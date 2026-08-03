@@ -21,6 +21,10 @@
         <NoWarn>$(NoWarn);CS1591;CA5351;CA5350;CA2007;CA1031;CA2000</NoWarn>
     </PropertyGroup>
 
+    <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
+        <NoWarn>$(NoWarn);IL2026;IL3050;IL2075;IDE0005;CA1307</NoWarn>
+    </PropertyGroup>
+
     <!-- Debug: Ép FULL thông tin và Source Code vào DLL để dễ fix lỗi lúc dev -->
     <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
         <DebugType>embedded</DebugType>

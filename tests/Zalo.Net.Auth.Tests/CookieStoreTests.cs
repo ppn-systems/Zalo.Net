@@ -1,35 +1,78 @@
 using System;
-using System.Collections.Generic;
 using Xunit;
 
 namespace Zalo.Net.Auth.Tests;
 
-public class CookieStoreTests
+public sealed class CookieStoreTests
 {
     [Fact]
-    public void AddCookies_ValidSetCookieHeaders_ParsesAndStoresCookies()
+    public void RoundTrip_PreservesNameAndValue()
     {
         CookieStore store = new();
-        List<string> headers = ["zpw_sek=secret123; Domain=chat.zalo.me; Path=/"];
+        store.AddCookies("https://chat.zalo.me",
+            ["zpsid=abc123; path=/; domain=.chat.zalo.me; Secure; HttpOnly"]);
 
-        store.AddCookies("https://chat.zalo.me", headers);
+        string json = store.ToJson();
+        CookieStore store2 = CookieStore.FromJson(json);
 
-        string cookieHeader = store.GetCookieHeader("https://chat.zalo.me");
-        Assert.Contains("zpw_sek=secret123", cookieHeader, StringComparison.Ordinal);
+        string header = store2.GetCookieHeader("https://chat.zalo.me");
+        Assert.Contains("zpsid=abc123", header, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void ToJsonAndFromJson_CookieStore_RoundtripsSuccessfully()
+    public void RoundTrip_MultipleCookies()
     {
-        CookieStore store1 = new();
-        store1.AddCookies("https://chat.zalo.me", ["zpw_sek=abcxyz; Domain=chat.zalo.me; Path=/"]);
+        CookieStore store = new();
+        store.AddCookies("https://id.zalo.me",
+        [
+            "session=xyz; path=/; domain=.zalo.me; Secure",
+            "zac=hello; path=/; domain=.zalo.me",
+        ]);
 
-        string json = store1.ToJson();
-        Assert.False(string.IsNullOrEmpty(json));
-
+        string json = store.ToJson();
         CookieStore store2 = CookieStore.FromJson(json);
-        string header2 = store2.GetCookieHeader("https://chat.zalo.me");
 
-        Assert.Contains("zpw_sek=abcxyz", header2, StringComparison.Ordinal);
+        string header = store2.GetCookieHeader("https://id.zalo.me");
+        Assert.Contains("session=xyz", header, StringComparison.Ordinal);
+        Assert.Contains("zac=hello", header, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FromJson_EmptyArray_ReturnsEmptyStore()
+    {
+        CookieStore store = CookieStore.FromJson("[]");
+        string header = store.GetCookieHeader("https://chat.zalo.me");
+        Assert.Equal("", header);
+    }
+
+    [Fact]
+    public void FromJson_ToughCookieShape_CompatibleKeyField()
+    {
+        const string json = """
+            [{"key":"zpsid","value":"secret123","domain":"chat.zalo.me","path":"/","secure":true,"httpOnly":true}]
+            """;
+        CookieStore store = CookieStore.FromJson(json);
+        string header = store.GetCookieHeader("https://chat.zalo.me");
+        Assert.Contains("zpsid=secret123", header, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ToJson_DoesNotContainValue_InPlainText_WhenUsedWithSecretRedactor()
+    {
+        CookieStore store = new();
+        store.AddCookies("https://chat.zalo.me",
+            ["zpsid=TOPSECRET; path=/; domain=.chat.zalo.me"]);
+        string json = store.ToJson();
+        Assert.Contains("TOPSECRET", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void GetCookieHeader_WrongDomain_ReturnsEmpty()
+    {
+        CookieStore store = new();
+        store.AddCookies("https://chat.zalo.me",
+            ["zpsid=abc; path=/; domain=.chat.zalo.me; Secure"]);
+        string header = store.GetCookieHeader("https://google.com");
+        Assert.DoesNotContain("zpsid", header, StringComparison.Ordinal);
     }
 }

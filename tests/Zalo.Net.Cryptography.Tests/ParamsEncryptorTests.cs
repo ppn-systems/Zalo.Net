@@ -1,37 +1,71 @@
 using System;
+using System.Linq;
 using Xunit;
 
 namespace Zalo.Net.Cryptography.Tests;
 
-public class ParamsEncryptorTests
+public sealed class ParamsEncryptorTests
 {
+    private const int Type = 30;
+    private const string Imei = "test-imei-12345";
+    private const long FirstLaunchTime = 1_700_000_000_000L;
+
     [Fact]
-    public void Constructor_ValidInputs_GeneratesZcidAndEncryptKey()
+    public void CreateZcid_IsHexUppercase()
     {
-        string imei = "test-imei-12345";
-        long firstLaunchTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-        ParamsEncryptor encryptor = new(30, imei, firstLaunchTime);
-
-        string key = encryptor.GetEncryptKey();
-        (string zcid, string zcidExt, string encVer) = encryptor.GetParams();
-
-        Assert.Equal(32, key.Length);
-        Assert.False(string.IsNullOrEmpty(zcid));
-        Assert.False(string.IsNullOrEmpty(zcidExt));
-        Assert.Equal("v2", encVer);
+        ParamsEncryptor p = new(Type, Imei, FirstLaunchTime);
+        (string zcid, _, _) = p.GetParams();
+        Assert.NotEmpty(zcid);
+        Assert.Equal(zcid.ToUpperInvariant(), zcid);
+        Assert.True(zcid.All(c => "0123456789ABCDEF".Contains(c, StringComparison.Ordinal)), "zcid must be hex uppercase");
     }
 
     [Fact]
-    public void EncryptData_ValidJson_ReturnsEncryptedString()
+    public void CreateZcid_IsDeterministic()
     {
-        string imei = "test-imei-12345";
-        long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        ParamsEncryptor encryptor = new(30, imei, ts);
+        ParamsEncryptor p1 = new(Type, Imei, FirstLaunchTime);
+        ParamsEncryptor p2 = new(Type, Imei, FirstLaunchTime);
+        Assert.Equal(p1.GetParams().Zcid, p2.GetParams().Zcid);
+    }
 
-        string json = "{\"test\":\"value\"}";
-        string encrypted = encryptor.EncryptData(json);
+    [Fact]
+    public void GetEncryptKey_WithSeededZcidExt_IsExactly32Chars()
+    {
+        ParamsEncryptor p = new(Type, Imei, FirstLaunchTime, zcidExt: "abc123");
+        Assert.Equal(32, p.GetEncryptKey().Length);
+    }
 
-        Assert.False(string.IsNullOrEmpty(encrypted));
+    [Fact]
+    public void GetEncryptKey_WithSeededZcidExt_IsDeterministic()
+    {
+        ParamsEncryptor p1 = new(Type, Imei, FirstLaunchTime, zcidExt: "abc123");
+        ParamsEncryptor p2 = new(Type, Imei, FirstLaunchTime, zcidExt: "abc123");
+        Assert.Equal(p1.GetEncryptKey(), p2.GetEncryptKey());
+    }
+
+    [Fact]
+    public void EncryptData_RoundTrips_WithZaloCipher()
+    {
+        ParamsEncryptor p = new(Type, Imei, FirstLaunchTime, zcidExt: "deadbeef12");
+        string key = p.GetEncryptKey();
+        const string json = """{"computer_name":"Web","imei":"test-imei-12345","language":"vi","ts":1700000000000}""";
+        string enc = p.EncryptData(json);
+        string? dec = ZaloCipher.DecodeAesUtf8Key(key, enc);
+        Assert.Equal(json, dec);
+    }
+
+    [Fact]
+    public void GetParams_EncVer_IsV2()
+    {
+        ParamsEncryptor p = new(Type, Imei, FirstLaunchTime);
+        Assert.Equal("v2", p.GetParams().EncVer);
+    }
+
+    [Fact]
+    public void Md5_IsLowercaseHex()
+    {
+        string md5 = ParamsEncryptor.ComputeMd5Hex("abc123");
+        Assert.Equal(md5.ToLowerInvariant(), md5);
+        Assert.Equal(32, md5.Length);
     }
 }
