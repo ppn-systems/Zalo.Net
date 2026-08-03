@@ -307,9 +307,10 @@ public static class AttachmentApis
             }
             else
             {
-                for (int wait = 0; wait < 10; wait++)
+                Console.WriteLine($"[THÔNG BÁO] Đã tải lên fileId '{finalId}'. Đang chờ Zalo Server duyệt mã hóa & cấp URL qua WebSocket...");
+                for (int wait = 0; wait < 150; wait++)
                 {
-                    await Task.Delay(200, ct).ConfigureAwait(false);
+                    await Task.Delay(100, ct).ConfigureAwait(false);
                     if (ZaloFileDoneRegistry.TryGet(finalId, out string? wUrl) && !string.IsNullOrEmpty(wUrl))
                     {
                         normalUrl = wUrl;
