@@ -123,8 +123,8 @@ public static class MessageApis
 
         bool isGroup = threadType == ZaloThreadType.Group;
         string host = isGroup ? GetHost(session, "group", DefaultGroupHost) : GetHost(session, "chat", DefaultChatHost);
-        string path = isGroup ? "/api/group/sendmsg" : "/api/message/sms";
-        string url = MakeUrl(host, path);
+        string path = isGroup ? "/api/group" : "/api/message";
+        string url = MakeUrl(host, path) + "&nretry=0";
 
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         JsonObject payload = new()
