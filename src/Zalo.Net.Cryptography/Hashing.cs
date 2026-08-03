@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 using System;
@@ -59,13 +59,14 @@ public static class Hashing
         {
             md5.AppendData(buf, 0, read);
         }
-        return Convert.ToHexString(md5.GetHashAndReset()).ToLowerInvariant();
+        return Convert.ToHexStringLower(md5.GetHashAndReset());
     }
 
     [SuppressMessage("Security", "CA5351:Do Not Use Broken Cryptographic Algorithms", Justification = "MD5 required by Zalo protocol specification")]
     internal static string Md5Hex(string input)
     {
-        byte[] hash = MD5.HashData(Encoding.UTF8.GetBytes(input));
-        return Convert.ToHexString(hash).ToLowerInvariant();
+        Span<byte> hash = stackalloc byte[16];
+        _ = MD5.HashData(Encoding.UTF8.GetBytes(input), hash);
+        return Convert.ToHexStringLower(hash);
     }
 }
