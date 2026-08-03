@@ -183,7 +183,10 @@ public static class AttachmentApis
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[DEBUG LOG] Note: Send text caption failed: {ex.Message}");
+                if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Internal.Warning))
+                {
+                    ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Internal.Warning, $"Send caption text failed: {ex.GetType().Name}: {ex.Message}");
+                }
             }
         }
 
