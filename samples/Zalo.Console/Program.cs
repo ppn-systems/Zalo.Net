@@ -64,8 +64,12 @@ internal static class Program
         // Lắng nghe sự kiện tin nhắn WebSocket thời gian thực
         client.MessageReceived += (sender, msgEvent) =>
         {
-            System.Console.ForegroundColor = ConsoleColor.Cyan;
-            System.Console.WriteLine($"\n[TIN NHẮN MỚI] Từ UID: {msgEvent.UidFrom} | Nội dung: {msgEvent.Content}");
+            System.Console.ForegroundColor = msgEvent.IsSelf ? ConsoleColor.DarkGray : ConsoleColor.Cyan;
+            string typeStr = msgEvent.ThreadType == ZaloThreadType.Group ? " [NHÓM]" : " [CÁ NHÂN]";
+            string senderStr = msgEvent.IsSelf ? "Bạn (Chính mình)" : (!string.IsNullOrEmpty(msgEvent.DisplayName) ? $"{msgEvent.DisplayName} ({msgEvent.UidFrom})" : msgEvent.UidFrom);
+
+            System.Console.WriteLine($"\n📩 [TIN NHẮN MỚI{typeStr}] Từ: {senderStr} | ThreadId: {msgEvent.ThreadId}");
+            System.Console.WriteLine($"   Nội dung: {msgEvent.Content}");
             System.Console.ResetColor();
         };
 
