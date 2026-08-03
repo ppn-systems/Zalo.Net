@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <NoWarn>$(NoWarn);NU1507</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageVersion Include="BouncyCastle.Cryptography" Version="2.6.2" />
+  </ItemGroup>
+</Project>

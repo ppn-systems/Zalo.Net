@@ -4,6 +4,7 @@
     <ProjectReference Include="..\Zalo.Net.Contracts\Zalo.Net.Contracts.csproj" />
     <ProjectReference Include="..\Zalo.Net.Cryptography\Zalo.Net.Cryptography.csproj" />
     <ProjectReference Include="..\Zalo.Net.Auth\Zalo.Net.Auth.csproj" />
+    <ProjectReference Include="..\Zalo.Net.WebSocket\Zalo.Net.WebSocket.csproj" />
   </ItemGroup>
 
 </Project>
