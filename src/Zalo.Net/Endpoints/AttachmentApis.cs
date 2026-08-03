@@ -19,7 +19,7 @@ namespace Zalo.Net.Endpoints;
 /// </summary>
 public static class AttachmentApis
 {
-    private const int ChunkSize = 5 * 1024 * 1024;
+    private const int ChunkSize = 512 * 1024; // 512 KB limit per Zalo Server Protocol
     private const string DefaultFileHost = "https://file-wpa.chat.zalo.me";
 
     private sealed record UploadResult(
@@ -218,7 +218,7 @@ public static class AttachmentApis
         string? hdUrl = null;
         string? thumbUrl = null;
 
-        Console.WriteLine($"[DEBUG LOG] Uploading file '{fileName}' ({totalSize} bytes) -> Host: {fileBaseUrl}, Path: {urlPath}");
+        Console.WriteLine($"[DEBUG LOG] Uploading file '{fileName}' ({totalSize} bytes, {totalChunk} chunks of 512KB) -> Host: {fileBaseUrl}, Path: {urlPath}");
 
         for (int i = 0; i < totalChunk; i++)
         {
@@ -279,12 +279,18 @@ public static class AttachmentApis
             }
 
             JsonNode? dataNode = DecryptDataNode(session, json);
-            Console.WriteLine($"[DEBUG LOG] Raw Upload Response JSON: {json?.ToJsonString()}");
-            Console.WriteLine($"[DEBUG LOG] Decrypted DataNode JSON: {dataNode?.ToJsonString()}");
+            if (dataNode is JsonObject innerObj && innerObj.TryGetPropertyValue("error_code", out JsonNode? innerErrNode) && innerErrNode is JsonValue innerErrVal)
+            {
+                if (innerErrVal.TryGetValue(out int innerErr) && innerErr != 0)
+                {
+                    string errMsg = GetPropString(innerObj, "error_message") ?? "upload chunk failed";
+                    Console.WriteLine($"[DEBUG LOG] Upload Chunk Error: code={innerErr}, msg='{errMsg}'");
+                    throw new ZaloApiException(errMsg, innerErr);
+                }
+            }
 
             photoId = FindIdInJsonNode(dataNode)
-                   ?? FindIdInJsonNode(json)
-                   ?? clientId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                   ?? FindIdInJsonNode(json);
 
             normalUrl = GetPropString(dataNode, "normalUrl")
                      ?? GetPropString(dataNode, "fileUrl")
@@ -310,7 +316,7 @@ public static class AttachmentApis
             }
             else
             {
-                Console.WriteLine($"[THÔNG BÁO] Đã tải lên fileId '{finalId}'. Đang chờ Zalo Server duyệt mã hóa & cấp URL qua WebSocket...");
+                Console.WriteLine($"[DEBUG LOG] Uploaded 100% data for fileId '{finalId}'. Waiting for WS file_done...");
                 for (int wait = 0; wait < 150; wait++)
                 {
                     await Task.Delay(100, ct).ConfigureAwait(false);
