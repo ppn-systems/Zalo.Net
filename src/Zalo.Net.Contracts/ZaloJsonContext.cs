@@ -18,6 +18,12 @@ namespace Zalo.Net.Contracts;
 [JsonSerializable(typeof(ZaloSessionStatusChanged))]
 [JsonSerializable(typeof(ZaloSendResult))]
 [JsonSerializable(typeof(ZaloUserProfile))]
+[JsonSerializable(typeof(long))]
+[JsonSerializable(typeof(int))]
+[JsonSerializable(typeof(string))]
+[JsonSerializable(typeof(bool))]
+[JsonSerializable(typeof(double))]
+[JsonSerializable(typeof(object))]
 public partial class ZaloJsonContext : JsonSerializerContext
 {
 }
