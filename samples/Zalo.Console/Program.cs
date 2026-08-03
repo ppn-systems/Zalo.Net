@@ -13,9 +13,34 @@ using Zalo.Net.Endpoints;
 
 namespace Zalo.Console;
 
+internal record RecentMessageInfo(
+    string ThreadId,
+    ZaloThreadType ThreadType,
+    string MsgId,
+    string CliMsgId,
+    string SenderUid,
+    string SenderName,
+    string Content,
+    DateTime Timestamp
+);
+
 internal static class Program
 {
     private static readonly TargetRegistry s_registry = new();
+    private static readonly List<RecentMessageInfo> s_recentMessages = [];
+    private static readonly System.Threading.Lock s_messageLock = new();
+
+    private static void AddRecentMessage(RecentMessageInfo msg)
+    {
+        lock (s_messageLock)
+        {
+            s_recentMessages.Insert(0, msg);
+            if (s_recentMessages.Count > 20)
+            {
+                s_recentMessages.RemoveAt(s_recentMessages.Count - 1);
+            }
+        }
+    }
 
     private static async Task Main()
     {
@@ -72,14 +97,29 @@ internal static class Program
                 s_registry.AddOrUpdate(msgEvent.DisplayName, msgEvent.ThreadId, msgEvent.ThreadType);
             }
 
-            System.Console.ForegroundColor = msgEvent.IsSelf ? ConsoleColor.DarkGray : ConsoleColor.Cyan;
-            string scopeLabel = msgEvent.ThreadType == ZaloThreadType.Group ? "[NHÓM]" : "[CÁ NHÂN]";
             string senderName = msgEvent.IsSelf
                 ? "Bạn (Chính mình)"
-                : (!string.IsNullOrEmpty(msgEvent.DisplayName) ? $"{msgEvent.DisplayName} ({msgEvent.UidFrom})" : msgEvent.UidFrom);
+                : (!string.IsNullOrEmpty(msgEvent.DisplayName) ? msgEvent.DisplayName : msgEvent.UidFrom);
 
-            System.Console.WriteLine($"\n[TIN NHẮN MỚI {scopeLabel}] Từ: {senderName} | ID Hội thoại: {msgEvent.ThreadId}");
-            System.Console.WriteLine($"  Nội dung: {msgEvent.Content}");
+            string msgContent = msgEvent.Content?.ToString() ?? "";
+            if (!string.IsNullOrEmpty(msgEvent.MsgId))
+            {
+                AddRecentMessage(new RecentMessageInfo(
+                    msgEvent.ThreadId,
+                    msgEvent.ThreadType,
+                    msgEvent.MsgId,
+                    msgEvent.CliMsgId,
+                    msgEvent.UidFrom,
+                    senderName,
+                    msgContent,
+                    DateTime.Now
+                ));
+            }
+
+            System.Console.ForegroundColor = msgEvent.IsSelf ? ConsoleColor.DarkGray : ConsoleColor.Cyan;
+            string scopeLabel = msgEvent.ThreadType == ZaloThreadType.Group ? "[NHÓM]" : "[CÁ NHÂN]";
+            System.Console.WriteLine($"\n[TIN NHẮN MỚI {scopeLabel}] Từ: {senderName} ({msgEvent.UidFrom}) | MsgID: {msgEvent.MsgId}");
+            System.Console.WriteLine($"  Nội dung: {msgContent}");
             System.Console.ResetColor();
         };
 
@@ -368,6 +408,55 @@ internal static class Program
         return (targetId, threadType);
     }
 
+    private static RecentMessageInfo? ResolveMessageSelection(string promptMessage)
+    {
+        List<RecentMessageInfo> list;
+        lock (s_messageLock)
+        {
+            list = [.. s_recentMessages];
+        }
+
+        if (list.Count == 0)
+        {
+            return null;
+        }
+
+        System.Console.WriteLine($"\n[DANH SÁCH TIN NHẮN GẦN ĐÂY] ({promptMessage})");
+        ConsoleTable msgTable = new("STT", "Người gửi", "MsgID", "Nội dung", "Thời gian");
+        for (int i = 0; i < list.Count; i++)
+        {
+            RecentMessageInfo m = list[i];
+            string contentSnippet = m.Content.Length > 30 ? $"{m.Content[..30]}..." : m.Content;
+            msgTable.AddRow(
+                (i + 1).ToString(System.Globalization.CultureInfo.InvariantCulture),
+                m.SenderName,
+                m.MsgId,
+                string.IsNullOrEmpty(contentSnippet) ? "(Tin nhắn hệ thống / đính kèm)" : contentSnippet,
+                m.Timestamp.ToString("HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture)
+            );
+        }
+        msgTable.AddRow("0", "Nhập ID thủ công", "-", "-", "-");
+        msgTable.Print(ConsoleColor.DarkCyan, ConsoleColor.Yellow);
+
+        System.Console.Write($"[NHẬP] Chọn số thứ tự tin nhắn (Mặc định [1]): ");
+        string? choiceStr = System.Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(choiceStr) || choiceStr == "1")
+        {
+            RecentMessageInfo first = list[0];
+            System.Console.WriteLine($"[THÔNG BÁO] Đã chọn tin nhắn gần nhất: MsgID {first.MsgId} từ {first.SenderName}");
+            return first;
+        }
+
+        if (int.TryParse(choiceStr, out int idx) && idx >= 1 && idx <= list.Count)
+        {
+            RecentMessageInfo selected = list[idx - 1];
+            System.Console.WriteLine($"[THÔNG BÁO] Đã chọn tin nhắn STT {idx}: MsgID {selected.MsgId} từ {selected.SenderName}");
+            return selected;
+        }
+
+        return null;
+    }
+
     private static async Task HandleSendMessageAsync(ZaloSession session, CancellationToken ct)
     {
         (string targetId, ZaloThreadType threadType) = ResolveTargetSelection();
@@ -385,6 +474,16 @@ internal static class Program
             {
                 ZaloSendResult res = await ZaloWebClient.SendTextAsync(session, targetId, threadType, text, ct).ConfigureAwait(false);
                 System.Console.WriteLine($"[THÀNH CÔNG] Gửi tin nhắn thành công! Mã MsgId: {res.MsgId}");
+                AddRecentMessage(new RecentMessageInfo(
+                    targetId,
+                    threadType,
+                    res.MsgId,
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    session.Uid,
+                    "Bạn (Chính mình)",
+                    text,
+                    DateTime.Now
+                ));
             }
             catch (Exception ex)
             {
@@ -957,13 +1056,22 @@ internal static class Program
 
     private static async Task HandleUndoMessageAsync(ZaloSession session, CancellationToken ct)
     {
-        (string targetId, ZaloThreadType threadType) = ResolveTargetSelection();
-        if (string.IsNullOrEmpty(targetId)) return;
+        RecentMessageInfo? targetMsg = ResolveMessageSelection("Chọn tin nhắn muốn THU HỒI");
+        string targetId = targetMsg?.ThreadId ?? "";
+        ZaloThreadType threadType = targetMsg?.ThreadType ?? ZaloThreadType.User;
+        string msgId = targetMsg?.MsgId ?? "";
+        string cliMsgId = targetMsg?.CliMsgId ?? "";
 
-        System.Console.Write("[NHẬP] Nhập Message ID (msgId): ");
-        string? msgId = System.Console.ReadLine()?.Trim();
-        System.Console.Write("[NHẬP] Nhập Client Message ID (cliMsgId): ");
-        string? cliMsgId = System.Console.ReadLine()?.Trim();
+        if (targetMsg == null)
+        {
+            (targetId, threadType) = ResolveTargetSelection();
+            if (string.IsNullOrEmpty(targetId)) return;
+
+            System.Console.Write("[NHẬP] Nhập Message ID (msgId): ");
+            msgId = System.Console.ReadLine()?.Trim() ?? "";
+            System.Console.Write("[NHẬP] Nhập Client Message ID (cliMsgId): ");
+            cliMsgId = System.Console.ReadLine()?.Trim() ?? "";
+        }
 
         if (string.IsNullOrEmpty(msgId) || string.IsNullOrEmpty(cliMsgId)) return;
 
@@ -980,26 +1088,39 @@ internal static class Program
 
     private static async Task HandleSendQuoteMessageAsync(ZaloSession session, CancellationToken ct)
     {
-        (string targetId, ZaloThreadType threadType) = ResolveTargetSelection();
-        if (string.IsNullOrEmpty(targetId)) return;
+        RecentMessageInfo? targetMsg = ResolveMessageSelection("Chọn tin nhắn muốn TRÍCH DẪN TRẢ LỜI");
+        string targetId = targetMsg?.ThreadId ?? "";
+        ZaloThreadType threadType = targetMsg?.ThreadType ?? ZaloThreadType.User;
+        string quoteMsgId = targetMsg?.MsgId ?? "";
+        string quoteCliMsgId = targetMsg?.CliMsgId ?? "";
+        string quoteSenderUid = targetMsg?.SenderUid ?? "";
+        string quoteContent = targetMsg?.Content ?? "";
 
-        System.Console.Write("[NHẬP] Nhập nội dung tin nhắn trả lời: ");
+        if (targetMsg == null)
+        {
+            (targetId, threadType) = ResolveTargetSelection();
+            if (string.IsNullOrEmpty(targetId)) return;
+
+            System.Console.Write("[NHẬP] Nhập Message ID tin nhắn gốc (msgId): ");
+            quoteMsgId = System.Console.ReadLine()?.Trim() ?? "";
+            System.Console.Write("[NHẬP] Nhập Client Message ID tin nhắn gốc (cliMsgId): ");
+            quoteCliMsgId = System.Console.ReadLine()?.Trim() ?? "";
+            System.Console.Write("[NHẬP] Nhập UID người gửi tin nhắn gốc (quoteSenderUid): ");
+            quoteSenderUid = System.Console.ReadLine()?.Trim() ?? "";
+            System.Console.Write("[NHẬP] Nhập nội dung tin nhắn gốc (trích dẫn): ");
+            quoteContent = System.Console.ReadLine()?.Trim() ?? "";
+        }
+
+        System.Console.Write("[NHẬP] Nhập nội dung tin nhắn trả lời của bạn: ");
         string? text = System.Console.ReadLine()?.Trim();
-        System.Console.Write("[NHẬP] Nhập Message ID tin nhắn được trích dẫn (msgId): ");
-        string? quoteMsgId = System.Console.ReadLine()?.Trim();
-        System.Console.Write("[NHẬP] Nhập Client Message ID tin nhắn được trích dẫn (cliMsgId): ");
-        string? quoteCliMsgId = System.Console.ReadLine()?.Trim();
-        System.Console.Write("[NHẬP] Nhập UID người gửi tin nhắn gốc (quoteSenderUid): ");
-        string? quoteSenderUid = System.Console.ReadLine()?.Trim();
-        System.Console.Write("[NHẬP] Nhập nội dung tin nhắn gốc (trích dẫn): ");
-        string? quoteContent = System.Console.ReadLine()?.Trim();
 
         if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(quoteMsgId) || string.IsNullOrEmpty(quoteCliMsgId) || string.IsNullOrEmpty(quoteSenderUid)) return;
 
         try
         {
-            string sentMsgId = await ZaloWebClient.SendQuoteMessageAsync(session, targetId, threadType, text, quoteMsgId, quoteCliMsgId, quoteSenderUid, quoteContent ?? "", ct).ConfigureAwait(false);
+            string sentMsgId = await ZaloWebClient.SendQuoteMessageAsync(session, targetId, threadType, text, quoteMsgId, quoteCliMsgId, quoteSenderUid, quoteContent, ct).ConfigureAwait(false);
             System.Console.WriteLine($"[THÀNH CÔNG] Đã gửi tin nhắn trích dẫn trả lời! (MsgID: {sentMsgId})");
+            AddRecentMessage(new RecentMessageInfo(targetId, threadType, sentMsgId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(), session.Uid, "Bạn (Chính mình)", text, DateTime.Now));
         }
         catch (Exception ex)
         {
@@ -1009,16 +1130,27 @@ internal static class Program
 
     private static async Task HandleAddReactionAsync(ZaloSession session, CancellationToken ct)
     {
-        (string targetId, ZaloThreadType threadType) = ResolveTargetSelection();
-        if (string.IsNullOrEmpty(targetId)) return;
+        RecentMessageInfo? targetMsg = ResolveMessageSelection("Chọn tin nhắn muốn THẢ CẢM XÚC");
+        string targetId = targetMsg?.ThreadId ?? "";
+        ZaloThreadType threadType = targetMsg?.ThreadType ?? ZaloThreadType.User;
+        string msgId = targetMsg?.MsgId ?? "";
+        string cliMsgId = targetMsg?.CliMsgId ?? "";
 
-        System.Console.Write("[NHẬP] Nhập Message ID (msgId): ");
-        string? msgId = System.Console.ReadLine()?.Trim();
-        System.Console.Write("[NHẬP] Nhập Client Message ID (cliMsgId): ");
-        string? cliMsgId = System.Console.ReadLine()?.Trim();
+        if (targetMsg == null)
+        {
+            (targetId, threadType) = ResolveTargetSelection();
+            if (string.IsNullOrEmpty(targetId)) return;
 
-        System.Console.WriteLine("Chọn cảm xúc (Reaction): 1: Heart ❤️ | 2: Like 👍 | 3: Haha 😄 | 4: Wow 😮 | 5: Cry 😢 | 6: Angry 😡");
-        System.Console.Write("[NHẬP] Lựa chọn: ");
+            System.Console.Write("[NHẬP] Nhập Message ID (msgId): ");
+            msgId = System.Console.ReadLine()?.Trim() ?? "";
+            System.Console.Write("[NHẬP] Nhập Client Message ID (cliMsgId): ");
+            cliMsgId = System.Console.ReadLine()?.Trim() ?? "";
+        }
+
+        System.Console.WriteLine("\n[DANH SÁCH BỘ BIỂU CẢM (REACTION)]");
+        System.Console.WriteLine(" 1: Heart ❤️  | 2: Like 👍 | 3: Haha 😄 | 4: Wow 😮");
+        System.Console.WriteLine(" 5: Cry 😢    | 6: Angry 😡| 7: Love 😍 | 8: Rose 🌹");
+        System.Console.Write("[NHẬP] Chọn số tương ứng [Mặc định 1 - ❤️]: ");
         string? reactChoice = System.Console.ReadLine()?.Trim();
 
         ZaloReactionType reaction = reactChoice switch
@@ -1029,6 +1161,8 @@ internal static class Program
             "4" => ZaloReactionType.Wow,
             "5" => ZaloReactionType.Cry,
             "6" => ZaloReactionType.Angry,
+            "7" => ZaloReactionType.Love,
+            "8" => ZaloReactionType.Rose,
             _ => ZaloReactionType.Heart
         };
 
@@ -1037,7 +1171,7 @@ internal static class Program
         try
         {
             await ZaloWebClient.AddReactionAsync(session, targetId, msgId, cliMsgId, threadType, reaction, ct).ConfigureAwait(false);
-            System.Console.WriteLine($"[THÀNH CÔNG] Đã thả cảm xúc {reaction} cho tin nhắn ({msgId}) thành công!");
+            System.Console.WriteLine($"[THÀNH CÔNG] Đã thả cảm xúc {reaction} cho tin nhắn (MsgID: {msgId}) thành công!");
         }
         catch (Exception ex)
         {
@@ -1050,16 +1184,31 @@ internal static class Program
         (string targetId, ZaloThreadType threadType) = ResolveTargetSelection();
         if (string.IsNullOrEmpty(targetId)) return;
 
-        System.Console.Write("[NHẬP] Nhập Sticker ID (ví dụ: 24068): ");
-        string? stIdStr = System.Console.ReadLine()?.Trim();
-        System.Console.Write("[NHẬP] Nhập Category ID (cateId, ví dụ: 622): ");
-        string? cateIdStr = System.Console.ReadLine()?.Trim();
-        System.Console.Write("[NHẬP] Nhập Sticker Type (ví dụ: 1): ");
-        string? typeStr = System.Console.ReadLine()?.Trim();
+        System.Console.WriteLine("\n[GỢI Ý STICKER ZALO PHỔ BIẾN]");
+        System.Console.WriteLine(" 1: Ami Béo đáng yêu (Sticker ID: 24068, Cate ID: 622)");
+        System.Console.WriteLine(" 2: Mèo Cười Vui (Sticker ID: 24069, Cate ID: 622)");
+        System.Console.WriteLine(" 3: Sticker Tự Nhập ID");
+        System.Console.Write("[NHẬP] Chọn sticker [Mặc định 1]: ");
+        string? stChoice = System.Console.ReadLine()?.Trim();
 
-        _ = int.TryParse(stIdStr, out int stickerId);
-        _ = int.TryParse(cateIdStr, out int cateId);
-        _ = int.TryParse(typeStr, out int stickerType);
+        int stickerId = 24068;
+        int cateId = 622;
+        int stickerType = 1;
+
+        if (stChoice == "2")
+        {
+            stickerId = 24069;
+            cateId = 622;
+        }
+        else if (stChoice == "3")
+        {
+            System.Console.Write("[NHẬP] Nhập Sticker ID (ví dụ: 24068): ");
+            _ = int.TryParse(System.Console.ReadLine()?.Trim(), out stickerId);
+            System.Console.Write("[NHẬP] Nhập Category ID (cateId, ví dụ: 622): ");
+            _ = int.TryParse(System.Console.ReadLine()?.Trim(), out cateId);
+            System.Console.Write("[NHẬP] Nhập Sticker Type (ví dụ: 1): ");
+            _ = int.TryParse(System.Console.ReadLine()?.Trim(), out stickerType);
+        }
 
         if (stickerId <= 0) return;
 
