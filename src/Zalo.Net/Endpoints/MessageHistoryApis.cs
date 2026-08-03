@@ -56,7 +56,10 @@ public static class MessageHistoryApis
                         }
                         return decodedJson;
                     }
-                    catch { }
+                    catch
+                    {
+                        // Fallback to raw data node
+                    }
                 }
             }
         }
@@ -92,42 +95,110 @@ public static class MessageHistoryApis
             candidateHosts.Add(ch[0].StartsWith("http", StringComparison.OrdinalIgnoreCase) ? ch[0] : $"https://{ch[0]}");
         }
         candidateHosts.Add(DefaultGroupHost);
+        candidateHosts.Add("https://tt-group2.zalo.me");
+        candidateHosts.Add("https://groupms-chat2.zalo.me");
 
-        JsonObject payload = new()
+        string[] candidatePaths = ["/api/group/history", "/api/group/getmsglog", "/api/group/getmsg"];
+
+        JsonObject payload1 = new()
         {
             ["grid"] = threadId,
             ["count"] = count > 0 ? count : 50
         };
+        string? encParams1 = ZaloCipher.EncodeAes(session.Material.SecretKey, payload1.ToJsonString());
 
-        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
-        if (string.IsNullOrEmpty(encryptedParams))
+        JsonObject payload2 = new()
         {
-            throw new ZaloApiException("Failed to encrypt getOldMessages payload");
-        }
+            ["imei"] = session.Material.Imei,
+            ["count"] = count > 0 ? count : 50,
+            ["grid"] = threadId
+        };
+        string? encParams2 = ZaloCipher.EncodeAes(session.Material.SecretKey, payload2.ToJsonString());
 
         JsonNode? node = null;
         string? lastError = null;
 
         foreach (string host in candidateHosts.Distinct())
         {
-            string baseUrl = MakeUrl(host, "/api/group/history");
-            string requestUrl = $"{baseUrl}&params={Uri.EscapeDataString(encryptedParams)}";
-            try
+            foreach (string path in candidatePaths)
             {
-                using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
-                if (resp.IsSuccessStatusCode)
+                string baseUrl = MakeUrl(host, path);
+
+                if (!string.IsNullOrEmpty(encParams1))
                 {
-                    JsonNode? candidate = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
-                    if (candidate?["error_code"]?.GetValue<int>() == 0)
+                    try
                     {
-                        node = candidate;
-                        break;
+                        string reqUrl = $"{baseUrl}&params={Uri.EscapeDataString(encParams1)}";
+                        using HttpResponseMessage resp = await http.RequestAsync(reqUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+                        if (resp.IsSuccessStatusCode)
+                        {
+                            JsonNode? candidate = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+                            if (candidate?["error_code"]?.GetValue<int>() == 0)
+                            {
+                                node = candidate;
+                                break;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        lastError = ex.Message;
                     }
                 }
+
+                if (node is null && !string.IsNullOrEmpty(encParams1))
+                {
+                    try
+                    {
+                        using FormUrlEncodedContent formBody = new([new KeyValuePair<string, string>("params", encParams1)]);
+                        using HttpResponseMessage resp = await http.RequestAsync(baseUrl, HttpMethod.Post, body: formBody, ct: ct).ConfigureAwait(false);
+                        if (resp.IsSuccessStatusCode)
+                        {
+                            JsonNode? candidate = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+                            if (candidate?["error_code"]?.GetValue<int>() == 0)
+                            {
+                                node = candidate;
+                                break;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        lastError = ex.Message;
+                    }
+                }
+
+                if (node is null && !string.IsNullOrEmpty(encParams2))
+                {
+                    try
+                    {
+                        string reqUrl = $"{baseUrl}&params={Uri.EscapeDataString(encParams2)}";
+                        using HttpResponseMessage resp = await http.RequestAsync(reqUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+                        if (resp.IsSuccessStatusCode)
+                        {
+                            JsonNode? candidate = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+                            if (candidate?["error_code"]?.GetValue<int>() == 0)
+                            {
+                                node = candidate;
+                                break;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        lastError = ex.Message;
+                    }
+                }
+
+                if (node is not null)
+                {
+                    break;
+                }
             }
-            catch (Exception ex)
+
+            if (node is not null)
             {
-                lastError = ex.Message;
+                break;
             }
         }
 
