@@ -48,7 +48,12 @@
     <PropertyGroup>
         <Authors>PPN Corporation</Authors>
         <Company>PPN Corporation</Company>
-		<GenerateDocumentationFile>true</GenerateDocumentationFile>
-		<Copyright>Copyright (c) 2026 PPN Corporation. All rights reserved.</Copyright>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+        <Copyright>Copyright (c) 2026 PPN Corporation. All rights reserved.</Copyright>
+        <PackageIcon Condition="Exists('$(MSBuildThisFileDirectory)icon.png')">icon.png</PackageIcon>
     </PropertyGroup>
+
+    <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)icon.png')">
+        <None Include="$(MSBuildThisFileDirectory)icon.png" Pack="true" PackagePath="\" />
+    </ItemGroup>
 </Project>
