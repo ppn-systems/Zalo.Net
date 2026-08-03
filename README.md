@@ -48,7 +48,7 @@ client.MessageReceived += (sender, msg) =>
 await ZaloWebClient.SendTextAsync(session, "USER_ID", ZaloThreadType.User, "Xin chào!", CancellationToken.None);
 
 // 4. Lắng nghe WebSocket thời gian thực với cơ chế tự động kết nối lại
-await client.RunWithReconnectAsync(material, CancellationToken.None);
+await client.RunWithReconnectAsync(material, ct: CancellationToken.None);
 ```
 
 ---
