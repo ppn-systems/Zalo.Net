@@ -13,4 +13,7 @@
     <Project Path="tests/Zalo.Net.WebSocket.Tests/Zalo.Net.WebSocket.Tests.csproj" />
     <Project Path="tests/Zalo.Net.Tests/Zalo.Net.Tests.csproj" />
   </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/Zalo.Console/Zalo.Console.csproj" />
+  </Folder>
 </Solution>
