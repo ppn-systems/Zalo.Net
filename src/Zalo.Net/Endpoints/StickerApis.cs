@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 using System;
@@ -40,7 +40,7 @@ public static class StickerApis
         }
 
         string path = isGroup ? "/api/group/sticker" : "/api/message/sticker";
-        string url = $"{endpointHost.TrimEnd('/')}{path}?zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}&nretry=0";
+        string url = $"{endpointHost.TrimEnd('/')}{path}?zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}&nretry=0";
 
         JsonObject payload = new()
         {

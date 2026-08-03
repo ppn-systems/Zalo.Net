@@ -96,7 +96,7 @@ public static class ReactionApis
         }
 
         string path = isGroup ? "/api/group/reaction" : "/api/message/reaction";
-        string url = $"{endpointHost.TrimEnd('/')}{path}?zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}";
+        string url = $"{endpointHost.TrimEnd('/')}{path}?zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}";
 
         (int rType, string icon) = GetReactionDetails(reaction);
 
