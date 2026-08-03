@@ -17,15 +17,6 @@ namespace Zalo.Net.Endpoints;
 /// </summary>
 public static class MessageHistoryApis
 {
-    private const string DefaultGroupHost = "https://group-wpa.chat.zalo.me";
-
-    private static string MakeUrl(string baseUrl, string path)
-    {
-        string baseClean = baseUrl.EndsWith('/') ? baseUrl[..^1] : baseUrl;
-        string sep = path.Contains('?', StringComparison.Ordinal) ? "&" : "?";
-        return $"{baseClean}{path}{sep}zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}";
-    }
-
     private static JsonNode? DecryptDataNode(ZaloSession session, JsonNode? node)
     {
         if (node is not JsonObject root)
@@ -85,107 +76,111 @@ public static class MessageHistoryApis
             throw new ZaloApiException("Zalo Web API chỉ hỗ trợ tải lịch sử tin nhắn đối với Nhóm (Group). Tin nhắn cá nhân (DM) được đồng bộ qua WebSocket thời gian thực.");
         }
 
-        List<string> hostsToTry = [];
-        string[] targetKeys = ["group", "group_cloud_message", "conversation", "chat"];
-        foreach (string key in targetKeys)
+        long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        // 1. Signed getoldmessages format (Nexus / Legacy Zalo Protocol)
+        JsonObject signedObj = new()
         {
-            if (session.ServiceMap.TryGetValue(key, out string[]? hosts))
-            {
-                foreach (string h in hosts)
-                {
-                    if (!string.IsNullOrWhiteSpace(h))
-                    {
-                        hostsToTry.Add(h.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? h : $"https://{h}");
-                    }
-                }
-            }
-        }
-        hostsToTry.Add(DefaultGroupHost);
+            ["imei"] = session.Material.Imei,
+            ["count"] = count > 0 ? count : 50,
+            ["grid"] = threadId
+        };
+        Dictionary<string, object?> dataDict = new()
+        {
+            ["imei"] = session.Material.Imei,
+            ["count"] = count > 0 ? count : 50,
+            ["grid"] = threadId
+        };
+        string dataJson = signedObj.ToJsonString();
+        string? encryptedSigned = ZaloCipher.EncodeAes(session.Material.SecretKey, dataJson);
+        string signKey = Hashing.GetSignKey("getoldmessages", dataDict);
 
-        string[] candidatePaths = [
-            "/api/group/history",
-            "/api/group/getmsg"
-        ];
-
-        JsonObject payload = new()
+        // 2. Simple getGroupChatHistory format (zca-js format)
+        JsonObject simplePayload = new()
         {
             ["grid"] = threadId,
             ["count"] = count > 0 ? count : 50
         };
+        string? encryptedSimple = ZaloCipher.EncodeAes(session.Material.SecretKey, simplePayload.ToJsonString());
 
-        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
-        if (string.IsNullOrEmpty(encryptedParams))
+        List<string> groupHosts = ["https://tt-group-wpa.chat.zalo.me", "https://tt-group2.zalo.me", "https://group2.zalo.me", "https://group-wpa.chat.zalo.me"];
+        if (session.ServiceMap.TryGetValue("group", out string[]? hosts))
         {
-            throw new ZaloApiException("Failed to encrypt getGroupChatHistory payload");
+            foreach (string h in hosts)
+            {
+                if (!string.IsNullOrWhiteSpace(h))
+                {
+                    groupHosts.Insert(0, h.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? h : $"https://{h}");
+                }
+            }
         }
 
         Exception? lastEx = null;
 
-        foreach (string host in hostsToTry.Distinct())
+        foreach (string host in groupHosts.Distinct())
         {
-            foreach (string path in candidatePaths)
-            {
-                string baseUrl = MakeUrl(host, path);
-                using CancellationTokenSource timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-                timeoutCts.CancelAfter(TimeSpan.FromSeconds(4));
+            string hostClean = host.EndsWith('/') ? host[..^1] : host;
 
-                // Try GET
+            // Pattern A: getmsglog with signkey & client_version (Nexus Protocol)
+            if (!string.IsNullOrEmpty(encryptedSigned))
+            {
+                string urlA = $"{hostClean}/api/group/getmsglog?params={Uri.EscapeDataString(encryptedSigned)}&ts={ts}&signkey={signKey}&type={ZaloHttpClient.ApiType}&client_version={ZaloHttpClient.ApiVersion}";
+                Console.WriteLine($"[DEBUG LOG] Pattern A (getmsglog): {urlA}");
                 try
                 {
-                    string reqUrlGet = $"{baseUrl}&params={Uri.EscapeDataString(encryptedParams)}";
-                    Console.WriteLine($"[DEBUG LOG] GET {host}{path} ...");
-                    using HttpResponseMessage respGet = await http.RequestAsync(reqUrlGet, HttpMethod.Get, ct: timeoutCts.Token).ConfigureAwait(false);
-                    if (respGet.IsSuccessStatusCode)
+                    using HttpResponseMessage resp = await http.RequestAsync(urlA, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+                    if (resp.IsSuccessStatusCode)
                     {
-                        JsonNode? json = await ZaloHttpClient.ReadJsonAsync(respGet, timeoutCts.Token).ConfigureAwait(false);
+                        JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
                         int errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
                         if (errorCode == 0)
                         {
                             JsonNode? dataNode = DecryptDataNode(session, json) ?? json?["data"];
-                            Console.WriteLine($"[DEBUG LOG] GetGroupHistory SUCCESS via GET {host}{path}");
+                            Console.WriteLine($"[DEBUG LOG] Pattern A SUCCESS from {hostClean}");
                             return dataNode;
                         }
-                        string errMsg = json?["error_message"]?.GetValue<string>() ?? $"ErrorCode {errorCode}";
-                        Console.WriteLine($"[DEBUG LOG] GET {host}{path} -> Error: code={errorCode}, msg='{errMsg}'");
+                        Console.WriteLine($"[DEBUG LOG] Pattern A -> code={errorCode}, msg='{json?["error_message"]?.GetValue<string>()}'");
                     }
                     else
                     {
-                        Console.WriteLine($"[DEBUG LOG] GET {host}{path} -> HTTP {(int)respGet.StatusCode} {respGet.ReasonPhrase}");
+                        Console.WriteLine($"[DEBUG LOG] Pattern A -> HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[DEBUG LOG] GET {host}{path} -> {ex.Message}");
+                    Console.WriteLine($"[DEBUG LOG] Pattern A -> Exception: {ex.Message}");
                     lastEx = ex;
                 }
+            }
 
-                // Try POST
+            // Pattern B: history with zpw_ver & zpw_type (zca-js Protocol)
+            if (!string.IsNullOrEmpty(encryptedSimple))
+            {
+                string urlB = $"{hostClean}/api/group/history?zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}&params={Uri.EscapeDataString(encryptedSimple)}";
+                Console.WriteLine($"[DEBUG LOG] Pattern B (history): {urlB}");
                 try
                 {
-                    Console.WriteLine($"[DEBUG LOG] POST {host}{path} ...");
-                    using FormUrlEncodedContent postBody = new([new KeyValuePair<string, string>("params", encryptedParams)]);
-                    using HttpResponseMessage respPost = await http.RequestAsync(baseUrl, HttpMethod.Post, body: postBody, ct: timeoutCts.Token).ConfigureAwait(false);
-                    if (respPost.IsSuccessStatusCode)
+                    using HttpResponseMessage resp = await http.RequestAsync(urlB, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+                    if (resp.IsSuccessStatusCode)
                     {
-                        JsonNode? json = await ZaloHttpClient.ReadJsonAsync(respPost, timeoutCts.Token).ConfigureAwait(false);
+                        JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
                         int errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
                         if (errorCode == 0)
                         {
                             JsonNode? dataNode = DecryptDataNode(session, json) ?? json?["data"];
-                            Console.WriteLine($"[DEBUG LOG] GetGroupHistory SUCCESS via POST {host}{path}");
+                            Console.WriteLine($"[DEBUG LOG] Pattern B SUCCESS from {hostClean}");
                             return dataNode;
                         }
-                        string errMsg = json?["error_message"]?.GetValue<string>() ?? $"ErrorCode {errorCode}";
-                        Console.WriteLine($"[DEBUG LOG] POST {host}{path} -> Error: code={errorCode}, msg='{errMsg}'");
+                        Console.WriteLine($"[DEBUG LOG] Pattern B -> code={errorCode}, msg='{json?["error_message"]?.GetValue<string>()}'");
                     }
                     else
                     {
-                        Console.WriteLine($"[DEBUG LOG] POST {host}{path} -> HTTP {(int)respPost.StatusCode} {respPost.ReasonPhrase}");
+                        Console.WriteLine($"[DEBUG LOG] Pattern B -> HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}");
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[DEBUG LOG] POST {host}{path} -> {ex.Message}");
+                    Console.WriteLine($"[DEBUG LOG] Pattern B -> Exception: {ex.Message}");
                     lastEx = ex;
                 }
             }
