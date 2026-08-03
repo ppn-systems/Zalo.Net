@@ -370,7 +370,48 @@ internal static class Program
 
     private static async Task HandleGetHistoryAsync(ZaloSession session, CancellationToken ct)
     {
-        (string targetId, ZaloThreadType threadType) = ResolveTargetSelection();
+        string targetId = "";
+        List<QuickTarget> groups = [.. s_registry.GetAll().Where(t => t.ThreadType == ZaloThreadType.Group)];
+
+        if (groups.Count > 0)
+        {
+            System.Console.WriteLine("\n[DANH SÁCH NHÓM GẦN ĐÂY]");
+            ConsoleTable groupTable = new("STT", "Tên nhóm", "Group ID");
+            foreach (QuickTarget g in groups)
+            {
+                groupTable.AddRow(g.Index.ToString(System.Globalization.CultureInfo.InvariantCulture), g.Name, g.TargetId);
+            }
+            groupTable.AddRow("0", "Nhập Group ID thủ công", "-");
+            groupTable.Print(ConsoleColor.DarkCyan, ConsoleColor.Yellow);
+
+            System.Console.Write("[NHẬP] Chọn số thứ tự nhóm (hoặc dán Group ID): ");
+            string? input = System.Console.ReadLine()?.Trim();
+            if (string.IsNullOrEmpty(input))
+            {
+                return;
+            }
+
+            if (int.TryParse(input, out int idx) && idx > 0)
+            {
+                QuickTarget? found = groups.FirstOrDefault(g => g.Index == idx);
+                if (found != null)
+                {
+                    targetId = found.TargetId;
+                }
+            }
+
+            if (string.IsNullOrEmpty(targetId) && input != "0")
+            {
+                targetId = input;
+            }
+        }
+
+        if (string.IsNullOrEmpty(targetId))
+        {
+            System.Console.Write("[NHẬP] Nhập Group ID cần tải lịch sử: ");
+            targetId = System.Console.ReadLine()?.Trim() ?? "";
+        }
+
         if (string.IsNullOrEmpty(targetId))
         {
             return;
@@ -378,8 +419,9 @@ internal static class Program
 
         try
         {
-            JsonNode? history = await ZaloWebClient.GetOldMessagesAsync(session, targetId, threadType, count: 50, ct).ConfigureAwait(false);
-            System.Console.WriteLine($"[THÀNH CÔNG] Đã tải lịch sử tin nhắn:");
+            System.Console.WriteLine("[THÔNG BÁO] Đang tải lịch sử tin nhắn nhóm...");
+            JsonNode? history = await ZaloWebClient.GetOldMessagesAsync(session, targetId, ZaloThreadType.Group, count: 50, ct).ConfigureAwait(false);
+            System.Console.WriteLine($"[THÀNH CÔNG] Đã tải thành công dữ liệu lịch sử tin nhắn nhóm:");
             if (history is not null)
             {
                 System.Console.WriteLine(history.ToJsonString());
