@@ -48,12 +48,13 @@ public static class MessageHistoryApis
         }
 
         string host = GetHost(session, "group", DefaultGroupHost);
-        string baseUrl = MakeUrl(host, "/api/group/history");
+        string[] paths = ["/api/group/history", "/api/group/getmsglog", "/api/group/getmsg"];
 
         JsonObject payload = new()
         {
             ["grid"] = threadId,
-            ["count"] = count > 0 ? count : 50
+            ["count"] = count > 0 ? count : 50,
+            ["imei"] = session.Material.Imei
         };
 
         string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
@@ -62,10 +63,41 @@ public static class MessageHistoryApis
             throw new ZaloApiException("Failed to encrypt getOldMessages payload");
         }
 
-        string requestUrl = $"{baseUrl}&params={Uri.EscapeDataString(encryptedParams)}";
-        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
-        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false)
-                      ?? throw new ZaloApiException("Invalid JSON response from getOldMessages");
+        HttpResponseMessage? lastResp = null;
+        JsonNode? node = null;
+
+        foreach (string path in paths)
+        {
+            string baseUrl = MakeUrl(host, path);
+            string requestUrl = $"{baseUrl}&params={Uri.EscapeDataString(encryptedParams)}";
+            try
+            {
+                HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+                if (resp.IsSuccessStatusCode)
+                {
+                    node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+                    if (node is not null)
+                    {
+                        break;
+                    }
+                }
+                lastResp = resp;
+            }
+            catch (ZaloApiException ex) when (ex.Code == 404 || ex.Message.Contains("404", StringComparison.OrdinalIgnoreCase))
+            {
+                // Try next fallback path
+            }
+        }
+
+        if (node is null && lastResp is not null)
+        {
+            node = await ZaloHttpClient.ReadJsonAsync(lastResp, ct).ConfigureAwait(false);
+        }
+
+        if (node is null)
+        {
+            throw new ZaloApiException("Không thể tải lịch sử tin nhắn nhóm từ máy chủ Zalo.");
+        }
 
         int errorCode = node["error_code"]?.GetValue<int>() ?? -1;
         if (errorCode != 0)
