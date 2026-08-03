@@ -1,4 +1,8 @@
+using System;
+using System.IO;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using Zalo.Net;
 using Zalo.Net.Contracts;
 
@@ -23,10 +27,10 @@ internal static class Program
         if (material == null)
         {
             System.Console.WriteLine("🔑 Chưa tìm thấy session cũ. Bắt đầu luồng Đăng nhập bằng mã QR...");
-            material = await PerformQrLoginAsync(client);
+            material = await PerformQrLoginLoopAsync(client);
             if (material == null)
             {
-                System.Console.WriteLine("❌ Đăng nhập thất bại hoặc đã quá hạn.");
+                System.Console.WriteLine("❌ Đăng nhập bị hủy hoặc thất bại.");
                 return;
             }
             await SaveSessionAsync(material);
@@ -80,61 +84,76 @@ internal static class Program
         await InteractiveMenuAsync(session, cts.Token);
     }
 
-    private static async Task<ZaloSessionMaterial?> PerformQrLoginAsync(ZaloWebClient client)
+    private static async Task<ZaloSessionMaterial?> PerformQrLoginLoopAsync(ZaloWebClient client)
     {
-        using CancellationTokenSource cts = new(TimeSpan.FromMinutes(4));
-        try
+        int attempt = 1;
+        while (true)
         {
-            ZaloQrSession qrSession = await client.StartQrLoginAsync(cts.Token);
-            byte[] imageBytes = Convert.FromBase64String(qrSession.QrImageBase64);
-            await File.WriteAllBytesAsync(QrCodeFilePath, imageBytes, cts.Token);
-
-            string fullQrPath = Path.GetFullPath(QrCodeFilePath);
-            System.Console.WriteLine("-------------------------------------------------");
-            System.Console.WriteLine($"📸 Mã QR đã được lưu tại: {fullQrPath}");
-            System.Console.WriteLine("👉 Hãy mở ảnh mã QR trên và dùng ứng dụng Zalo trên điện thoại để quét mã!");
-            System.Console.WriteLine("-------------------------------------------------");
-
-            ZaloLoginState lastState = await client.PollLoginAsync(qrSession.SessionId);
-            while (!cts.Token.IsCancellationRequested)
+            System.Console.WriteLine($"\n🔄 [Lần {attempt}] Đang tạo mã QR Login Zalo...");
+            using CancellationTokenSource cts = new(TimeSpan.FromMinutes(4));
+            try
             {
-                ZaloLoginState state = await client.PollLoginAsync(qrSession.SessionId);
-                if (state.Status != lastState.Status)
+                ZaloQrSession qrSession = await client.StartQrLoginAsync(cts.Token);
+                byte[] imageBytes = Convert.FromBase64String(qrSession.QrImageBase64);
+                await File.WriteAllBytesAsync(QrCodeFilePath, imageBytes, cts.Token);
+
+                string fullQrPath = Path.GetFullPath(QrCodeFilePath);
+                System.Console.WriteLine("-------------------------------------------------");
+                System.Console.WriteLine($"📸 Mã QR đã lưu tại: {fullQrPath}");
+                System.Console.WriteLine("👉 Hãy mở ảnh mã QR trên và dùng ứng dụng Zalo trên điện thoại để quét mã!");
+                System.Console.WriteLine("-------------------------------------------------");
+
+                ZaloLoginState lastState = await client.PollLoginAsync(qrSession.SessionId);
+                bool qrExpired = false;
+
+                while (!cts.Token.IsCancellationRequested)
                 {
-                    lastState = state;
-                    switch (state.Status)
+                    ZaloLoginState state = await client.PollLoginAsync(qrSession.SessionId);
+                    if (state.Status != lastState.Status)
                     {
-                        case ZaloLoginStatus.Scanned:
-                            System.Console.WriteLine($"👤 Đã quét QR bởi {state.DisplayName}! Vui lòng bấm XÁC NHẬN trên điện thoại...");
-                            break;
-                        case ZaloLoginStatus.Connected:
-                            System.Console.WriteLine($"✅ Đăng nhập thành công với tài khoản: {state.DisplayName}!");
-                            return client.ConsumePendingMaterial(qrSession.SessionId);
-                        case ZaloLoginStatus.Declined:
-                            System.Console.WriteLine("🚫 Bạn đã từ chối đăng nhập trên điện thoại.");
-                            return null;
-                        case ZaloLoginStatus.Expired:
-                            System.Console.WriteLine("⌛ Mã QR đã hết hạn.");
-                            return null;
-                        default:
-                            break;
+                        lastState = state;
+                        switch (state.Status)
+                        {
+                            case ZaloLoginStatus.Scanned:
+                                string name = string.IsNullOrWhiteSpace(state.DisplayName) ? "bạn" : state.DisplayName;
+                                System.Console.WriteLine($"👤 Đã quét QR bởi [{name}]! Vui lòng bấm XÁC NHẬN trên điện thoại...");
+                                break;
+                            case ZaloLoginStatus.Connected:
+                                System.Console.WriteLine($"✅ Đăng nhập thành công với tài khoản: {state.DisplayName}!");
+                                return client.ConsumePendingMaterial(qrSession.SessionId);
+                            case ZaloLoginStatus.Declined:
+                                System.Console.WriteLine("🚫 Bạn đã từ chối đăng nhập trên điện thoại.");
+                                return null;
+                            case ZaloLoginStatus.Expired:
+                                System.Console.WriteLine("⌛ Mã QR đã hết hạn! Tự động tạo mã QR mới...");
+                                qrExpired = true;
+                                break;
+                            default:
+                                break;
+                        }
                     }
-                }
 
-                if (state.Status == ZaloLoginStatus.Connected)
-                {
-                    return client.ConsumePendingMaterial(qrSession.SessionId);
-                }
+                    if (qrExpired)
+                    {
+                        break;
+                    }
 
-                await Task.Delay(1500, cts.Token);
+                    if (state.Status == ZaloLoginStatus.Connected)
+                    {
+                        return client.ConsumePendingMaterial(qrSession.SessionId);
+                    }
+
+                    await Task.Delay(1500, cts.Token);
+                }
             }
-        }
-        catch (Exception ex)
-        {
-            System.Console.WriteLine($"❌ Lỗi trong quá trình quét QR: {ex.Message}");
-        }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"❌ Lỗi trong quá trình tạo/quét QR: {ex.Message}");
+                await Task.Delay(2000);
+            }
 
-        return null;
+            attempt++;
+        }
     }
 
     private static async Task InteractiveMenuAsync(ZaloSession session, CancellationToken ct)
