@@ -50,10 +50,13 @@
         <Company>PPN Corporation</Company>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <Copyright>Copyright (c) 2026 PPN Corporation. All rights reserved.</Copyright>
+        <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
         <PackageIcon Condition="Exists('$(MSBuildThisFileDirectory)icon.png')">icon.png</PackageIcon>
+        <PackageReadmeFile Condition="Exists('$(MSBuildThisFileDirectory)README.md')">README.md</PackageReadmeFile>
     </PropertyGroup>
 
-    <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)icon.png')">
-        <None Include="$(MSBuildThisFileDirectory)icon.png" Pack="true" PackagePath="\" />
+    <ItemGroup>
+        <None Include="$(MSBuildThisFileDirectory)icon.png" Pack="true" PackagePath="\" Condition="Exists('$(MSBuildThisFileDirectory)icon.png')" />
+        <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" Condition="Exists('$(MSBuildThisFileDirectory)README.md')" />
     </ItemGroup>
 </Project>
