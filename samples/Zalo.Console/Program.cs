@@ -252,6 +252,7 @@ internal static class Program
             menuTable.AddRow("10", " Tạo nhóm chat mới");
             menuTable.AddRow("11", " Thêm thành viên vào nhóm");
             menuTable.AddRow("12", " Xóa thành viên khỏi nhóm");
+            menuTable.AddRow("18", " Danh sách nhóm chat của tôi (GetAllGroupsAsync)");
             menuTable.AddRow("--", "[HỆ THỐNG]");
             menuTable.AddRow("13", " Đăng xuất khỏi phiên hiện tại");
             menuTable.AddRow("Q", "  Thoát khỏi chương trình");
@@ -312,6 +313,10 @@ internal static class Program
 
                 case "12":
                     await HandleRemoveUserFromGroupAsync(session, ct).ConfigureAwait(false);
+                    break;
+
+                case "18":
+                    await HandleGetGroupsAsync(session, ct).ConfigureAwait(false);
                     break;
 
                 case "13":
@@ -1027,6 +1032,40 @@ internal static class Program
         catch (Exception ex)
         {
             System.Console.WriteLine($"[LỖI] Không thể lấy danh sách bạn bè: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleGetGroupsAsync(ZaloSession session, CancellationToken ct)
+    {
+        try
+        {
+            System.Console.WriteLine("[THÔNG BÁO] Đang tải danh sách nhóm chat...");
+            IReadOnlyList<ZaloGroupInfo> groups = await ZaloWebClient.GetAllGroupsAsync(session, ct).ConfigureAwait(false);
+
+            foreach (ZaloGroupInfo g in groups)
+            {
+                s_registry.AddOrUpdate(g.Name, g.GroupId, ZaloThreadType.Group);
+            }
+
+            IReadOnlyList<QuickTarget> list = [.. s_registry.GetAll().Where(t => t.ThreadType == ZaloThreadType.Group)];
+            System.Console.WriteLine($"[THÀNH CÔNG] Đã tải {list.Count} nhóm chat:");
+
+            ConsoleTable groupsTable = new("STT", "Tên nhóm", "Group ID (grid)", "Số thành viên");
+            foreach (QuickTarget qt in list)
+            {
+                ZaloGroupInfo? match = groups.FirstOrDefault(g => g.GroupId == qt.TargetId);
+                groupsTable.AddRow(
+                    qt.Index.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    qt.Name,
+                    qt.TargetId,
+                    match != null ? match.MemberCount.ToString(System.Globalization.CultureInfo.InvariantCulture) : "-"
+                );
+            }
+            groupsTable.Print(ConsoleColor.DarkCyan, ConsoleColor.Green);
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[LỖI] Không thể lấy danh sách nhóm chat: {ex.Message}");
         }
     }
 
