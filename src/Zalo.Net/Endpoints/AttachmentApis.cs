@@ -329,7 +329,10 @@ public static class AttachmentApis
                     if (ZaloFileDoneRegistry.TryGet(finalId, out string? wUrl) && !string.IsNullOrEmpty(wUrl))
                     {
                         normalUrl = wUrl;
-                        Console.WriteLine($"[DEBUG LOG] Acquired fileUrl from WebSocket file_done after wait: '{normalUrl}'");
+                        if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Internal.Debug))
+                        {
+                            ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Internal.Debug, $"Received file_done for fileId '{finalId}' after wait");
+                        }
                         break;
                     }
                 }
