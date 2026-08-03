@@ -74,6 +74,44 @@ internal static class GroupApis
         return [];
     }
 
+    private static JsonNode? DecryptDataNode(ZaloSession session, JsonNode? node)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+        JsonNode? dataNode = node["data"];
+        if (dataNode is null)
+        {
+            return null;
+        }
+
+        if (dataNode.GetValueKind() == System.Text.Json.JsonValueKind.String)
+        {
+            string encStr = dataNode.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(encStr))
+            {
+                return null;
+            }
+
+            string? decrypted = ZaloCipher.DecodeAes(session.Material.SecretKey, encStr)
+                             ?? ZaloCipher.DecodeAesUtf8Key(session.Material.SecretKey, encStr);
+            if (!string.IsNullOrWhiteSpace(decrypted))
+            {
+                try
+                {
+                    return JsonNode.Parse(decrypted);
+                }
+                catch
+                {
+                    // Fallback to raw data node
+                }
+            }
+        }
+
+        return dataNode;
+    }
+
     public static async Task<ZaloGroupCreateResult> CreateGroupAsync(
         ZaloHttpClient http, ZaloSession session, string groupName, IEnumerable<string> memberIds, CancellationToken ct)
     {
@@ -124,7 +162,7 @@ internal static class GroupApis
             throw new ZaloApiException(msg, errorCode);
         }
 
-        JsonNode? data = node["data"];
+        JsonNode? data = DecryptDataNode(session, node);
         string groupId = data?["groupId"]?.GetValue<string>()
                       ?? data?["grid"]?.GetValue<string>()
                       ?? "";

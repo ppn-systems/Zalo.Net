@@ -32,6 +32,44 @@ internal static class FriendApis
         return $"{baseClean}{path}{sep}zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}";
     }
 
+    private static JsonNode? DecryptDataNode(ZaloSession session, JsonNode? node)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+        JsonNode? dataNode = node["data"];
+        if (dataNode is null)
+        {
+            return null;
+        }
+
+        if (dataNode.GetValueKind() == System.Text.Json.JsonValueKind.String)
+        {
+            string encStr = dataNode.GetValue<string>();
+            if (string.IsNullOrWhiteSpace(encStr))
+            {
+                return null;
+            }
+
+            string? decrypted = ZaloCipher.DecodeAes(session.Material.SecretKey, encStr)
+                             ?? ZaloCipher.DecodeAesUtf8Key(session.Material.SecretKey, encStr);
+            if (!string.IsNullOrWhiteSpace(decrypted))
+            {
+                try
+                {
+                    return JsonNode.Parse(decrypted);
+                }
+                catch
+                {
+                    // Fallback to raw data node if parse fails
+                }
+            }
+        }
+
+        return dataNode;
+    }
+
     public static async Task<IReadOnlyList<ZaloFriendInfo>> GetAllFriendsAsync(
         ZaloHttpClient http, ZaloSession session, int count, int page, CancellationToken ct)
     {
@@ -69,8 +107,8 @@ internal static class FriendApis
             throw new ZaloApiException(msg, errorCode);
         }
 
-        JsonNode? dataArr = node["data"];
-        if (dataArr is not JsonArray arr)
+        JsonNode? dataNode = DecryptDataNode(session, node);
+        if (dataNode is not JsonArray arr)
         {
             return Array.Empty<ZaloFriendInfo>();
         }
@@ -140,7 +178,7 @@ internal static class FriendApis
             throw new ZaloApiException(msg, errorCode);
         }
 
-        JsonNode? data = node["data"];
+        JsonNode? data = DecryptDataNode(session, node);
         string uid = data?["uid"]?.GetValue<string>() ?? data?["userId"]?.GetValue<string>() ?? "";
         string displayName = data?["displayName"]?.GetValue<string>() ?? data?["zaloName"]?.GetValue<string>() ?? "";
         string? avatar = data?["avatar"]?.GetValue<string>();
