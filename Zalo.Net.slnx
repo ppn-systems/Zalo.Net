@@ -1,0 +1,16 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Zalo.Net.Contracts/Zalo.Net.Contracts.csproj" />
+    <Project Path="src/Zalo.Net.Cryptography/Zalo.Net.Cryptography.csproj" />
+    <Project Path="src/Zalo.Net.Auth/Zalo.Net.Auth.csproj" />
+    <Project Path="src/Zalo.Net.WebSocket/Zalo.Net.WebSocket.csproj" />
+    <Project Path="src/Zalo.Net/Zalo.Net.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Zalo.Net.Contracts.Tests/Zalo.Net.Contracts.Tests.csproj" />
+    <Project Path="tests/Zalo.Net.Cryptography.Tests/Zalo.Net.Cryptography.Tests.csproj" />
+    <Project Path="tests/Zalo.Net.Auth.Tests/Zalo.Net.Auth.Tests.csproj" />
+    <Project Path="tests/Zalo.Net.WebSocket.Tests/Zalo.Net.WebSocket.Tests.csproj" />
+    <Project Path="tests/Zalo.Net.Tests/Zalo.Net.Tests.csproj" />
+  </Folder>
+</Solution>
