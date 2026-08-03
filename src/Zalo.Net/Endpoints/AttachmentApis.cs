@@ -279,6 +279,9 @@ public static class AttachmentApis
             }
 
             JsonNode? dataNode = DecryptDataNode(session, json);
+            Console.WriteLine($"[DEBUG LOG] Raw Upload Response JSON: {json?.ToJsonString()}");
+            Console.WriteLine($"[DEBUG LOG] Decrypted DataNode JSON: {dataNode?.ToJsonString()}");
+
             photoId = FindIdInJsonNode(dataNode)
                    ?? FindIdInJsonNode(json)
                    ?? clientId.ToString(System.Globalization.CultureInfo.InvariantCulture);
