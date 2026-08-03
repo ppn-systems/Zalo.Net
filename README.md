@@ -1,60 +1,60 @@
 # Zalo.Net
 
-Thư viện C# SDK cho giao thức Zalo Web Client trên nền tảng **.NET 10**.
+A high-performance C# SDK for the Zalo Web protocol built on **.NET 10**.
 
-## 📌 Tính năng chính
+## Features
 
-- **Đăng nhập QR Code**: Khởi tạo luồng quét mã QR, lấy ảnh Base64 và polling trạng thái xác thực.
-- **Realtime WebSocket**: Lắng nghe tin nhắn thời gian thực, tự động kết nối lại (Auto-Reconnect).
-- **Tương tác tin nhắn**: Gửi tin nhắn cá nhân & nhóm, trích dẫn (Quote), thu hồi (Recall), thả cảm xúc (Reaction), gửi Sticker/Ảnh/File.
-- **Quản lý Nhóm & Danh bạ**: Tạo nhóm, thêm/xóa thành viên, rời nhóm, đổi tên nhóm; tìm kiếm bạn bè theo số điện thoại, kết bạn, chặn người dùng.
-- **Hỗ trợ Proxy (`IWebProxy`)**: Gán Proxy riêng (HTTP/HTTPS/SOCKS5) cho từng tài khoản Zalo.
-- **Chẩn đoán & Trace**: Tích hợp `ZaloDiagnosticsEvents` qua `DiagnosticSource`.
+- **QR Code Authentication**: Initiate QR login, obtain Base64 QR images, and poll confirmation state.
+- **Real-Time WebSocket**: Receive messages via WebSockets with automatic exponential backoff reconnects.
+- **Messaging Operations**: Send direct/group text messages, quotes/replies, recalls/undo, reactions (Heart, Like, Haha, etc.), stickers, and file attachments.
+- **Group & Contact Management**: Create groups, manage members, leave groups, rename groups, find users by phone number, manage friend requests, block/unblock users.
+- **Multi-Account Proxy Support**: Assign dedicated `IWebProxy` instances (HTTP/HTTPS/SOCKS5) per Zalo account for HTTP and WebSocket traffic.
+- **Diagnostics & Tracing**: Integrated `ZaloDiagnosticsEvents` using standard .NET `DiagnosticSource`.
 
 ---
 
-## 🏛️ Cấu trúc dự án
+## Solution Architecture
 
-| Dự án | Vai trò |
+| Project | Description |
 | :--- | :--- |
 | **`Zalo.Net.Contracts`** | DTOs, Record Models, Exceptions, `IZaloClient`, `ZaloConstants`, `ZaloDiagnosticsEvents`. |
-| **`Zalo.Net.Cryptography`** | Thư viện mã hóa AES-GCM, AES-CBC, MD5 và giải mã khung WebSocket (`WsFrameCodec`). |
-| **`Zalo.Net.Auth`** | Quản lý CookieStore, `ZaloHttpClient` và các API xác thực. |
-| **`Zalo.Net.WebSocket`** | Engine WebSocket (`ZaloWsListener`) nhận tin nhắn thời gian thực. |
-| **`Zalo.Net`** | Client facade chính (`ZaloWebClient`) tích hợp toàn bộ các API Endpoints. |
+| **`Zalo.Net.Cryptography`** | AES-GCM (SIMD hardware-accelerated), AES-CBC, MD5, and frame codec (`WsFrameCodec`). |
+| **`Zalo.Net.Auth`** | `CookieStore`, `ZaloHttpClient` (`SocketsHttpHandler`), and authentication endpoints. |
+| **`Zalo.Net.WebSocket`** | Real-time WebSocket engine (`ZaloWsListener`). |
+| **`Zalo.Net`** | Main client facade (`ZaloWebClient`) integrating all Web API endpoints. |
 
 ---
 
-## 💡 Ví dụ sử dụng
+## Usage Example
 
 ```csharp
 using System.Net;
 using Zalo.Net;
 using Zalo.Net.Contracts;
 
-// 1. Đăng nhập với Session đã lưu
+// 1. Restore session material and initialize client with a proxy
 ZaloSessionMaterial material = GetSavedMaterial();
 using ZaloWebClient client = new(proxy: new WebProxy("http://127.0.0.1:8080"));
 
 ZaloSession session = await ZaloWebClient.LoginWithSessionAsync(material, CancellationToken.None);
 
-// 2. Đăng ký sự kiện nhận tin nhắn Realtime
+// 2. Subscribe to real-time message events
 client.MessageReceived += (sender, msg) =>
 {
     Console.WriteLine($"[{msg.DisplayName}]: {msg.Content}");
 };
 
-// 3. Gửi tin nhắn văn bản
-await ZaloWebClient.SendTextAsync(session, "USER_ID", ZaloThreadType.User, "Xin chào!", CancellationToken.None);
+// 3. Send text message
+await ZaloWebClient.SendTextAsync(session, "USER_ID", ZaloThreadType.User, "Hello!", CancellationToken.None);
 
-// 4. Lắng nghe WebSocket thời gian thực
+// 4. Run real-time WebSocket listener with auto-reconnect
 await client.RunWithReconnectAsync(material, CancellationToken.None);
 ```
 
 ---
 
-## 📄 Bản quyền & Giấy phép
+## License & Copyright
 
 Copyright (c) 2026 PPN Corporation. All rights reserved.
 
-Dự án được phân phối dưới giấy phép [Apache License 2.0](LICENSE).
+Distributed under the [Apache License 2.0](LICENSE).
