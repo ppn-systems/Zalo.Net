@@ -45,7 +45,7 @@ public static class MessageHistoryApis
 
         bool isGroup = type == ZaloThreadType.Group;
         string host = isGroup ? GetHost(session, "group", DefaultGroupHost) : GetHost(session, "chat", DefaultChatHost);
-        string path = isGroup ? "/api/group/history" : "/api/message/history";
+        string path = isGroup ? "/api/group/history" : "/api/message/lastmessages";
         string baseUrl = MakeUrl(host, path);
 
         JsonObject payload = isGroup
