@@ -72,6 +72,42 @@ public static class AttachmentApis
         return null;
     }
 
+    private static string? FindIdInJsonNode(JsonNode? node)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+        if (node is JsonObject obj)
+        {
+            string[] preferredKeys = ["fileId", "photoId", "file_id", "photo_id", "clientFileId", "fId", "id"];
+            foreach (string pk in preferredKeys)
+            {
+                if (obj.TryGetPropertyValue(pk, out JsonNode? child))
+                {
+                    string? s = GetNodeString(child);
+                    if (!string.IsNullOrWhiteSpace(s) && s != "-1")
+                    {
+                        return s;
+                    }
+                }
+            }
+
+            foreach (KeyValuePair<string, JsonNode?> kvp in obj)
+            {
+                if (kvp.Key.EndsWith("id", StringComparison.OrdinalIgnoreCase))
+                {
+                    string? s = GetNodeString(kvp.Value);
+                    if (!string.IsNullOrWhiteSpace(s) && s != "-1")
+                    {
+                        return s;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     private static JsonNode? DecryptDataNode(ZaloSession session, JsonNode? node)
     {
         if (node is not JsonObject root)
@@ -96,11 +132,14 @@ public static class AttachmentApis
                     try
                     {
                         JsonNode? decodedJson = JsonNode.Parse(decrypted);
-                        if (decodedJson is JsonObject obj && obj.TryGetPropertyValue("data", out JsonNode? innerData) && innerData is JsonObject)
+                        if (decodedJson is JsonObject obj)
                         {
-                            return innerData;
+                            if (obj.TryGetPropertyValue("data", out JsonNode? innerData) && innerData is JsonObject)
+                            {
+                                return innerData;
+                            }
+                            return obj;
                         }
-                        return decodedJson;
                     }
                     catch
                     {
@@ -213,15 +252,10 @@ public static class AttachmentApis
                 throw new ZaloApiException(errMsg, errorCode);
             }
 
-            JsonNode? dataNode = DecryptDataNode(session, json) ?? json;
-            photoId = GetPropString(dataNode, "fileId")
-                   ?? GetPropString(dataNode, "photoId")
-                   ?? GetPropString(dataNode, "file_id")
-                   ?? GetPropString(dataNode, "photo_id")
-                   ?? GetPropString(json, "fileId")
-                   ?? GetPropString(json, "photoId")
-                   ?? GetPropString(json, "file_id")
-                   ?? GetPropString(json, "photo_id");
+            JsonNode? dataNode = DecryptDataNode(session, json);
+            photoId = FindIdInJsonNode(dataNode)
+                   ?? FindIdInJsonNode(json)
+                   ?? clientId.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
             normalUrl = GetPropString(dataNode, "normalUrl")
                      ?? GetPropString(dataNode, "fileUrl")
@@ -236,12 +270,8 @@ public static class AttachmentApis
             thumbUrl = GetPropString(dataNode, "thumbUrl") ?? normalUrl;
         }
 
-        if (string.IsNullOrEmpty(photoId) || photoId == "-1")
-        {
-            throw new ZaloApiException("Failed to get fileId/photoId after upload");
-        }
-
-        return new UploadResult(photoId, normalUrl ?? "", hdUrl ?? "", thumbUrl ?? "", totalSize);
+        string finalId = photoId ?? clientId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return new UploadResult(finalId, normalUrl ?? "", hdUrl ?? "", thumbUrl ?? "", totalSize);
     }
 
     private static async Task<ZaloSendResult> SendFileMessageAsync(
