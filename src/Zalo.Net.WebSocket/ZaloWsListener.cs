@@ -453,7 +453,8 @@ public sealed class ZaloWsListener
             TimestampMs: msg["ts"]?.ToJsonString()?.Trim('"') ?? "",
             Content: content,
             Attachments: attachments,
-            IsSelf: isSelf);
+            IsSelf: isSelf,
+            RawJson: msg.ToJsonString());
     }
 
     private async Task PingLoopAsync(ClientWebSocket ws, int intervalMs, CancellationToken ct)

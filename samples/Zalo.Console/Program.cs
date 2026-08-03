@@ -114,6 +114,13 @@ internal static class Program
             System.Console.WriteLine($"\n[TIN NHẮN MỚI {scopeLabel}] Từ: {senderName} ({msgEvent.UidFrom}) | MsgID: {msgEvent.MsgId}");
             System.Console.WriteLine($"  Nội dung: {msgContent}");
             System.Console.ResetColor();
+
+            if (!string.IsNullOrEmpty(msgEvent.RawJson))
+            {
+                System.Console.ForegroundColor = ConsoleColor.DarkYellow;
+                System.Console.WriteLine($"[RAW WS MSG JSON]\n{msgEvent.RawJson}\n");
+                System.Console.ResetColor();
+            }
         };
 
         client.StatusChanged += (sender, status) =>
@@ -1113,6 +1120,8 @@ internal static class Program
         string? text = System.Console.ReadLine()?.Trim();
 
         if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(quoteMsgId) || string.IsNullOrEmpty(quoteCliMsgId) || string.IsNullOrEmpty(quoteSenderUid)) return;
+
+        System.Console.WriteLine($"[DEBUG QUOTE PARAMS] targetId={targetId}, threadType={threadType}, quoteMsgId={quoteMsgId}, quoteCliMsgId={quoteCliMsgId}, quoteSenderUid={quoteSenderUid}, quoteContent={quoteContent}");
 
         try
         {

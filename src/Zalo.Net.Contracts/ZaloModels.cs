@@ -135,7 +135,8 @@ public sealed record ZaloMessageEvent(
     string TimestampMs,
     object? Content,
     System.Collections.Generic.IReadOnlyList<ZaloAttachment>? Attachments,
-    bool IsSelf);
+    bool IsSelf,
+    string? RawJson = null);
 
 /// <summary>
 /// Event payload emitted when the WebSocket connection status changes.
