@@ -83,10 +83,26 @@ public static class MessageHistoryApis
         };
         string? encryptedSimple = ZaloCipher.EncodeAes(session.Material.SecretKey, simplePayload.ToJsonString());
 
-        List<string> groupHosts = ["https://tt-group-wpa.chat.zalo.me", "https://group-wpa.chat.zalo.me"];
-        if (session.ServiceMap.TryGetValue("group", out string[]? hosts))
+        List<string> groupHosts = [
+            "https://tt-group-cm.chat.zalo.me",
+            "https://tt-convers-wpa.chat.zalo.me",
+            "https://tt-chat2-wpa.chat.zalo.me",
+            "https://tt-group-wpa.chat.zalo.me",
+            "https://group-wpa.chat.zalo.me"
+        ];
+        if (session.ServiceMap.TryGetValue("group_cloud_message", out string[]? cmHosts))
         {
-            foreach (string h in hosts)
+            foreach (string h in cmHosts)
+            {
+                if (!string.IsNullOrWhiteSpace(h))
+                {
+                    groupHosts.Insert(0, h.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? h : $"https://{h}");
+                }
+            }
+        }
+        if (session.ServiceMap.TryGetValue("conversation", out string[]? convHosts))
+        {
+            foreach (string h in convHosts)
             {
                 if (!string.IsNullOrWhiteSpace(h))
                 {
@@ -96,11 +112,12 @@ public static class MessageHistoryApis
         }
 
         string[] pathsToScan = [
+            "/api/group/cloud/get",
+            "/api/conversation/get",
+            "/api/conversation/history",
+            "/api/message/history",
             "/api/group/history",
-            "/api/group/getmsg",
-            "/api/group/getmsglog",
-            "/api/group/listmsg",
-            "/api/group/msg"
+            "/api/group/getmsg"
         ];
 
         Exception? lastEx = null;
