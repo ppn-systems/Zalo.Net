@@ -14,7 +14,8 @@ internal record RecentMessageInfo(
     string SenderUid,
     string SenderName,
     string Content,
-    DateTime Timestamp
+    DateTime Timestamp,
+    long TimestampMs = 0
 );
 
 internal static class Program
@@ -97,6 +98,7 @@ internal static class Program
             string msgContent = msgEvent.Content?.ToString() ?? "";
             if (!string.IsNullOrEmpty(msgEvent.MsgId))
             {
+                _ = long.TryParse(msgEvent.TimestampMs, out long tsMs);
                 AddRecentMessage(new RecentMessageInfo(
                     msgEvent.ThreadId,
                     msgEvent.ThreadType,
@@ -105,7 +107,8 @@ internal static class Program
                     msgEvent.UidFrom,
                     senderName,
                     msgContent,
-                    DateTime.Now
+                    DateTime.Now,
+                    tsMs
                 ));
             }
 
@@ -1121,13 +1124,14 @@ internal static class Program
 
         if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(quoteMsgId) || string.IsNullOrEmpty(quoteCliMsgId) || string.IsNullOrEmpty(quoteSenderUid)) return;
 
-        System.Console.WriteLine($"[DEBUG QUOTE PARAMS] targetId={targetId}, threadType={threadType}, quoteMsgId={quoteMsgId}, quoteCliMsgId={quoteCliMsgId}, quoteSenderUid={quoteSenderUid}, quoteContent={quoteContent}");
+        long quoteTs = targetMsg?.TimestampMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        System.Console.WriteLine($"[DEBUG QUOTE PARAMS] targetId={targetId}, threadType={threadType}, quoteMsgId={quoteMsgId}, quoteCliMsgId={quoteCliMsgId}, quoteSenderUid={quoteSenderUid}, quoteTs={quoteTs}, quoteContent={quoteContent}");
 
         try
         {
-            string sentMsgId = await ZaloWebClient.SendQuoteMessageAsync(session, targetId, threadType, text, quoteMsgId, quoteCliMsgId, quoteSenderUid, quoteContent, ct).ConfigureAwait(false);
+            string sentMsgId = await ZaloWebClient.SendQuoteMessageAsync(session, targetId, threadType, text, quoteMsgId, quoteCliMsgId, quoteSenderUid, quoteContent, quoteTs, ct).ConfigureAwait(false);
             System.Console.WriteLine($"[THÀNH CÔNG] Đã gửi tin nhắn trích dẫn trả lời! (MsgID: {sentMsgId})");
-            AddRecentMessage(new RecentMessageInfo(targetId, threadType, sentMsgId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(), session.Uid, "Bạn (Chính mình)", text, DateTime.Now));
+            AddRecentMessage(new RecentMessageInfo(targetId, threadType, sentMsgId, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(), session.Uid, "Bạn (Chính mình)", text, DateTime.Now, quoteTs));
         }
         catch (Exception ex)
         {

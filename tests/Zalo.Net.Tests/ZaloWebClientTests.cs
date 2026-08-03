@@ -88,5 +88,5 @@ public class ZaloWebClientTests
 
     [Fact]
     public async Task SendQuoteMessageAsync_NullSession_ThrowsArgumentNullException()
-        => _ = await Assert.ThrowsAsync<ArgumentNullException>(() => ZaloWebClient.SendQuoteMessageAsync(null!, "thread1", ZaloThreadType.User, "Rep", "m1", "c1", "u1", "Quote", CancellationToken.None));
+        => _ = await Assert.ThrowsAsync<ArgumentNullException>(() => ZaloWebClient.SendQuoteMessageAsync(null!, "thread1", ZaloThreadType.User, "Rep", "m1", "c1", "u1", "Quote", quoteTs: 0, ct: CancellationToken.None));
 }

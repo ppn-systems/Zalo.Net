@@ -111,7 +111,8 @@ public static class MessageApis
         ZaloHttpClient http, ZaloSession session,
         string threadId, ZaloThreadType threadType, string text,
         string quoteMsgId, string quoteCliMsgId, string quoteSenderUid, string quoteContent,
-        CancellationToken ct)
+        long quoteTs = 0,
+        CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(session);
@@ -135,8 +136,9 @@ public static class MessageApis
             ["qmsgId"] = quoteMsgId,
             ["qmsgCliId"] = quoteCliMsgId,
             ["qmsgType"] = 1,
-            ["qmsgTs"] = now,
+            ["qmsgTs"] = quoteTs > 0 ? quoteTs : now,
             ["qmsg"] = quoteContent ?? "",
+            ["qmsgAttach"] = "{\"msgBubbleLayoutType\":1}",
             ["ttl"] = 0
         };
 
@@ -144,7 +146,6 @@ public static class MessageApis
         {
             payload["grid"] = threadId;
             payload["visibility"] = 0;
-            payload["qmsgAttach"] = "{}";
         }
         else
         {

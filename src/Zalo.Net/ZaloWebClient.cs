@@ -331,16 +331,17 @@ public sealed class ZaloWebClient : IDisposable
         return new ZaloUserProfile(uid, name, avatar);
     }
 
-    /// <summary>Sends a reply/quote message quoting an existing message.</summary>
+    /// <summary>Sends a quote/reply message.</summary>
     public static async Task<string> SendQuoteMessageAsync(
         ZaloSession session, string threadId, ZaloThreadType threadType, string text,
         string quoteMsgId, string quoteCliMsgId, string quoteSenderUid, string quoteContent,
+        long quoteTs = 0,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(session);
 
         using ZaloHttpClient http = CreateHttpForSession(session.Material);
-        return await MessageApis.SendQuoteAsync(http, session, threadId, threadType, text, quoteMsgId, quoteCliMsgId, quoteSenderUid, quoteContent, ct).ConfigureAwait(false);
+        return await MessageApis.SendQuoteAsync(http, session, threadId, threadType, text, quoteMsgId, quoteCliMsgId, quoteSenderUid, quoteContent, quoteTs, ct).ConfigureAwait(false);
     }
 
     /// <summary>Recalls/undos a previously sent message.</summary>
