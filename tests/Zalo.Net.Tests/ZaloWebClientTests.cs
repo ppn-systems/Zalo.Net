@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 using System;
@@ -31,6 +31,13 @@ public class ZaloWebClientTests
         using ZaloWebClient client = new(proxy);
 
         Assert.Same(proxy, client.Proxy);
+    }
+
+    [Fact]
+    public void Implements_IZaloClient_Interface()
+    {
+        using IZaloClient client = new ZaloWebClient();
+        Assert.NotNull(client);
     }
 
     [Fact]

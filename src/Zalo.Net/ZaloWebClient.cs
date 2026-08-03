@@ -19,7 +19,7 @@ namespace Zalo.Net;
 /// <summary>
 /// Primary client facade for Zalo Web API interactions, authentication flows, and real-time WebSocket messaging.
 /// </summary>
-public sealed class ZaloWebClient : IDisposable
+public sealed class ZaloWebClient : IZaloClient
 {
     private readonly System.Net.IWebProxy? _proxy;
     private readonly Dictionary<Guid, QrSession> _qrSessions = [];
@@ -44,7 +44,7 @@ public sealed class ZaloWebClient : IDisposable
 #pragma warning restore CS0067
 
     /// <summary>Starts QR login flow.</summary>
-    public async Task<ZaloQrSession> StartQrLoginAsync(CancellationToken ct)
+    public async Task<ZaloQrSession> StartQrLoginAsync(CancellationToken ct = default)
     {
         string ua = ZaloConstants.Protocol.DefaultUserAgent;
         ZaloHttpClient http = new(ua, proxy: _proxy);
@@ -76,6 +76,9 @@ public sealed class ZaloWebClient : IDisposable
 
         return new ZaloQrSession(sessionId, image, code, expiresAt);
     }
+
+    /// <summary>Polls QR login status.</summary>
+    public Task<ZaloLoginState> PollQrStatusAsync(Guid sessionId, CancellationToken ct = default) => this.PollLoginAsync(sessionId);
 
     /// <summary>Polls QR login status.</summary>
     public Task<ZaloLoginState> PollLoginAsync(Guid sessionId)
@@ -536,8 +539,8 @@ public sealed class ZaloWebClient : IDisposable
     /// <summary>Runs WebSocket listener with automatic exponential backoff reconnects and optional proxy routing.</summary>
     public async Task RunWithReconnectAsync(
         ZaloSessionMaterial material,
-        CancellationToken ct,
-        System.Net.IWebProxy? proxy = null)
+        System.Net.IWebProxy? proxy = null,
+        CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(material);
 
