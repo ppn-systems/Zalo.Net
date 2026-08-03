@@ -1,27 +1,27 @@
 # Zalo.Net
 
-A high-performance C# SDK for the Zalo Web protocol built on **.NET 10**.
+Thư viện C# SDK hiệu năng cao cho giao thức Zalo Web Client trên nền tảng **.NET 10**.
 
 ## Features
 
-- **QR Code Authentication**: Initiate QR login, obtain Base64 QR images, and poll confirmation state.
-- **Real-Time WebSocket**: Receive messages via WebSockets with automatic exponential backoff reconnects.
-- **Messaging Operations**: Send direct/group text messages, quotes/replies, recalls/undo, reactions (Heart, Like, Haha, etc.), stickers, and file attachments.
-- **Group & Contact Management**: Create groups, manage members, leave groups, rename groups, find users by phone number, manage friend requests, block/unblock users.
-- **Multi-Account Proxy Support**: Assign dedicated `IWebProxy` instances (HTTP/HTTPS/SOCKS5) per Zalo account for HTTP and WebSocket traffic.
-- **Diagnostics & Tracing**: Integrated `ZaloDiagnosticsEvents` using standard .NET `DiagnosticSource`.
+- **Xác thực QR Code**: Bắt đầu luồng đăng nhập QR, lấy ảnh mã QR dạng Base64 PNG và kiểm tra trạng thái xác thực.
+- **WebSocket Thời Gian Thực**: Lắng nghe tin nhắn Realtime qua WebSocket với cơ chế tự động kết nối lại (Auto-Reconnect) Exponential Backoff.
+- **Tương Tác Tin Nhắn**: Gửi tin nhắn cá nhân & nhóm chat, trích dẫn (Quote), thu hồi (Recall), thả cảm xúc (Reaction), gửi Sticker, tệp tin & hình ảnh.
+- **Quản Lý Nhóm & Danh Bạ**: Tạo nhóm, thêm/xóa thành viên, rời nhóm, đổi tên nhóm; tìm kiếm người dùng theo số điện thoại, quản lý lời mời kết bạn, chặn/bỏ chặn người dùng.
+- **Hỗ Trợ Proxy Đa Tài Khoản**: Gán Proxy riêng (`IWebProxy` HTTP/HTTPS/SOCKS5) cho từng tài khoản Zalo trên cùng 1 Server.
+- **Diagnostics Tracing**: Tích hợp sẵn `ZaloDiagnosticsEvents` sử dụng chuẩn `DiagnosticSource` của .NET.
 
 ---
 
 ## Solution Architecture
 
-| Project | Description |
+| Dự án | Mô tả vai trò |
 | :--- | :--- |
 | **`Zalo.Net.Contracts`** | DTOs, Record Models, Exceptions, `IZaloClient`, `ZaloConstants`, `ZaloDiagnosticsEvents`. |
-| **`Zalo.Net.Cryptography`** | AES-GCM (SIMD hardware-accelerated), AES-CBC, MD5, and frame codec (`WsFrameCodec`). |
-| **`Zalo.Net.Auth`** | `CookieStore`, `ZaloHttpClient` (`SocketsHttpHandler`), and authentication endpoints. |
-| **`Zalo.Net.WebSocket`** | Real-time WebSocket engine (`ZaloWsListener`). |
-| **`Zalo.Net`** | Main client facade (`ZaloWebClient`) integrating all Web API endpoints. |
+| **`Zalo.Net.Cryptography`** | Mã hóa/Giải mã AES-GCM phần cứng Native (SIMD), AES-CBC, MD5 và giải mã khung WebSocket (`WsFrameCodec`). |
+| **`Zalo.Net.Auth`** | Quản lý `CookieStore`, `ZaloHttpClient` (`SocketsHttpHandler`) và các API xác thực. |
+| **`Zalo.Net.WebSocket`** | Real-time WebSocket engine (`ZaloWsListener`) duy trì kết nối và nhận tin nhắn. |
+| **`Zalo.Net`** | Client facade chính (`ZaloWebClient`) tích hợp toàn bộ các API Endpoints. |
 
 ---
 
@@ -32,22 +32,22 @@ using System.Net;
 using Zalo.Net;
 using Zalo.Net.Contracts;
 
-// 1. Restore session material and initialize client with a proxy
+// 1. Nạp phiên đã lưu và khởi tạo client kèm Proxy
 ZaloSessionMaterial material = GetSavedMaterial();
 using ZaloWebClient client = new(proxy: new WebProxy("http://127.0.0.1:8080"));
 
 ZaloSession session = await ZaloWebClient.LoginWithSessionAsync(material, CancellationToken.None);
 
-// 2. Subscribe to real-time message events
+// 2. Đăng ký sự kiện nhận tin nhắn Realtime
 client.MessageReceived += (sender, msg) =>
 {
     Console.WriteLine($"[{msg.DisplayName}]: {msg.Content}");
 };
 
-// 3. Send text message
-await ZaloWebClient.SendTextAsync(session, "USER_ID", ZaloThreadType.User, "Hello!", CancellationToken.None);
+// 3. Gửi tin nhắn văn bản
+await ZaloWebClient.SendTextAsync(session, "USER_ID", ZaloThreadType.User, "Xin chào!", CancellationToken.None);
 
-// 4. Run real-time WebSocket listener with auto-reconnect
+// 4. Lắng nghe WebSocket thời gian thực với cơ chế tự động kết nối lại
 await client.RunWithReconnectAsync(material, CancellationToken.None);
 ```
 
