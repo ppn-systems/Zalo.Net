@@ -28,19 +28,19 @@ public static class MessageHistoryApis
 
     private static JsonNode? DecryptDataNode(ZaloSession session, JsonNode? node)
     {
-        if (node is null)
-        {
-            return null;
-        }
-        JsonNode? dataNode = node["data"];
-        if (dataNode is null)
+        if (node is not JsonObject root)
         {
             return null;
         }
 
-        if (dataNode.GetValueKind() == System.Text.Json.JsonValueKind.String)
+        if (!root.TryGetPropertyValue("data", out JsonNode? dataNode) || dataNode is null)
         {
-            string encStr = dataNode.GetValue<string>();
+            return root;
+        }
+
+        if (dataNode is JsonValue val)
+        {
+            string encStr = val.ToString();
             if (!string.IsNullOrWhiteSpace(encStr))
             {
                 string? decrypted = ZaloCipher.DecodeAes(session.Material.SecretKey, encStr)
@@ -50,18 +50,22 @@ public static class MessageHistoryApis
                     try
                     {
                         JsonNode? decodedJson = JsonNode.Parse(decrypted);
-                        if (decodedJson is JsonObject obj && obj.ContainsKey("data"))
+                        if (decodedJson is JsonObject obj)
                         {
-                            return obj["data"];
+                            if (obj.TryGetPropertyValue("data", out JsonNode? innerData) && innerData is JsonObject)
+                            {
+                                return innerData;
+                            }
+                            return obj;
                         }
-                        return decodedJson;
                     }
                     catch
                     {
-                        // Fallback to raw data node
+                        return root;
                     }
                 }
             }
+            return root;
         }
 
         return dataNode;
@@ -81,154 +85,70 @@ public static class MessageHistoryApis
             throw new ZaloApiException("Zalo Web API chỉ hỗ trợ tải lịch sử tin nhắn đối với Nhóm (Group). Tin nhắn cá nhân (DM) được đồng bộ qua WebSocket thời gian thực.");
         }
 
-        List<string> candidateHosts = [];
-        string[] serviceKeys = ["group", "group_poll", "group_cloud_message", "conversation", "chat"];
-        foreach (string sk in serviceKeys)
+        List<string> hostsToTry = [];
+        if (session.ServiceMap.TryGetValue("group", out string[]? mapHosts) && mapHosts.Length > 0)
         {
-            if (session.ServiceMap.TryGetValue(sk, out string[]? hosts) && hosts.Length > 0)
+            foreach (string h in mapHosts)
             {
-                foreach (string h in hosts)
+                if (!string.IsNullOrWhiteSpace(h))
                 {
-                    if (!string.IsNullOrWhiteSpace(h))
-                    {
-                        candidateHosts.Add(h.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? h : $"https://{h}");
-                    }
+                    hostsToTry.Add(h.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? h : $"https://{h}");
                 }
             }
         }
-        candidateHosts.Add(DefaultGroupHost);
-        candidateHosts.Add("https://tt-group2.zalo.me");
+        hostsToTry.Add(DefaultGroupHost);
 
-        string[] candidatePaths = ["/api/group/history", "/api/group/getmsglog", "/api/group/lastmessages", "/api/group/getmsg", "/api/group/msglog"];
-
-        long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-        JsonObject payloadSigned = new()
-        {
-            ["imei"] = session.Material.Imei,
-            ["count"] = count > 0 ? count : 50,
-            ["grid"] = threadId
-        };
-        string dataJson = payloadSigned.ToJsonString();
-        string? encParamsSigned = ZaloCipher.EncodeAes(session.Material.SecretKey, dataJson);
-
-        Dictionary<string, object?> dataDict = new()
-        {
-            ["imei"] = session.Material.Imei,
-            ["count"] = count > 0 ? count : 50,
-            ["grid"] = threadId
-        };
-        string signKey = Hashing.GetSignKey("getoldmessages", dataDict);
-
-        JsonObject payloadRaw = new()
+        JsonObject payload = new()
         {
             ["grid"] = threadId,
             ["count"] = count > 0 ? count : 50
         };
-        string? encParamsRaw = ZaloCipher.EncodeAes(session.Material.SecretKey, payloadRaw.ToJsonString());
 
-        JsonNode? node = null;
-        string? lastError = null;
-
-        foreach (string host in candidateHosts.Distinct())
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
         {
-            foreach (string path in candidatePaths)
+            throw new ZaloApiException("Failed to encrypt getGroupChatHistory payload");
+        }
+
+        Exception? lastEx = null;
+
+        foreach (string host in hostsToTry.Distinct())
+        {
+            string baseUrl = MakeUrl(host, "/api/group/history");
+            string requestUrl = $"{baseUrl}&params={Uri.EscapeDataString(encryptedParams)}";
+
+            Console.WriteLine($"[DEBUG LOG] Fetching group history from {host} for group {threadId}...");
+
+            try
             {
-                string baseUrl = MakeUrl(host, path);
-
-                if (!string.IsNullOrEmpty(encParamsSigned))
+                using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+                if (resp.IsSuccessStatusCode)
                 {
-                    try
+                    JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+                    int errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
+                    if (errorCode == 0)
                     {
-                        string reqUrl = $"{baseUrl}&params={Uri.EscapeDataString(encParamsSigned)}&ts={ts}&signkey={signKey}";
-                        using HttpResponseMessage resp = await http.RequestAsync(reqUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
-                        if (resp.IsSuccessStatusCode)
-                        {
-                            JsonNode? candidate = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
-                            if (candidate?["error_code"]?.GetValue<int>() == 0)
-                            {
-                                node = candidate;
-                                break;
-                            }
-                        }
+                        JsonNode? dataNode = DecryptDataNode(session, json) ?? json?["data"];
+                        Console.WriteLine($"[DEBUG LOG] GetGroupHistory Success from {host}");
+                        return dataNode;
                     }
-                    catch (Exception ex)
-                    {
-                        if (!ex.Message.Contains("No such host", StringComparison.OrdinalIgnoreCase))
-                        {
-                            lastError = ex.Message;
-                        }
-                    }
+                    string errMsg = json?["error_message"]?.GetValue<string>() ?? $"ErrorCode {errorCode}";
+                    Console.WriteLine($"[DEBUG LOG] GetGroupHistory Response Error ({host}): code={errorCode}, msg='{errMsg}'");
+                    lastEx = new ZaloApiException($"Không thể tải lịch sử tin nhắn nhóm từ Zalo Server ({errMsg}).", errorCode);
                 }
-
-                if (node is null && !string.IsNullOrEmpty(encParamsRaw))
+                else
                 {
-                    try
-                    {
-                        string reqUrl = $"{baseUrl}&params={Uri.EscapeDataString(encParamsRaw)}";
-                        using HttpResponseMessage resp = await http.RequestAsync(reqUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
-                        if (resp.IsSuccessStatusCode)
-                        {
-                            JsonNode? candidate = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
-                            if (candidate?["error_code"]?.GetValue<int>() == 0)
-                            {
-                                node = candidate;
-                                break;
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        if (!ex.Message.Contains("No such host", StringComparison.OrdinalIgnoreCase))
-                        {
-                            lastError = ex.Message;
-                        }
-                    }
-                }
-
-                if (node is null && !string.IsNullOrEmpty(encParamsRaw))
-                {
-                    try
-                    {
-                        using FormUrlEncodedContent formBody = new([new KeyValuePair<string, string>("params", encParamsRaw)]);
-                        using HttpResponseMessage resp = await http.RequestAsync(baseUrl, HttpMethod.Post, body: formBody, ct: ct).ConfigureAwait(false);
-                        if (resp.IsSuccessStatusCode)
-                        {
-                            JsonNode? candidate = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
-                            if (candidate?["error_code"]?.GetValue<int>() == 0)
-                            {
-                                node = candidate;
-                                break;
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        if (!ex.Message.Contains("No such host", StringComparison.OrdinalIgnoreCase))
-                        {
-                            lastError = ex.Message;
-                        }
-                    }
-                }
-
-                if (node is not null)
-                {
-                    break;
+                    Console.WriteLine($"[DEBUG LOG] GetGroupHistory HTTP Status ({host}): {(int)resp.StatusCode} {resp.ReasonPhrase}");
+                    lastEx = new ZaloApiException($"HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}");
                 }
             }
-
-            if (node is not null)
+            catch (Exception ex)
             {
-                break;
+                Console.WriteLine($"[DEBUG LOG] GetGroupHistory Exception ({host}): {ex.Message}");
+                lastEx = ex;
             }
         }
 
-        if (node is null)
-        {
-            throw new ZaloApiException($"Không thể tải lịch sử tin nhắn nhóm từ Zalo Server ({lastError ?? "404 Not Found"}).");
-        }
-
-        JsonNode? dataNode = DecryptDataNode(session, node) ?? node["data"];
-        return dataNode;
+        throw lastEx ?? new ZaloApiException("Không thể tải lịch sử tin nhắn nhóm từ bất kỳ máy chủ Zalo nào.");
     }
 }
