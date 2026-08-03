@@ -127,7 +127,7 @@ public static class MessageApis
         ArgumentException.ThrowIfNullOrWhiteSpace(quoteSenderUid);
 
         bool isGroup = threadType == ZaloThreadType.Group;
-        string host = isGroup ? GetHost(session, "group", ZaloConstants.Hosts.Group) : GetHost(session, "chat", ZaloConstants.Hosts.Group);
+        string host = isGroup ? GetHost(session, "group", ZaloConstants.Hosts.Group) : GetHost(session, "chat", ZaloConstants.Hosts.Chat);
         string path = isGroup ? "/api/group/quote" : "/api/message/quote";
         string url = MakeUrl(host, path) + "&nretry=0";
 
