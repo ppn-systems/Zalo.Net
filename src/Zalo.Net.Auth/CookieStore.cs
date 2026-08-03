@@ -71,6 +71,23 @@ public sealed class CookieStore
     public string GetCookieHeader(string url) => _jar.GetCookieHeader(new Uri(url));
 
     /// <summary>
+    /// Gets a combined Cookie header containing all cookies stored in the container.
+    /// </summary>
+    public string GetAllCookiesHeader()
+    {
+        HashSet<string> seenKeys = new(StringComparer.OrdinalIgnoreCase);
+        List<string> pairs = [];
+        foreach (Cookie c in _jar.GetAllCookies())
+        {
+            if (!string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.Value) && seenKeys.Add(c.Name))
+            {
+                pairs.Add($"{c.Name}={c.Value}");
+            }
+        }
+        return string.Join("; ", pairs);
+    }
+
+    /// <summary>
     /// Serializes cookies to tough-cookie compatible JSON format.
     /// </summary>
     public string ToJson()

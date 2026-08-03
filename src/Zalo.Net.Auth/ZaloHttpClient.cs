@@ -131,10 +131,17 @@ public sealed class ZaloHttpClient : IDisposable
         _ = req.Headers.TryAddWithoutValidation("User-Agent", _userAgent);
 
         string cookieHeader = _cookies.GetCookieHeader(currentUrl);
+        string allCookies = _cookies.GetAllCookiesHeader();
+
         if (string.IsNullOrEmpty(cookieHeader))
         {
-            cookieHeader = _cookies.GetCookieHeader("https://chat.zalo.me");
+            cookieHeader = allCookies;
         }
+        else if (!string.IsNullOrEmpty(allCookies))
+        {
+            cookieHeader = $"{cookieHeader}; {allCookies}";
+        }
+
         _ = req.Headers.TryAddWithoutValidation("Cookie", cookieHeader);
     }
 
