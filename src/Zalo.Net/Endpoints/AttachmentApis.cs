@@ -171,6 +171,19 @@ public static class AttachmentApis
         ArgumentNullException.ThrowIfNull(session);
         ArgumentNullException.ThrowIfNull(fileBytes);
 
+        bool isImage = IsImageExtension(fileName);
+        if (!isImage && !string.IsNullOrWhiteSpace(caption))
+        {
+            try
+            {
+                _ = await MessageApis.SendTextAsync(http, session, threadId, threadType, caption, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[DEBUG LOG] Note: Send text caption failed: {ex.Message}");
+            }
+        }
+
         UploadResult upload = await UploadFileAsync(http, session, threadId, threadType, fileBytes, fileName, ct).ConfigureAwait(false);
         return await SendFileMessageAsync(http, session, threadId, threadType, upload, fileName, caption ?? "", ct).ConfigureAwait(false);
     }
@@ -204,6 +217,8 @@ public static class AttachmentApis
         string? normalUrl = null;
         string? hdUrl = null;
         string? thumbUrl = null;
+
+        Console.WriteLine($"[DEBUG LOG] Uploading file '{fileName}' ({totalSize} bytes) -> Host: {fileBaseUrl}, Path: {urlPath}");
 
         for (int i = 0; i < totalChunk; i++)
         {
@@ -259,6 +274,7 @@ public static class AttachmentApis
             if (errorCode != 0)
             {
                 string errMsg = GetPropString(json, "error_message") ?? "upload file failed";
+                Console.WriteLine($"[DEBUG LOG] Upload Error: code={errorCode}, msg='{errMsg}'");
                 throw new ZaloApiException(errMsg, errorCode);
             }
 
@@ -281,6 +297,7 @@ public static class AttachmentApis
         }
 
         string finalId = photoId ?? clientId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        Console.WriteLine($"[DEBUG LOG] Upload Result -> fileId='{finalId}', fileUrl='{normalUrl}'");
         return new UploadResult(finalId, normalUrl ?? "", hdUrl ?? "", thumbUrl ?? "", checksum, totalSize);
     }
 
@@ -375,6 +392,8 @@ public static class AttachmentApis
                 };
         }
 
+        Console.WriteLine($"[DEBUG LOG] Sending file message via {path} (fileId='{upload.PhotoId}', ext='{Path.GetExtension(fileName)}')...");
+
         string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
         if (string.IsNullOrEmpty(encryptedParams))
         {
@@ -397,6 +416,7 @@ public static class AttachmentApis
         if (errorCode != 0)
         {
             string errMsg = GetPropString(json, "error_message") ?? "sendFileMessage failed";
+            Console.WriteLine($"[DEBUG LOG] Send File Error: code={errorCode}, msg='{errMsg}'");
             throw new ZaloApiException(errMsg, errorCode);
         }
 
@@ -407,6 +427,7 @@ public static class AttachmentApis
                     ?? GetPropString(json, "message_id")
                     ?? now.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
+        Console.WriteLine($"[DEBUG LOG] Send File Success -> Zalo Server msgId='{msgId}'");
         return new ZaloSendResult(msgId);
     }
 }
