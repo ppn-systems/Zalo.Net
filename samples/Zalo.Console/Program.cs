@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Zalo.Net;
@@ -95,11 +96,9 @@ internal static class Program
 
     private static void PrintHeader()
     {
-        System.Console.ForegroundColor = ConsoleColor.Cyan;
-        System.Console.WriteLine("╔══════════════════════════════════════════════════════════════════╗");
-        System.Console.WriteLine("║            ZALO.NET - BỘ CÔNG CỤ THỬ NGHIỆM CLI VÀ API           ║");
-        System.Console.WriteLine("╚══════════════════════════════════════════════════════════════════╝");
-        System.Console.ResetColor();
+        ConsoleTable headerTable = new("ZALO.NET - CLIENT SAMPLE SUITE");
+        headerTable.AddRow("Bộ thư viện C# .NET 10 chính thức cho Zalo Client API & Realtime WebSocket");
+        headerTable.Print(ConsoleColor.Cyan, ConsoleColor.Yellow);
         System.Console.WriteLine();
     }
 
@@ -122,10 +121,10 @@ internal static class Program
                 await File.WriteAllBytesAsync(ConsoleConstants.QrCodeFilePath, imageBytes, cts.Token).ConfigureAwait(false);
 
                 string fullQrPath = Path.GetFullPath(ConsoleConstants.QrCodeFilePath);
-                System.Console.WriteLine("┌──────────────────────────────────────────────────────────────────┐");
-                System.Console.WriteLine($"│ Mã QR Code đã lưu tại: {fullQrPath}");
-                System.Console.WriteLine("│ Yêu cầu: Đóng cửa sổ ảnh cũ (nếu có) và dùng Zalo quét mã này.  │");
-                System.Console.WriteLine("└──────────────────────────────────────────────────────────────────┘");
+                ConsoleTable qrTable = new("THÔNG TIN MÃ QR CODE");
+                qrTable.AddRow($"Đường dẫn file: {fullQrPath}");
+                qrTable.AddRow("Yêu cầu: Đóng cửa sổ ảnh cũ (nếu có) và mở file 'qrcode.png' để quét.");
+                qrTable.Print(ConsoleColor.DarkCyan, ConsoleColor.Yellow);
 
                 ZaloLoginState lastState = await client.PollLoginAsync(qrSession.SessionId).ConfigureAwait(false);
                 bool qrExpired = false;
@@ -186,11 +185,14 @@ internal static class Program
             menuTable.AddRow("1", "Gửi tin nhắn văn bản (Cá nhân / Nhóm)");
             menuTable.AddRow("2", "Danh sách bạn bè");
             menuTable.AddRow("3", "Tra cứu thông tin người dùng qua SĐT");
-            menuTable.AddRow("4", "Đăng xuất khỏi phiên hiện tại");
+            menuTable.AddRow("4", "Gửi hình ảnh đính kèm");
+            menuTable.AddRow("5", "Tải lịch sử tin nhắn cũ");
+            menuTable.AddRow("6", "Tạo nhóm chat mới");
+            menuTable.AddRow("7", "Đăng xuất khỏi phiên hiện tại");
             menuTable.AddRow("Q", "Thoát khỏi chương trình");
             menuTable.Print(ConsoleColor.DarkCyan, ConsoleColor.Yellow);
 
-            System.Console.Write("👉 Lựa chọn của bạn: ");
+            System.Console.Write("[NHẬP] Lựa chọn của bạn: ");
             string? choice = System.Console.ReadLine()?.Trim().ToLowerInvariant();
             if (choice == "q")
             {
@@ -212,6 +214,18 @@ internal static class Program
                     break;
 
                 case "4":
+                    await HandleSendImageAsync(session, ct).ConfigureAwait(false);
+                    break;
+
+                case "5":
+                    await HandleGetHistoryAsync(session, ct).ConfigureAwait(false);
+                    break;
+
+                case "6":
+                    await HandleCreateGroupAsync(session, ct).ConfigureAwait(false);
+                    break;
+
+                case "7":
                     if (File.Exists(ConsoleConstants.SessionFilePath))
                     {
                         File.Delete(ConsoleConstants.SessionFilePath);
@@ -225,7 +239,7 @@ internal static class Program
         }
     }
 
-    private static async Task HandleSendMessageAsync(ZaloSession session, CancellationToken ct)
+    private static (string TargetId, ZaloThreadType ThreadType) ResolveTargetSelection()
     {
         string targetId = "";
         ZaloThreadType threadType = ZaloThreadType.User;
@@ -243,17 +257,17 @@ internal static class Program
             targetTable.AddRow("0", "Nhập Thread ID hoặc SĐT thủ công", "-", "-");
             targetTable.Print(ConsoleColor.DarkGray, ConsoleColor.Cyan);
 
-            System.Console.Write("👉 Chọn số thứ tự (hoặc dán ID/SĐT): ");
+            System.Console.Write("[NHẬP] Chọn số thứ tự (hoặc dán ID/SĐT): ");
         }
         else
         {
-            System.Console.Write("Nhập Thread ID (User ID hoặc Group ID): ");
+            System.Console.Write("[NHẬP] Nhập Thread ID (User ID hoặc Group ID): ");
         }
 
         string? inputChoice = System.Console.ReadLine()?.Trim();
         if (string.IsNullOrEmpty(inputChoice))
         {
-            return;
+            return ("", ZaloThreadType.User);
         }
 
         if (int.TryParse(inputChoice, out int targetIndex) && targetIndex > 0)
@@ -275,24 +289,35 @@ internal static class Program
             }
             else
             {
-                System.Console.Write("Nhập Thread ID / SĐT: ");
+                System.Console.Write("[NHẬP] Nhập Thread ID / SĐT: ");
                 targetId = System.Console.ReadLine()?.Trim() ?? "";
             }
 
             if (string.IsNullOrEmpty(targetId))
             {
-                return;
+                return ("", ZaloThreadType.User);
             }
 
-            System.Console.Write("Loại hội thoại (1: Cá nhân, 2: Nhóm) [Mặc định 1]: ");
+            System.Console.Write("[NHẬP] Loại hội thoại (1: Cá nhân, 2: Nhóm) [Mặc định 1]: ");
             string? tTypeStr = System.Console.ReadLine()?.Trim();
             threadType = tTypeStr == "2" ? ZaloThreadType.Group : ZaloThreadType.User;
         }
 
-        System.Console.Write("Nhập nội dung tin nhắn: ");
+        return (targetId, threadType);
+    }
+
+    private static async Task HandleSendMessageAsync(ZaloSession session, CancellationToken ct)
+    {
+        (string targetId, ZaloThreadType threadType) = ResolveTargetSelection();
+        if (string.IsNullOrEmpty(targetId))
+        {
+            return;
+        }
+
+        System.Console.Write("[NHẬP] Nhập nội dung tin nhắn: ");
         string? text = System.Console.ReadLine()?.Trim();
 
-        if (!string.IsNullOrEmpty(targetId) && !string.IsNullOrEmpty(text))
+        if (!string.IsNullOrEmpty(text))
         {
             try
             {
@@ -303,6 +328,139 @@ internal static class Program
             {
                 System.Console.WriteLine($"[LỖI] Không thể gửi tin nhắn: {ex.Message}");
             }
+        }
+    }
+
+    private static async Task HandleSendImageAsync(ZaloSession session, CancellationToken ct)
+    {
+        (string targetId, ZaloThreadType threadType) = ResolveTargetSelection();
+        if (string.IsNullOrEmpty(targetId))
+        {
+            return;
+        }
+
+        System.Console.Write("[NHẬP] Đường dẫn file ảnh (mặc định 'qrcode.png'): ");
+        string? imagePath = System.Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(imagePath))
+        {
+            imagePath = ConsoleConstants.QrCodeFilePath;
+        }
+
+        if (!File.Exists(imagePath))
+        {
+            System.Console.WriteLine($"[LỖI] Khôn tìm thấy file ảnh tại đường dẫn: {imagePath}");
+            return;
+        }
+
+        System.Console.Write("[NHẬP] Nội dung chú thích (Caption): ");
+        string? caption = System.Console.ReadLine()?.Trim();
+
+        try
+        {
+            System.Console.WriteLine("[THÔNG BÁO] Đang tải ảnh lên và gửi tin nhắn...");
+            byte[] bytes = await File.ReadAllBytesAsync(imagePath, ct).ConfigureAwait(false);
+            ZaloSendResult res = await ZaloWebClient.SendAttachmentAsync(session, targetId, threadType, bytes, Path.GetFileName(imagePath), caption, ct).ConfigureAwait(false);
+            System.Console.WriteLine($"[THÀNH CÔNG] Đã gửi ảnh thành công! Mã MsgId: {res.MsgId}");
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[LỖI] Không thể gửi ảnh: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleGetHistoryAsync(ZaloSession session, CancellationToken ct)
+    {
+        (string targetId, ZaloThreadType threadType) = ResolveTargetSelection();
+        if (string.IsNullOrEmpty(targetId))
+        {
+            return;
+        }
+
+        try
+        {
+            System.Console.WriteLine("[THÔNG BÁO] Đang tải lịch sử tin nhắn...");
+            await ZaloWebClient.RequestOldMessagesAsync(session, threadType, lastMsgId: null, ct).ConfigureAwait(false);
+            System.Console.WriteLine($"[THÀNH CÔNG] Đã gửi yêu cầu tải lịch sử tin nhắn.");
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[LỖI] Không thể tải lịch sử tin nhắn: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleCreateGroupAsync(ZaloSession session, CancellationToken ct)
+    {
+        System.Console.Write("[NHẬP] Tên nhóm mới muốn tạo: ");
+        string? groupName = System.Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(groupName))
+        {
+            return;
+        }
+
+        List<QuickTarget> friends = [.. s_registry.GetAll().Where(t => t.ThreadType == ZaloThreadType.User)];
+        List<string> memberIds = [];
+
+        if (friends.Count > 0)
+        {
+            System.Console.WriteLine("\n[CHỌN THÀNH VIÊN NHÓM]");
+            ConsoleTable memberTable = new("STT", "Tên bạn bè", "User ID (UID)");
+            foreach (QuickTarget f in friends)
+            {
+                memberTable.AddRow(f.Index.ToString(System.Globalization.CultureInfo.InvariantCulture), f.Name, f.TargetId);
+            }
+            memberTable.Print(ConsoleColor.DarkCyan, ConsoleColor.Yellow);
+            System.Console.Write("[NHẬP] Nhập các số STT thành viên (phân cách bằng dấu phẩy, ví dụ: 1,2): ");
+            string? selStr = System.Console.ReadLine()?.Trim();
+            if (!string.IsNullOrEmpty(selStr))
+            {
+                string[] parts = selStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                foreach (string p in parts)
+                {
+                    if (int.TryParse(p, out int idx))
+                    {
+                        QuickTarget? found = friends.FirstOrDefault(f => f.Index == idx);
+                        if (found != null)
+                        {
+                            memberIds.Add(found.TargetId);
+                        }
+                    }
+                    else if (!string.IsNullOrEmpty(p))
+                    {
+                        memberIds.Add(p);
+                    }
+                }
+            }
+        }
+
+        if (memberIds.Count == 0)
+        {
+            System.Console.Write("[NHẬP] Nhập UID thành viên (phân cách bằng dấu phẩy): ");
+            string? uidsStr = System.Console.ReadLine()?.Trim();
+            if (!string.IsNullOrEmpty(uidsStr))
+            {
+                memberIds.AddRange(uidsStr.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+            }
+        }
+
+        if (memberIds.Count == 0)
+        {
+            System.Console.WriteLine("[LỖI] Nhóm cần ít nhất 1 thành viên.");
+            return;
+        }
+
+        try
+        {
+            System.Console.WriteLine("[THÔNG BÁO] Đang tạo nhóm chat mới...");
+            ZaloGroupCreateResult res = await ZaloWebClient.CreateGroupAsync(session, groupName, memberIds, ct).ConfigureAwait(false);
+            System.Console.WriteLine($"[THÀNH CÔNG] Tạo nhóm thành công! ID Nhóm mới: {res.GroupId}");
+            if (!string.IsNullOrEmpty(res.GroupId))
+            {
+                s_registry.AddOrUpdate(groupName, res.GroupId, ZaloThreadType.Group);
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[LỖI] Không thể tạo nhóm: {ex.Message}");
         }
     }
 
@@ -336,7 +494,7 @@ internal static class Program
 
     private static async Task HandleFindUserAsync(ZaloSession session, CancellationToken ct)
     {
-        System.Console.Write("Nhập SĐT cần tìm (ví dụ: 0987654321): ");
+        System.Console.Write("[NHẬP] Nhập SĐT cần tìm (ví dụ: 0987654321): ");
         string? phone = System.Console.ReadLine()?.Trim();
         if (!string.IsNullOrEmpty(phone))
         {
