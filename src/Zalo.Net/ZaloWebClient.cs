@@ -78,7 +78,15 @@ public sealed class ZaloWebClient : IZaloClient
     }
 
     /// <summary>Polls QR login status.</summary>
-    public Task<ZaloLoginState> PollQrStatusAsync(Guid sessionId, CancellationToken ct = default) => this.PollLoginAsync(sessionId);
+    public Task<ZaloLoginState> PollQrStatusAsync(Guid sessionId, CancellationToken ct = default)
+    {
+        if (ct.IsCancellationRequested)
+        {
+            return Task.FromCanceled<ZaloLoginState>(ct);
+        }
+
+        return this.PollLoginAsync(sessionId);
+    }
 
     /// <summary>Polls QR login status.</summary>
     public Task<ZaloLoginState> PollLoginAsync(Guid sessionId)
