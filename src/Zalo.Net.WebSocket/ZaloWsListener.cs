@@ -20,8 +20,6 @@ namespace Zalo.Net.WebSocket;
 /// </summary>
 public sealed class ZaloWsListener
 {
-    private const string DefaultUserAgent = ZaloConstants.Protocol.DefaultUserAgent;
-
     private readonly ZaloSession _session;
     private readonly Action<ZaloMessageEvent> _onMessage;
     private readonly Action<ZaloSessionStatusChanged> _onStatus;
@@ -30,8 +28,6 @@ public sealed class ZaloWsListener
     public Func<CancellationToken, Task>? SendThrottle { get; set; }
 
     private const int InitialBufferSize = 4 * 1024;
-    private const int CloseCodeDuplicate = ZaloConstants.WebSocket.CloseCodeDuplicate;
-    private const int CloseCodeKicked = ZaloConstants.WebSocket.CloseCodeKicked;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ZaloWsListener"/> class.
@@ -128,9 +124,8 @@ public sealed class ZaloWsListener
 
     private void ConfigureWs(ClientWebSocket ws)
     {
-        string ua = string.IsNullOrEmpty(_session.Material.UserAgent)
-            ? DefaultUserAgent
-            : _session.Material.UserAgent;
+        string ua = string.IsNullOrEmpty(_session.Material.UserAgent) ? ZaloConstants.Protocol.DefaultUserAgent : _session.Material.UserAgent;
+
         ws.Options.SetRequestHeader("User-Agent", ua);
         ws.Options.SetRequestHeader("Cookie", this.ExtractCookieHeader());
         ws.Options.SetRequestHeader("Origin", "https://chat.zalo.me");
@@ -194,8 +189,8 @@ public sealed class ZaloWsListener
         return code switch
         {
             (int)WebSocketCloseStatus.NormalClosure => DisconnectReason.Clean,
-            CloseCodeDuplicate => DisconnectReason.Duplicate,
-            CloseCodeKicked => DisconnectReason.SessionExpired,
+            ZaloConstants.WebSocket.CloseCodeDuplicate => DisconnectReason.Duplicate,
+            ZaloConstants.WebSocket.CloseCodeKicked => DisconnectReason.SessionExpired,
             _ => DisconnectReason.Transient,
         };
     }

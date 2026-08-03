@@ -18,8 +18,7 @@ public static class ZaloConstants
         public const int ApiVersion = 671;
 
         /// <summary>Default User-Agent string mimicking modern Chrome on Windows.</summary>
-        public const string DefaultUserAgent =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+        public const string DefaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
     }
 
     /// <summary>Default Zalo Web Gateway endpoint hosts.</summary>
@@ -47,13 +46,19 @@ public static class ZaloConstants
     /// <summary>WebSocket listener configuration constants.</summary>
     public static class WebSocket
     {
-        /// <summary>Default ping interval in milliseconds (20 seconds).</summary>
-        public const int DefaultPingIntervalMs = 20_000;
+        /// <summary>
+        /// Close code emitted when session is kicked or revoked (3003).
+        /// </summary>
+        public const int CloseCodeKicked = 3003;
 
-        /// <summary>Close code emitted when session is logged in elsewhere (3000).</summary>
+        /// <summary>
+        /// Close code emitted when session is logged in elsewhere (3000).
+        /// </summary>
         public const int CloseCodeDuplicate = 3000;
 
-        /// <summary>Close code emitted when session is kicked or revoked (3003).</summary>
-        public const int CloseCodeKicked = 3003;
+        /// <summary>
+        /// Default ping interval in milliseconds (20 seconds).
+        /// </summary>
+        public const int DefaultPingIntervalMs = 20_000;
     }
 }

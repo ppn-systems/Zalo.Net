@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 using System;
@@ -42,7 +42,7 @@ public static class UndoApis
         }
 
         string path = isGroup ? "/api/group/undomsg" : "/api/message/undo";
-        string url = $"{endpointHost.TrimEnd('/')}{path}?zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}";
+        string url = $"{endpointHost.TrimEnd('/')}{path}?zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}";
 
         JsonObject payload = new()
         {

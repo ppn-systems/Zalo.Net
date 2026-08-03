@@ -18,15 +18,14 @@ namespace Zalo.Net.Endpoints;
 
 internal static class GroupApis
 {
-    private const string DefaultGroupHost = ZaloConstants.Hosts.Group;
-
     private static string GetGroupHost(ZaloSession session)
     {
         if (session.ServiceMap.TryGetValue("group", out string[]? hosts) && hosts.Length > 0)
         {
             return hosts[0].StartsWith("http", StringComparison.OrdinalIgnoreCase) ? hosts[0] : $"https://{hosts[0]}";
         }
-        return DefaultGroupHost;
+
+        return ZaloConstants.Hosts.Group;
     }
 
     private static string MakeUrl(string baseUrl, string path)

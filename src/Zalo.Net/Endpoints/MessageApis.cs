@@ -19,10 +19,6 @@ namespace Zalo.Net.Endpoints;
 /// </summary>
 public static class MessageApis
 {
-    private const string DefaultChatHost = ZaloConstants.Hosts.Chat;
-    private const string DefaultGroupHost = ZaloConstants.Hosts.Group;
-    private const string DefaultProfileHost = ZaloConstants.Hosts.Profile;
-
     private static string GetHost(ZaloSession session, string serviceKey, string defaultHost)
     {
         if (session.ServiceMap.TryGetValue(serviceKey, out string[]? hosts) && hosts.Length > 0)
@@ -51,7 +47,7 @@ public static class MessageApis
         ArgumentException.ThrowIfNullOrWhiteSpace(text);
 
         bool isGroup = threadType == ZaloThreadType.Group;
-        string host = isGroup ? GetHost(session, "group", DefaultGroupHost) : GetHost(session, "chat", DefaultChatHost);
+        string host = isGroup ? GetHost(session, "group", ZaloConstants.Hosts.Group) : GetHost(session, "chat", ZaloConstants.Hosts.Chat);
         string path = isGroup ? "/api/group/sendmsg" : "/api/message/sms";
         string url = MakeUrl(host, path);
 
@@ -131,7 +127,7 @@ public static class MessageApis
         ArgumentException.ThrowIfNullOrWhiteSpace(quoteSenderUid);
 
         bool isGroup = threadType == ZaloThreadType.Group;
-        string host = isGroup ? GetHost(session, "group", DefaultGroupHost) : GetHost(session, "chat", DefaultChatHost);
+        string host = isGroup ? GetHost(session, "group", ZaloConstants.Hosts.Group) : GetHost(session, "chat", ZaloConstants.Hosts.Group);
         string path = isGroup ? "/api/group/quote" : "/api/message/quote";
         string url = MakeUrl(host, path) + "&nretry=0";
 
@@ -153,7 +149,7 @@ public static class MessageApis
         {
             payload["grid"] = threadId;
             payload["visibility"] = 0;
-            payload["qmsgAttach"] = "{\"msgBubbleLayoutType\":1}";
+            payload["qmsgAttach"] = /*lang=json,strict*/ "{\"msgBubbleLayoutType\":1}";
         }
         else
         {
@@ -208,7 +204,7 @@ public static class MessageApis
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(session);
 
-        string host = GetHost(session, "profile", DefaultProfileHost);
+        string host = GetHost(session, "profile", ZaloConstants.Hosts.Profile);
         string url = MakeUrl(host, "/api/social/profile/me");
 
         JsonObject payload = new()

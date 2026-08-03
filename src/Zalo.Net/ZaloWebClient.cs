@@ -21,8 +21,6 @@ namespace Zalo.Net;
 /// </summary>
 public sealed class ZaloWebClient : IDisposable
 {
-    private const string DefaultUserAgent = ZaloConstants.Protocol.DefaultUserAgent;
-
     private readonly System.Net.IWebProxy? _proxy;
     private readonly Dictionary<Guid, QrSession> _qrSessions = [];
     private readonly Lock _lock = new();
@@ -48,7 +46,7 @@ public sealed class ZaloWebClient : IDisposable
     /// <summary>Starts QR login flow.</summary>
     public async Task<ZaloQrSession> StartQrLoginAsync(CancellationToken ct)
     {
-        string ua = DefaultUserAgent;
+        string ua = ZaloConstants.Protocol.DefaultUserAgent;
         ZaloHttpClient http = new(ua, proxy: _proxy);
 
         string version = await LoginQrApis.LoadLoginPageAsync(http, ct).ConfigureAwait(false);
@@ -215,7 +213,7 @@ public sealed class ZaloWebClient : IDisposable
                 avatar = userInfo?["avatar"]?.GetValue<string>() ?? avatar;
 
                 string imei = Hashing.GenerateImei(session.UserAgent);
-                ParamsEncryptor encryptor = new(ZaloHttpClient.ApiType, imei, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                ParamsEncryptor encryptor = new(ZaloConstants.Protocol.ApiType, imei, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                 string enk = encryptor.GetEncryptKey();
 
                 JsonNode? loginData = await LoginApis.GetLoginInfoAsync(session.Http, imei, "vi", enk, sessionCt).ConfigureAwait(false);
@@ -299,7 +297,7 @@ public sealed class ZaloWebClient : IDisposable
     {
         string sep = baseUrl.Contains('?', StringComparison.Ordinal) ? "&" : "?";
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        return $"{baseUrl}{sep}zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}&t={now}";
+        return $"{baseUrl}{sep}zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}&t={now}";
     }
 
     /// <summary>Starts WebSocket listener.</summary>

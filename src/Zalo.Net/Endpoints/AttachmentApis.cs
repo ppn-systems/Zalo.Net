@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 using System;
@@ -46,7 +46,7 @@ public static class AttachmentApis
     {
         string baseClean = baseUrl.EndsWith('/') ? baseUrl[..^1] : baseUrl;
         string sep = path.Contains('?', StringComparison.Ordinal) ? "&" : "?";
-        return $"{baseClean}{path}{sep}zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}";
+        return $"{baseClean}{path}{sep}zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}";
     }
 
     private static bool IsImageExtension(string fileName)
@@ -370,7 +370,7 @@ public static class AttachmentApis
                     ["hdSize"] = upload.TotalSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     ["zsource"] = -1,
                     ["ttl"] = 0,
-                    ["jcp"] = "{\"convertible\":\"jxl\"}"
+                    ["jcp"] = /*lang=json,strict*/ "{\"convertible\":\"jxl\"}"
                 }
                 : new JsonObject
                 {
@@ -385,7 +385,7 @@ public static class AttachmentApis
                     ["hdSize"] = upload.TotalSize.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     ["zsource"] = -1,
                     ["ttl"] = 0,
-                    ["jcp"] = "{\"convertible\":\"jxl\"}"
+                    ["jcp"] = /*lang=json,strict*/ "{\"convertible\":\"jxl\"}"
                 };
         }
         else

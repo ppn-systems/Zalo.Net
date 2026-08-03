@@ -20,12 +20,6 @@ namespace Zalo.Net.Auth;
 /// </summary>
 public sealed class ZaloHttpClient : IDisposable
 {
-    /// <summary>Default Zalo Web API type constant (30).</summary>
-    public const int ApiType = ZaloConstants.Protocol.ApiType;
-
-    /// <summary>Default Zalo Web API version constant (671).</summary>
-    public const int ApiVersion = ZaloConstants.Protocol.ApiVersion;
-
     private readonly HttpClient _http;
     private readonly CookieStore _cookies;
     private readonly string _userAgent;
