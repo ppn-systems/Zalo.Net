@@ -1,11 +1,5 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Text;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using Zalo.Net;
 using Zalo.Net.Contracts;
 
@@ -13,32 +7,7 @@ namespace Zalo.Console;
 
 internal static class Program
 {
-    private const string SessionFilePath = "session.json";
-    private const string QrCodeFilePath = "qrcode.png";
-
-    private sealed record QuickTarget(int Index, string Name, string TargetId, ZaloThreadType ThreadType);
-    private static readonly List<QuickTarget> s_quickTargets = [];
-
-    private static void AddOrUpdateQuickTarget(string name, string targetId, ZaloThreadType threadType)
-    {
-        lock (s_quickTargets)
-        {
-            int existingIdx = s_quickTargets.FindIndex(t => t.TargetId == targetId);
-            if (existingIdx >= 0)
-            {
-                if (!string.IsNullOrEmpty(name))
-                {
-                    s_quickTargets[existingIdx] = s_quickTargets[existingIdx] with { Name = name };
-                }
-                return;
-            }
-            int newIdx = s_quickTargets.Count + 1;
-            string displayName = !string.IsNullOrEmpty(name)
-                ? name
-                : (threadType == ZaloThreadType.Group ? $"Nhóm {targetId}" : $"Người dùng {targetId}");
-            s_quickTargets.Add(new QuickTarget(newIdx, displayName, targetId, threadType));
-        }
-    }
+    private static readonly TargetRegistry s_registry = new();
 
     private static async Task Main()
     {
@@ -46,80 +15,79 @@ internal static class Program
         System.Console.InputEncoding = Encoding.UTF8;
 
         System.Console.WriteLine("=================================================");
-        System.Console.WriteLine("       Zalo.Net - Live Login & Test CLI         ");
+        System.Console.WriteLine("        Zalo.Net - Live Client Test Suite        ");
         System.Console.WriteLine("=================================================");
         System.Console.WriteLine();
 
         using ZaloWebClient client = new();
-        ZaloSessionMaterial? material = await LoadSessionAsync();
+        ZaloSessionMaterial? material = await LoadSessionAsync().ConfigureAwait(false);
 
         if (material == null)
         {
-            System.Console.WriteLine("🔑 Chưa tìm thấy session cũ. Bắt đầu luồng Đăng nhập bằng mã QR...");
-            material = await PerformQrLoginLoopAsync(client);
+            System.Console.WriteLine("[INFO] Chua tim thấy session cu. Bat dau luong dang nhap QR Code...");
+            material = await PerformQrLoginLoopAsync(client).ConfigureAwait(false);
             if (material == null)
             {
-                System.Console.WriteLine("❌ Đăng nhập bị hủy hoặc thất bại.");
+                System.Console.WriteLine("[ERROR] Dang nhap bi huy hoac thoi gian thuc hien da het.");
                 return;
             }
-            await SaveSessionAsync(material);
-            System.Console.WriteLine("💾 Đã lưu session vào session.json cho các lần sử dụng sau!");
+            await SaveSessionAsync(material).ConfigureAwait(false);
+            System.Console.WriteLine("[SUCCESS] Da luu session vao session.json cho cac lan truy cap sau.");
         }
         else
         {
-            System.Console.WriteLine("✅ Đã tải session từ session.json.");
+            System.Console.WriteLine("[INFO] Da tai session hop le tu session.json.");
         }
 
-        System.Console.WriteLine("🔌 Đang kết nối tới Zalo Session...");
+        System.Console.WriteLine("[INFO] Dang thiet lap ket noi toi Zalo Session...");
         using CancellationTokenSource cts = new();
 
         ZaloSession session;
         try
         {
-            session = await ZaloWebClient.LoginWithSessionAsync(material, cts.Token);
-            System.Console.WriteLine($"🎉 Đăng nhập thành công! UID: {session.Uid}");
+            session = await ZaloWebClient.LoginWithSessionAsync(material, cts.Token).ConfigureAwait(false);
+            System.Console.WriteLine($"[SUCCESS] Dang nhap thanh cong. Account UID: {session.Uid}");
         }
         catch (Exception ex)
         {
-            System.Console.WriteLine($"❌ Lỗi đăng nhập session: {ex.Message}");
-            System.Console.WriteLine("Xóa file session.json cũ và chạy lại ứng dụng để quét mã QR mới.");
-            if (File.Exists(SessionFilePath))
+            System.Console.WriteLine($"[ERROR] Khong the khoi tao session: {ex.Message}");
+            System.Console.WriteLine("[INFO] Vui long xoa file session.json va thuc hien dang nhap lai.");
+            if (File.Exists(ConsoleConstants.SessionFilePath))
             {
-                File.Delete(SessionFilePath);
+                File.Delete(ConsoleConstants.SessionFilePath);
             }
             return;
         }
 
-        // Lắng nghe sự kiện tin nhắn WebSocket thời gian thực
+        // Tap trung quan ly su kien WebSocket realtime
         client.MessageReceived += (sender, msgEvent) =>
         {
             if (!msgEvent.IsSelf && !string.IsNullOrEmpty(msgEvent.ThreadId))
             {
-                AddOrUpdateQuickTarget(msgEvent.DisplayName, msgEvent.ThreadId, msgEvent.ThreadType);
+                s_registry.AddOrUpdate(msgEvent.DisplayName, msgEvent.ThreadId, msgEvent.ThreadType);
             }
 
             System.Console.ForegroundColor = msgEvent.IsSelf ? ConsoleColor.DarkGray : ConsoleColor.Cyan;
-            string typeStr = msgEvent.ThreadType == ZaloThreadType.Group ? " [NHÓM]" : " [CÁ NHÂN]";
-            string senderStr = msgEvent.IsSelf ? "Bạn (Chính mình)" : (!string.IsNullOrEmpty(msgEvent.DisplayName) ? $"{msgEvent.DisplayName} ({msgEvent.UidFrom})" : msgEvent.UidFrom);
+            string scopeLabel = msgEvent.ThreadType == ZaloThreadType.Group ? "[NHOM]" : "[CA NHAN]";
+            string senderName = msgEvent.IsSelf
+                ? "Ban (Chinh minh)"
+                : (!string.IsNullOrEmpty(msgEvent.DisplayName) ? $"{msgEvent.DisplayName} ({msgEvent.UidFrom})" : msgEvent.UidFrom);
 
-            System.Console.WriteLine($"\n📩 [TIN NHẮN MỚI{typeStr}] Từ: {senderStr} | ThreadId: {msgEvent.ThreadId}");
-            System.Console.WriteLine($"   Nội dung: {msgEvent.Content}");
+            System.Console.WriteLine($"\n[EVENT{scopeLabel}] Tu: {senderName} | ThreadId: {msgEvent.ThreadId}");
+            System.Console.WriteLine($"  Noi dung: {msgEvent.Content}");
             System.Console.ResetColor();
         };
 
         client.StatusChanged += (sender, status) =>
         {
             System.Console.ForegroundColor = ConsoleColor.Yellow;
-            System.Console.WriteLine($"[TRẠNG THÁI WS] {status.Status} - {status.Reason}");
+            System.Console.WriteLine($"[STATUS] Dynamic WebSocket: {status.Status} - {status.Reason}");
             System.Console.ResetColor();
         };
 
-        _ = Task.Run(() => client.StartListenerAsync(session, cts.Token, (level, msg) =>
-        {
-            // Debug logs
-        }), cts.Token);
+        _ = Task.Run(() => client.StartListenerAsync(session, cts.Token, (level, msg) => { }), cts.Token);
 
-        await InteractiveMenuAsync(session, cts.Token);
+        await InteractiveMenuAsync(session, cts.Token).ConfigureAwait(false);
     }
 
     private static async Task<ZaloSessionMaterial?> PerformQrLoginLoopAsync(ZaloWebClient client)
@@ -127,53 +95,52 @@ internal static class Program
         int attempt = 1;
         while (true)
         {
-            System.Console.WriteLine($"\n🔄 [Lần {attempt}] Đang tạo mã QR Login Zalo mới...");
+            System.Console.WriteLine($"\n[INFO] (Lan {attempt}) Dang khoi tao phien QR Code login...");
             using CancellationTokenSource cts = new(TimeSpan.FromMinutes(2));
             try
             {
-                if (File.Exists(QrCodeFilePath))
+                if (File.Exists(ConsoleConstants.QrCodeFilePath))
                 {
-                    try { File.Delete(QrCodeFilePath); } catch { }
+                    try { File.Delete(ConsoleConstants.QrCodeFilePath); } catch { }
                 }
 
-                ZaloQrSession qrSession = await client.StartQrLoginAsync(cts.Token);
+                ZaloQrSession qrSession = await client.StartQrLoginAsync(cts.Token).ConfigureAwait(false);
                 byte[] imageBytes = Convert.FromBase64String(qrSession.QrImageBase64);
-                await File.WriteAllBytesAsync(QrCodeFilePath, imageBytes, cts.Token);
+                await File.WriteAllBytesAsync(ConsoleConstants.QrCodeFilePath, imageBytes, cts.Token).ConfigureAwait(false);
 
-                string fullQrPath = Path.GetFullPath(QrCodeFilePath);
+                string fullQrPath = Path.GetFullPath(ConsoleConstants.QrCodeFilePath);
                 System.Console.WriteLine("-------------------------------------------------");
-                System.Console.WriteLine($"📸 Mã QR đã lưu tại: {fullQrPath}");
-                System.Console.WriteLine("⚠️ CHÚ Ý: Đóng cửa sổ mở ảnh cũ (nếu có) và mở lại file 'qrcode.png' để quét mã MỚI NÀY!");
-                System.Console.WriteLine("👉 Mở Zalo trên điện thoại -> Quét mã QR -> Nhấn XÁC NHẬN.");
+                System.Console.WriteLine($"[INFO] Ma QR Code da duoc ghi tai: {fullQrPath}");
+                System.Console.WriteLine("[ACTION] Vui long mo file 'qrcode.png' va dung ung dung Zalo de quet.");
                 System.Console.WriteLine("-------------------------------------------------");
 
-                ZaloLoginState lastState = await client.PollLoginAsync(qrSession.SessionId);
+                ZaloLoginState lastState = await client.PollLoginAsync(qrSession.SessionId).ConfigureAwait(false);
                 bool qrExpired = false;
 
                 while (!cts.Token.IsCancellationRequested)
                 {
-                    ZaloLoginState state = await client.PollLoginAsync(qrSession.SessionId);
+                    ZaloLoginState state = await client.PollLoginAsync(qrSession.SessionId).ConfigureAwait(false);
                     if (state.Status != lastState.Status)
                     {
                         lastState = state;
                         switch (state.Status)
                         {
                             case ZaloLoginStatus.Scanned:
-                                System.Console.WriteLine("📱 Đã quét QR thành công! Vui lòng nhấn [XÁC NHẬN] trên màn hình điện thoại...");
+                                System.Console.WriteLine("[STATUS] Da quet ma QR. Vui long bam [XAC NHAN] tren dien thoại.");
                                 break;
                             case ZaloLoginStatus.Connected:
-                                System.Console.WriteLine("🎉 Đăng nhập thành công!");
+                                System.Console.WriteLine("[SUCCESS] Dang nhap thanh cong qua QR Code.");
                                 return client.ConsumePendingMaterial(qrSession.SessionId);
                             case ZaloLoginStatus.Declined:
-                                System.Console.WriteLine("🚫 Bạn đã từ chối đăng nhập trên điện thoại.");
+                                System.Console.WriteLine("[WARN] Tu choi dang nhap tren thiet bi dong ho.");
                                 return null;
                             case ZaloLoginStatus.Expired:
                                 if (!string.IsNullOrEmpty(state.ErrorMessage))
                                 {
-                                    System.Console.WriteLine($"❌ Lỗi luồng đăng nhập: {state.ErrorMessage}");
+                                    System.Console.WriteLine($"[ERROR] Luong dang nhap giat doan: {state.ErrorMessage}");
                                     return null;
                                 }
-                                System.Console.WriteLine("⌛ Mã QR cũ đã hết hạn! Đang tạo lại mã QR mới...");
+                                System.Console.WriteLine("[WARN] Phien QR Code da het han. Dang tao phien moi...");
                                 qrExpired = true;
                                 break;
                         }
@@ -184,16 +151,16 @@ internal static class Program
                         break;
                     }
 
-                    await Task.Delay(1000, cts.Token);
+                    await Task.Delay(1000, cts.Token).ConfigureAwait(false);
                 }
             }
             catch (Exception ex)
             {
-                System.Console.WriteLine($"❌ Lỗi trong quá trình tạo/quét QR: {ex.Message}");
+                System.Console.WriteLine($"[ERROR] Xay ra loi luong QR: {ex.Message}");
             }
 
             attempt++;
-            await Task.Delay(1500);
+            await Task.Delay(1500, cts.Token).ConfigureAwait(false);
         }
     }
 
@@ -202,13 +169,13 @@ internal static class Program
         while (!ct.IsCancellationRequested)
         {
             System.Console.WriteLine();
-            System.Console.WriteLine("================ MENU LỆNH ================");
-            System.Console.WriteLine("1. Gửi tin nhắn văn bản");
-            System.Console.WriteLine("2. Danh sách bạn bè");
-            System.Console.WriteLine("3. Tra cứu thông tin người dùng (theo SĐT)");
-            System.Console.WriteLine("4. Đăng xuất (xóa session.json)");
-            System.Console.WriteLine("Q. Thoát");
-            System.Console.Write("Lựa chọn của bạn: ");
+            System.Console.WriteLine("================ MENU CHUCNANG ================");
+            System.Console.WriteLine("1. Gui tin nhan van ban");
+            System.Console.WriteLine("2. Danh sach ban be");
+            System.Console.WriteLine("3. Tra cuu nguoi dung qua SDT");
+            System.Console.WriteLine("4. Dang xuat khoi phien");
+            System.Console.WriteLine("Q. Thoat khoi ung dung");
+            System.Console.Write("Nhap lua chon: ");
 
             string? choice = System.Console.ReadLine()?.Trim().ToLowerInvariant();
             if (choice == "q")
@@ -219,139 +186,23 @@ internal static class Program
             switch (choice)
             {
                 case "1":
-                    string targetId = "";
-                    ZaloThreadType threadType = ZaloThreadType.User;
-
-                    lock (s_quickTargets)
-                    {
-                        if (s_quickTargets.Count > 0)
-                        {
-                            System.Console.WriteLine("\n--- DANH SÁCH BẠN BÈ / HỘI THOẠI GẦN ĐÂY ---");
-                            foreach (QuickTarget target in s_quickTargets)
-                            {
-                                string typeLabel = target.ThreadType == ZaloThreadType.Group ? "[NHÓM]" : "[CÁ NHÂN]";
-                                System.Console.WriteLine($"  [{target.Index}] {target.Name} {typeLabel} (ID: {target.TargetId})");
-                            }
-                            System.Console.WriteLine("  [0] Nhập ThreadId hoặc SĐT thủ công");
-                            System.Console.Write("👉 Chọn số thứ tự (hoặc dán ID/SĐT): ");
-                        }
-                        else
-                        {
-                            System.Console.Write("Nhập ThreadId (User ID hoặc Group ID): ");
-                        }
-                    }
-
-                    string? inputChoice = System.Console.ReadLine()?.Trim();
-                    if (string.IsNullOrEmpty(inputChoice))
-                    {
-                        break;
-                    }
-
-                    if (int.TryParse(inputChoice, out int targetIndex) && targetIndex > 0)
-                    {
-                        lock (s_quickTargets)
-                        {
-                            QuickTarget? found = s_quickTargets.FirstOrDefault(t => t.Index == targetIndex);
-                            if (found != null)
-                            {
-                                targetId = found.TargetId;
-                                threadType = found.ThreadType;
-                                System.Console.WriteLine($"-> Đã chọn: {found.Name} ({threadType})");
-                            }
-                        }
-                    }
-
-                    if (string.IsNullOrEmpty(targetId))
-                    {
-                        if (inputChoice != "0")
-                        {
-                            targetId = inputChoice;
-                        }
-                        else
-                        {
-                            System.Console.Write("Nhập ThreadId / SĐT: ");
-                            targetId = System.Console.ReadLine()?.Trim() ?? "";
-                        }
-
-                        if (string.IsNullOrEmpty(targetId))
-                        {
-                            break;
-                        }
-
-                        System.Console.Write("Loại hội thoại (1: User, 2: Group) [Mặc định 1]: ");
-                        string? tTypeStr = System.Console.ReadLine()?.Trim();
-                        threadType = tTypeStr == "2" ? ZaloThreadType.Group : ZaloThreadType.User;
-                    }
-
-                    System.Console.Write("Nhập nội dung tin nhắn: ");
-                    string? text = System.Console.ReadLine()?.Trim();
-
-                    if (!string.IsNullOrEmpty(targetId) && !string.IsNullOrEmpty(text))
-                    {
-                        try
-                        {
-                            ZaloSendResult res = await ZaloWebClient.SendTextAsync(session, targetId, threadType, text, ct);
-                            System.Console.WriteLine($"✅ Đã gửi thành công! MsgId: {res.MsgId}");
-                        }
-                        catch (Exception ex)
-                        {
-                            System.Console.WriteLine($"❌ Lỗi gửi tin nhắn: {ex.Message}");
-                        }
-                    }
+                    await HandleSendMessageAsync(session, ct).ConfigureAwait(false);
                     break;
 
                 case "2":
-                    try
-                    {
-                        System.Console.WriteLine("Đang tải danh sách bạn bè...");
-                        var friends = await ZaloWebClient.GetAllFriendsAsync(session, count: 50, page: 1, ct: ct);
-                        System.Console.WriteLine($"📋 Tìm thấy {friends.Count} người bạn:");
-                        foreach (var f in friends)
-                        {
-                            AddOrUpdateQuickTarget(f.DisplayName, f.UserId, ZaloThreadType.User);
-                        }
-
-                        lock (s_quickTargets)
-                        {
-                            foreach (QuickTarget qt in s_quickTargets.Where(t => t.ThreadType == ZaloThreadType.User))
-                            {
-                                System.Console.WriteLine($"  [{qt.Index}] {qt.Name} (UID: {qt.TargetId})");
-                            }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Console.WriteLine($"❌ Lỗi lấy danh sách bạn bè: {ex.Message}");
-                    }
+                    await HandleGetFriendsAsync(session, ct).ConfigureAwait(false);
                     break;
 
                 case "3":
-                    System.Console.Write("Nhập SĐT cần tìm (vd: 0987654321): ");
-                    string? phone = System.Console.ReadLine()?.Trim();
-                    if (!string.IsNullOrEmpty(phone))
-                    {
-                        try
-                        {
-                            ZaloUserProfile profile = await ZaloWebClient.FindUserByPhoneAsync(session, phone, ct);
-                            if (!string.IsNullOrEmpty(profile.Uid))
-                            {
-                                AddOrUpdateQuickTarget(profile.DisplayName, profile.Uid, ZaloThreadType.User);
-                            }
-                            System.Console.WriteLine($"👤 Tên: {profile.DisplayName} | UID: {profile.Uid} | Avatar: {profile.AvatarUrl}");
-                        }
-                        catch (Exception ex)
-                        {
-                            System.Console.WriteLine($"❌ Lỗi tra cứu: {ex.Message}");
-                        }
-                    }
+                    await HandleFindUserAsync(session, ct).ConfigureAwait(false);
                     break;
 
                 case "4":
-                    if (File.Exists(SessionFilePath))
+                    if (File.Exists(ConsoleConstants.SessionFilePath))
                     {
-                        File.Delete(SessionFilePath);
+                        File.Delete(ConsoleConstants.SessionFilePath);
                     }
-                    System.Console.WriteLine("👋 Đã xóa session.json. Hãy khởi động lại app để quét QR mới.");
+                    System.Console.WriteLine("[INFO] Da xoa session.json. Khoi dong lai app de tao phien moi.");
                     return;
 
                 default:
@@ -360,15 +211,140 @@ internal static class Program
         }
     }
 
+    private static async Task HandleSendMessageAsync(ZaloSession session, CancellationToken ct)
+    {
+        string targetId = "";
+        ZaloThreadType threadType = ZaloThreadType.User;
+
+        IReadOnlyList<QuickTarget> targets = s_registry.GetAll();
+        if (targets.Count > 0)
+        {
+            System.Console.WriteLine("\n--- DANH SACH HOI THOAI / BAN BE GẦN ĐAY ---");
+            foreach (QuickTarget target in targets)
+            {
+                string scopeStr = target.ThreadType == ZaloThreadType.Group ? "[NHOM]" : "[CA NHAN]";
+                System.Console.WriteLine($"  [{target.Index}] {target.Name} {scopeStr} (ID: {target.TargetId})");
+            }
+            System.Console.WriteLine("  [0] Nhap ThreadId / SDT thu cong");
+            System.Console.Write("Lựa chọn chỉ số (hoặc nhap ID/SDT): ");
+        }
+        else
+        {
+            System.Console.Write("Nhap ThreadId (User ID hoac Group ID): ");
+        }
+
+        string? inputChoice = System.Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(inputChoice))
+        {
+            return;
+        }
+
+        if (int.TryParse(inputChoice, out int targetIndex) && targetIndex > 0)
+        {
+            QuickTarget? found = s_registry.FindByIndex(targetIndex);
+            if (found != null)
+            {
+                targetId = found.TargetId;
+                threadType = found.ThreadType;
+                System.Console.WriteLine($"[INFO] Da chon target: {found.Name} ({threadType})");
+            }
+        }
+
+        if (string.IsNullOrEmpty(targetId))
+        {
+            if (inputChoice != "0")
+            {
+                targetId = inputChoice;
+            }
+            else
+            {
+                System.Console.Write("Nhap ThreadId / SDT: ");
+                targetId = System.Console.ReadLine()?.Trim() ?? "";
+            }
+
+            if (string.IsNullOrEmpty(targetId))
+            {
+                return;
+            }
+
+            System.Console.Write("Loai hoi thoai (1: User, 2: Group) [Mac dinh 1]: ");
+            string? tTypeStr = System.Console.ReadLine()?.Trim();
+            threadType = tTypeStr == "2" ? ZaloThreadType.Group : ZaloThreadType.User;
+        }
+
+        System.Console.Write("Nhap noi dung tin nhan: ");
+        string? text = System.Console.ReadLine()?.Trim();
+
+        if (!string.IsNullOrEmpty(targetId) && !string.IsNullOrEmpty(text))
+        {
+            try
+            {
+                ZaloSendResult res = await ZaloWebClient.SendTextAsync(session, targetId, threadType, text, ct).ConfigureAwait(false);
+                System.Console.WriteLine($"[SUCCESS] Gui tin nhan thành cong. MsgId: {res.MsgId}");
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"[ERROR] Khong the gui tin nhan: {ex.Message}");
+            }
+        }
+    }
+
+    private static async Task HandleGetFriendsAsync(ZaloSession session, CancellationToken ct)
+    {
+        try
+        {
+            System.Console.WriteLine("[INFO] Dang truyen nhan danh sach ban be...");
+            IReadOnlyList<ZaloFriendInfo> friends = await ZaloWebClient.GetAllFriendsAsync(session, count: 50, page: 1, ct: ct).ConfigureAwait(false);
+            System.Console.WriteLine($"[SUCCESS] Da tai {friends.Count} nguoi ban:");
+
+            foreach (ZaloFriendInfo f in friends)
+            {
+                s_registry.AddOrUpdate(f.DisplayName, f.UserId, ZaloThreadType.User);
+            }
+
+            IReadOnlyList<QuickTarget> list = [.. s_registry.GetAll().Where(t => t.ThreadType == ZaloThreadType.User)];
+            foreach (QuickTarget qt in list)
+            {
+                System.Console.WriteLine($"  [{qt.Index}] {qt.Name} (UID: {qt.TargetId})");
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[ERROR] Khong the tai danh sach ban be: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleFindUserAsync(ZaloSession session, CancellationToken ct)
+    {
+        System.Console.Write("Nhap SDT can tim (vi du: 0987654321): ");
+        string? phone = System.Console.ReadLine()?.Trim();
+        if (!string.IsNullOrEmpty(phone))
+        {
+            try
+            {
+                ZaloUserProfile profile = await ZaloWebClient.FindUserByPhoneAsync(session, phone, ct).ConfigureAwait(false);
+                if (!string.IsNullOrEmpty(profile.Uid))
+                {
+                    s_registry.AddOrUpdate(profile.DisplayName, profile.Uid, ZaloThreadType.User);
+                }
+                System.Console.WriteLine($"[RESULT] Ten: {profile.DisplayName} | UID: {profile.Uid} | Avatar: {profile.AvatarUrl}");
+            }
+            catch (Exception ex)
+            {
+                System.Console.WriteLine($"[ERROR] Tra cuu khong thanh cong: {ex.Message}");
+            }
+        }
+    }
+
     private static async Task<ZaloSessionMaterial?> LoadSessionAsync()
     {
-        if (!File.Exists(SessionFilePath))
+        if (!File.Exists(ConsoleConstants.SessionFilePath))
         {
             return null;
         }
         try
         {
-            string json = await File.ReadAllTextAsync(SessionFilePath);
+            string json = await File.ReadAllTextAsync(ConsoleConstants.SessionFilePath).ConfigureAwait(false);
             return JsonSerializer.Deserialize<ZaloSessionMaterial>(json);
         }
         catch
@@ -380,6 +356,6 @@ internal static class Program
     private static async Task SaveSessionAsync(ZaloSessionMaterial material)
     {
         string json = JsonSerializer.Serialize(material, new JsonSerializerOptions { WriteIndented = true });
-        await File.WriteAllTextAsync(SessionFilePath, json);
+        await File.WriteAllTextAsync(ConsoleConstants.SessionFilePath, json).ConfigureAwait(false);
     }
 }
