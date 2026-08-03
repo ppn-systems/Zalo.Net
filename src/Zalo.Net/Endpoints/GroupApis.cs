@@ -202,8 +202,8 @@ internal static class GroupApis
             throw new ZaloApiException("Failed to encrypt leaveGroup payload");
         }
 
-        using FormUrlEncodedContent body = new([new KeyValuePair<string, string>("params", encryptedParams)]);
-        using HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Post, body: body, ct: ct).ConfigureAwait(false);
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Post, ct: ct).ConfigureAwait(false);
         JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false)
                       ?? throw new ZaloApiException("Invalid JSON response from leaveGroup");
 
@@ -236,9 +236,9 @@ internal static class GroupApis
         {
             ["grid"] = groupId,
             ["members"] = ToJsonArray(members),
-            ["memberTypes"] = ToJsonArray(Enumerable.Repeat(-1, members.Length)),
-            ["imei"] = session.Material.Imei,
-            ["clientLang"] = session.Material.Language
+            ["membersTypes"] = ToJsonArray(Enumerable.Repeat(-1, members.Length)),
+            ["clientLang"] = session.Material.Language,
+            ["imei"] = session.Material.Imei
         };
 
         string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
@@ -247,8 +247,8 @@ internal static class GroupApis
             throw new ZaloApiException("Failed to encrypt addUserToGroup payload");
         }
 
-        using FormUrlEncodedContent body = new([new KeyValuePair<string, string>("params", encryptedParams)]);
-        using HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Post, body: body, ct: ct).ConfigureAwait(false);
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Post, ct: ct).ConfigureAwait(false);
         JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false)
                       ?? throw new ZaloApiException("Invalid JSON response from addUserToGroup");
 
@@ -275,14 +275,14 @@ internal static class GroupApis
         }
 
         string host = GetGroupHost(session);
-        string url = MakeUrl(host, "/api/group/kick/v2");
+        string url = MakeUrl(host, "/api/group/kickmember");
 
         JsonObject payload = new()
         {
             ["grid"] = groupId,
             ["members"] = ToJsonArray(members),
-            ["imei"] = session.Material.Imei,
-            ["clientLang"] = session.Material.Language
+            ["clientLang"] = session.Material.Language,
+            ["imei"] = session.Material.Imei
         };
 
         string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
@@ -291,8 +291,8 @@ internal static class GroupApis
             throw new ZaloApiException("Failed to encrypt removeUserFromGroup payload");
         }
 
-        using FormUrlEncodedContent body = new([new KeyValuePair<string, string>("params", encryptedParams)]);
-        using HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Post, body: body, ct: ct).ConfigureAwait(false);
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Post, ct: ct).ConfigureAwait(false);
         JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false)
                       ?? throw new ZaloApiException("Invalid JSON response from removeUserFromGroup");
 
@@ -353,13 +353,24 @@ internal static class GroupApis
 
         using HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Get, ct: ct).ConfigureAwait(false);
         JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        JsonNode? dataNode = DecryptDataNode(session, node) ?? node?["data"];
 
         List<string> groupIds = [];
-        if (node?["data"]?["gridVerMap"] is JsonObject gridVerMap)
+        if (dataNode?["gridVerMap"] is JsonObject gridVerMap)
         {
             foreach (KeyValuePair<string, JsonNode?> kvp in gridVerMap)
             {
                 if (!string.IsNullOrEmpty(kvp.Key))
+                {
+                    groupIds.Add(kvp.Key);
+                }
+            }
+        }
+        else if (dataNode is JsonObject rootObj)
+        {
+            foreach (KeyValuePair<string, JsonNode?> kvp in rootObj)
+            {
+                if (!string.IsNullOrEmpty(kvp.Key) && kvp.Key != "version")
                 {
                     groupIds.Add(kvp.Key);
                 }
@@ -389,9 +400,9 @@ internal static class GroupApis
             using FormUrlEncodedContent formBody = new([new KeyValuePair<string, string>("params", encryptedParams)]);
             using HttpResponseMessage mgResp = await http.RequestAsync(getMgUrl, HttpMethod.Post, body: formBody, ct: ct).ConfigureAwait(false);
             JsonNode? mgNode = await ZaloHttpClient.ReadJsonAsync(mgResp, ct).ConfigureAwait(false);
-            JsonNode? dataNode = DecryptDataNode(session, mgNode) ?? mgNode?["data"];
+            JsonNode? mgDataNode = DecryptDataNode(session, mgNode) ?? mgNode?["data"];
 
-            if (dataNode?["gridInfoMap"] is JsonObject infoMap)
+            if (mgDataNode?["gridInfoMap"] is JsonObject infoMap)
             {
                 List<ZaloGroupInfo> result = [];
                 foreach (KeyValuePair<string, JsonNode?> kvp in infoMap)
