@@ -1,7 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <ItemGroup>
-    <ProjectReference Include="..\Zalo.Net.Contracts\Zalo.Net.Contracts.csproj" />
-  </ItemGroup>
+  <PropertyGroup>
+    <Title>Zalo.Net.Cryptography - SIMD AES-GCM &amp; Protocol Crypto</Title>
+    <Description>Hardware-accelerated AES-GCM, AES-CBC, MD5, and frame codec for Zalo Web protocol.</Description>
+    <PackageTags>zalo;zalo-crypto;aes-gcm;simd;cryptography</PackageTags>
+  </PropertyGroup>
 
 </Project>

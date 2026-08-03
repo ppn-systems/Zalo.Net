@@ -1,9 +1,9 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
+    <Title>Zalo.Net.Contracts - Abstractions &amp; Models</Title>
+    <Description>Data contracts, record models, events, IZaloClient interface, and constants for Zalo.Net SDK.</Description>
+    <PackageTags>zalo;zalo-contracts;zalo-models;dto;abstractions</PackageTags>
   </PropertyGroup>
 
 </Project>

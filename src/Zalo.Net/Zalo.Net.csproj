@@ -1,10 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
+  <PropertyGroup>
+    <Title>Zalo.Net - High-Performance C# SDK for Zalo Web API</Title>
+    <Description>High-performance, lightweight C# SDK for the Zalo Web protocol built on .NET 10 with Native AOT, SIMD hardware acceleration, multi-account proxy routing, and real-time WebSocket support.</Description>
+    <PackageTags>zalo;zalo-api;zalo-sdk;zalo-web;chat;bot;net10;aot;websocket;proxy</PackageTags>
+  </PropertyGroup>
+
   <ItemGroup>
-	  <ProjectReference Include="..\Zalo.Net.Auth\Zalo.Net.Auth.csproj" />
-	  <ProjectReference Include="..\Zalo.Net.WebSocket\Zalo.Net.WebSocket.csproj" />
-	  <ProjectReference Include="..\Zalo.Net.Contracts\Zalo.Net.Contracts.csproj" />
-	  <ProjectReference Include="..\Zalo.Net.Cryptography\Zalo.Net.Cryptography.csproj" />
+    <ProjectReference Include="..\Zalo.Net.Auth\Zalo.Net.Auth.csproj" />
+    <ProjectReference Include="..\Zalo.Net.WebSocket\Zalo.Net.WebSocket.csproj" />
+    <ProjectReference Include="..\Zalo.Net.Contracts\Zalo.Net.Contracts.csproj" />
+    <ProjectReference Include="..\Zalo.Net.Cryptography\Zalo.Net.Cryptography.csproj" />
   </ItemGroup>
 
 </Project>
