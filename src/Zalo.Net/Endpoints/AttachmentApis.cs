@@ -297,6 +297,29 @@ public static class AttachmentApis
         }
 
         string finalId = photoId ?? clientId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        if (!isImage && string.IsNullOrEmpty(normalUrl))
+        {
+            if (ZaloFileDoneRegistry.TryGet(finalId, out string? regUrl) && !string.IsNullOrEmpty(regUrl))
+            {
+                normalUrl = regUrl;
+                Console.WriteLine($"[DEBUG LOG] Acquired fileUrl from WebSocket file_done: '{normalUrl}'");
+            }
+            else
+            {
+                for (int wait = 0; wait < 10; wait++)
+                {
+                    await Task.Delay(200, ct).ConfigureAwait(false);
+                    if (ZaloFileDoneRegistry.TryGet(finalId, out string? wUrl) && !string.IsNullOrEmpty(wUrl))
+                    {
+                        normalUrl = wUrl;
+                        Console.WriteLine($"[DEBUG LOG] Acquired fileUrl from WebSocket file_done after wait: '{normalUrl}'");
+                        break;
+                    }
+                }
+            }
+        }
+
         Console.WriteLine($"[DEBUG LOG] Upload Result -> fileId='{finalId}', fileUrl='{normalUrl}'");
         return new UploadResult(finalId, normalUrl ?? "", hdUrl ?? "", thumbUrl ?? "", checksum, totalSize);
     }

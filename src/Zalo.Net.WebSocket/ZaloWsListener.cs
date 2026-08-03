@@ -271,9 +271,47 @@ public sealed class ZaloWsListener
                 }
                 break;
 
+            case 601:
+                try
+                {
+                    JsonNode? payload = await WsFrameCodec.DecodeFrameBodyAsync(body, state.Key, ct).ConfigureAwait(false);
+                    _log?.Invoke(ZaloLogLevel.Debug, $"Zalo WS control frame: cmd={cmd} subCmd={subCmd}");
+                    this.DispatchControls(payload);
+                }
+                catch (Exception ex)
+                {
+                    _log?.Invoke(ZaloLogLevel.Warning, $"Zalo WS decode FAILED: cmd={cmd} subCmd={subCmd} err={ex.GetType().Name}:{ex.Message}");
+                }
+                break;
+
             default:
                 _log?.Invoke(ZaloLogLevel.Debug, $"Zalo WS frame (unhandled): cmd={cmd} subCmd={subCmd} len={body.Length}");
                 break;
+        }
+    }
+
+    private void DispatchControls(JsonNode? payload)
+    {
+        if (payload is null)
+        {
+            return;
+        }
+        JsonNode? data = payload["data"];
+        if (data?["controls"] is JsonArray controls)
+        {
+            foreach (JsonNode? control in controls)
+            {
+                if (control?["content"]?["act_type"]?.GetValue<string>() == "file_done")
+                {
+                    string? fileId = control?["content"]?["fileId"]?.GetValue<string>();
+                    string? fileUrl = control?["content"]?["data"]?["url"]?.GetValue<string>();
+                    if (!string.IsNullOrEmpty(fileId) && !string.IsNullOrEmpty(fileUrl))
+                    {
+                        _log?.Invoke(ZaloLogLevel.Information, $"[WS FILE DONE] fileId={fileId}, url={fileUrl}");
+                        ZaloFileDoneRegistry.Set(fileId, fileUrl);
+                    }
+                }
+            }
         }
     }
 
