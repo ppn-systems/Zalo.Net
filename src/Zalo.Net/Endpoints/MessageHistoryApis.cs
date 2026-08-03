@@ -96,24 +96,34 @@ public static class MessageHistoryApis
         }
         candidateHosts.Add(DefaultGroupHost);
         candidateHosts.Add("https://tt-group2.zalo.me");
-        candidateHosts.Add("https://groupms-chat2.zalo.me");
 
-        string[] candidatePaths = ["/api/group/history", "/api/group/getmsglog", "/api/group/getmsg"];
+        string[] candidatePaths = ["/api/group/getmsglog", "/api/group/history", "/api/group/getmsg"];
 
-        JsonObject payload1 = new()
-        {
-            ["grid"] = threadId,
-            ["count"] = count > 0 ? count : 50
-        };
-        string? encParams1 = ZaloCipher.EncodeAes(session.Material.SecretKey, payload1.ToJsonString());
+        long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        JsonObject payload2 = new()
+        JsonObject payloadSigned = new()
         {
             ["imei"] = session.Material.Imei,
             ["count"] = count > 0 ? count : 50,
             ["grid"] = threadId
         };
-        string? encParams2 = ZaloCipher.EncodeAes(session.Material.SecretKey, payload2.ToJsonString());
+        string dataJson = payloadSigned.ToJsonString();
+        string? encParamsSigned = ZaloCipher.EncodeAes(session.Material.SecretKey, dataJson);
+
+        Dictionary<string, object?> dataDict = new()
+        {
+            ["imei"] = session.Material.Imei,
+            ["count"] = count > 0 ? count : 50,
+            ["grid"] = threadId
+        };
+        string signKey = Hashing.GetSignKey("getoldmessages", dataDict);
+
+        JsonObject payloadRaw = new()
+        {
+            ["grid"] = threadId,
+            ["count"] = count > 0 ? count : 50
+        };
+        string? encParamsRaw = ZaloCipher.EncodeAes(session.Material.SecretKey, payloadRaw.ToJsonString());
 
         JsonNode? node = null;
         string? lastError = null;
@@ -124,11 +134,11 @@ public static class MessageHistoryApis
             {
                 string baseUrl = MakeUrl(host, path);
 
-                if (!string.IsNullOrEmpty(encParams1))
+                if (!string.IsNullOrEmpty(encParamsSigned))
                 {
                     try
                     {
-                        string reqUrl = $"{baseUrl}&params={Uri.EscapeDataString(encParams1)}";
+                        string reqUrl = $"{baseUrl}&params={Uri.EscapeDataString(encParamsSigned)}&ts={ts}&signkey={signKey}";
                         using HttpResponseMessage resp = await http.RequestAsync(reqUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
                         if (resp.IsSuccessStatusCode)
                         {
@@ -142,15 +152,43 @@ public static class MessageHistoryApis
                     }
                     catch (Exception ex)
                     {
-                        lastError = ex.Message;
+                        if (!ex.Message.Contains("No such host", StringComparison.OrdinalIgnoreCase))
+                        {
+                            lastError = ex.Message;
+                        }
                     }
                 }
 
-                if (node is null && !string.IsNullOrEmpty(encParams1))
+                if (node is null && !string.IsNullOrEmpty(encParamsRaw))
                 {
                     try
                     {
-                        using FormUrlEncodedContent formBody = new([new KeyValuePair<string, string>("params", encParams1)]);
+                        string reqUrl = $"{baseUrl}&params={Uri.EscapeDataString(encParamsRaw)}";
+                        using HttpResponseMessage resp = await http.RequestAsync(reqUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+                        if (resp.IsSuccessStatusCode)
+                        {
+                            JsonNode? candidate = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+                            if (candidate?["error_code"]?.GetValue<int>() == 0)
+                            {
+                                node = candidate;
+                                break;
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (!ex.Message.Contains("No such host", StringComparison.OrdinalIgnoreCase))
+                        {
+                            lastError = ex.Message;
+                        }
+                    }
+                }
+
+                if (node is null && !string.IsNullOrEmpty(encParamsRaw))
+                {
+                    try
+                    {
+                        using FormUrlEncodedContent formBody = new([new KeyValuePair<string, string>("params", encParamsRaw)]);
                         using HttpResponseMessage resp = await http.RequestAsync(baseUrl, HttpMethod.Post, body: formBody, ct: ct).ConfigureAwait(false);
                         if (resp.IsSuccessStatusCode)
                         {
@@ -164,29 +202,10 @@ public static class MessageHistoryApis
                     }
                     catch (Exception ex)
                     {
-                        lastError = ex.Message;
-                    }
-                }
-
-                if (node is null && !string.IsNullOrEmpty(encParams2))
-                {
-                    try
-                    {
-                        string reqUrl = $"{baseUrl}&params={Uri.EscapeDataString(encParams2)}";
-                        using HttpResponseMessage resp = await http.RequestAsync(reqUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
-                        if (resp.IsSuccessStatusCode)
+                        if (!ex.Message.Contains("No such host", StringComparison.OrdinalIgnoreCase))
                         {
-                            JsonNode? candidate = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
-                            if (candidate?["error_code"]?.GetValue<int>() == 0)
-                            {
-                                node = candidate;
-                                break;
-                            }
+                            lastError = ex.Message;
                         }
-                    }
-                    catch (Exception ex)
-                    {
-                        lastError = ex.Message;
                     }
                 }
 
