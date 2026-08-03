@@ -118,9 +118,13 @@ public static class MessageHistoryApis
                     try
                     {
                         using HttpResponseMessage resp = await http.RequestAsync(urlB, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+                        string rawContent = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                        Console.WriteLine($"[DEBUG LOG] GET {hostClean}{path} -> HTTP {(int)resp.StatusCode} {resp.ReasonPhrase}");
+                        Console.WriteLine($"[DEBUG LOG] Raw Body snippet: '{(rawContent.Length > 200 ? rawContent[..200] : rawContent)}'");
+
                         if (resp.IsSuccessStatusCode)
                         {
-                            JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+                            JsonNode? json = string.IsNullOrWhiteSpace(rawContent) ? null : JsonNode.Parse(rawContent);
                             int errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
                             if (errorCode == 0)
                             {
@@ -128,11 +132,7 @@ public static class MessageHistoryApis
                                 Console.WriteLine($"[DEBUG LOG] SUCCESS GET {hostClean}{path}");
                                 return dataNode;
                             }
-                            Console.WriteLine($"[DEBUG LOG] GET {hostClean}{path} -> Error {errorCode}: {json?["error_message"]?.GetValue<string>()}");
-                        }
-                        else
-                        {
-                            Console.WriteLine($"[DEBUG LOG] GET {hostClean}{path} -> {(int)resp.StatusCode} {resp.ReasonPhrase}");
+                            Console.WriteLine($"[DEBUG LOG] Error Code: {errorCode}, Msg: '{json?["error_message"]?.GetValue<string>()}'");
                         }
                     }
                     catch (Exception ex)
