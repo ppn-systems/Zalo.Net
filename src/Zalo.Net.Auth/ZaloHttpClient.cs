@@ -143,7 +143,6 @@ public sealed class ZaloHttpClient : IDisposable
         }
 
         _ = req.Headers.TryAddWithoutValidation("Cookie", cookieHeader);
-        Console.WriteLine($"[DEBUG LOG] Request '{req.Method} {currentUrl}' -> Cookie len: {cookieHeader.Length}");
     }
 
     /// <inheritdoc/>

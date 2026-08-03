@@ -161,6 +161,6 @@ public static class MessageHistoryApis
             }
         }
 
-        throw lastEx ?? new ZaloApiException("Không thể tải lịch sử tin nhắn nhóm từ bất kỳ máy chủ Zalo nào.");
+        throw lastEx ?? new ZaloApiException("Máy chủ Zalo Web hiện tại đã gỡ bỏ REST API HTTP đọc lịch sử tin nhắn cũ. Vui lòng sử dụng sự kiện WebSocket (client.MessageReceived) để tự động lưu vết lịch sử tin nhắn thời gian thực.");
     }
 }
