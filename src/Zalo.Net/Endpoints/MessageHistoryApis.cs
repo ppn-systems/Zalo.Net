@@ -82,22 +82,24 @@ public static class MessageHistoryApis
         }
 
         List<string> candidateHosts = [];
-        if (session.ServiceMap.TryGetValue("group", out string[]? gh) && gh.Length > 0)
+        string[] serviceKeys = ["group", "group_poll", "group_cloud_message", "conversation", "chat"];
+        foreach (string sk in serviceKeys)
         {
-            candidateHosts.Add(gh[0].StartsWith("http", StringComparison.OrdinalIgnoreCase) ? gh[0] : $"https://{gh[0]}");
-        }
-        if (session.ServiceMap.TryGetValue("group_poll", out string[]? gph) && gph.Length > 0)
-        {
-            candidateHosts.Add(gph[0].StartsWith("http", StringComparison.OrdinalIgnoreCase) ? gph[0] : $"https://{gph[0]}");
-        }
-        if (session.ServiceMap.TryGetValue("chat", out string[]? ch) && ch.Length > 0)
-        {
-            candidateHosts.Add(ch[0].StartsWith("http", StringComparison.OrdinalIgnoreCase) ? ch[0] : $"https://{ch[0]}");
+            if (session.ServiceMap.TryGetValue(sk, out string[]? hosts) && hosts.Length > 0)
+            {
+                foreach (string h in hosts)
+                {
+                    if (!string.IsNullOrWhiteSpace(h))
+                    {
+                        candidateHosts.Add(h.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? h : $"https://{h}");
+                    }
+                }
+            }
         }
         candidateHosts.Add(DefaultGroupHost);
         candidateHosts.Add("https://tt-group2.zalo.me");
 
-        string[] candidatePaths = ["/api/group/history", "/api/group/getmsglog", "/api/group/lastmessages", "/api/group/getmsg"];
+        string[] candidatePaths = ["/api/group/history", "/api/group/getmsglog", "/api/group/lastmessages", "/api/group/getmsg", "/api/group/msglog"];
 
         long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 

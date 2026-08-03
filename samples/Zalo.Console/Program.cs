@@ -188,7 +188,8 @@ internal static class Program
             menuTable.AddRow("4", "Gửi hình ảnh đính kèm");
             menuTable.AddRow("5", "Tải lịch sử tin nhắn cũ");
             menuTable.AddRow("6", "Tạo nhóm chat mới");
-            menuTable.AddRow("7", "Đăng xuất khỏi phiên hiện tại");
+            menuTable.AddRow("7", "Thêm thành viên vào nhóm");
+            menuTable.AddRow("8", "Đăng xuất khỏi phiên hiện tại");
             menuTable.AddRow("Q", "Thoát khỏi chương trình");
             menuTable.Print(ConsoleColor.DarkCyan, ConsoleColor.Yellow);
 
@@ -226,6 +227,10 @@ internal static class Program
                     break;
 
                 case "7":
+                    await HandleAddUserToGroupAsync(session, ct).ConfigureAwait(false);
+                    break;
+
+                case "8":
                     if (File.Exists(ConsoleConstants.SessionFilePath))
                     {
                         File.Delete(ConsoleConstants.SessionFilePath);
@@ -521,6 +526,112 @@ internal static class Program
         catch (Exception ex)
         {
             System.Console.WriteLine($"[LỖI] Không thể tạo nhóm: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleAddUserToGroupAsync(ZaloSession session, CancellationToken ct)
+    {
+        try
+        {
+            System.Console.WriteLine("[THÔNG BÁO] Đang tự động tải danh sách các nhóm chat...");
+            IReadOnlyList<ZaloGroupInfo> remoteGroups = await ZaloWebClient.GetAllGroupsAsync(session, ct).ConfigureAwait(false);
+            foreach (ZaloGroupInfo g in remoteGroups)
+            {
+                s_registry.AddOrUpdate(g.Name, g.GroupId, ZaloThreadType.Group);
+            }
+        }
+        catch { }
+
+        List<QuickTarget> groups = [.. s_registry.GetAll().Where(t => t.ThreadType == ZaloThreadType.Group)];
+        string groupId = "";
+
+        if (groups.Count > 0)
+        {
+            System.Console.WriteLine("\n[DANH SÁCH NHÓM CỦA BẠN]");
+            ConsoleTable groupTable = new("STT", "Tên nhóm", "Group ID");
+            foreach (QuickTarget g in groups)
+            {
+                groupTable.AddRow(g.Index.ToString(System.Globalization.CultureInfo.InvariantCulture), g.Name, g.TargetId);
+            }
+            groupTable.AddRow("0", "Nhập Group ID thủ công", "-");
+            groupTable.Print(ConsoleColor.DarkCyan, ConsoleColor.Yellow);
+
+            System.Console.Write("[NHẬP] Chọn số thứ tự nhóm cần thêm thành viên: ");
+            string? input = System.Console.ReadLine()?.Trim();
+            if (int.TryParse(input, out int idx) && idx > 0)
+            {
+                QuickTarget? found = groups.FirstOrDefault(g => g.Index == idx);
+                if (found != null)
+                {
+                    groupId = found.TargetId;
+                }
+            }
+            if (string.IsNullOrEmpty(groupId) && input != "0")
+            {
+                groupId = input ?? "";
+            }
+        }
+
+        if (string.IsNullOrEmpty(groupId))
+        {
+            System.Console.Write("[NHẬP] Nhập Group ID: ");
+            groupId = System.Console.ReadLine()?.Trim() ?? "";
+        }
+
+        if (string.IsNullOrEmpty(groupId))
+        {
+            return;
+        }
+
+        List<QuickTarget> friends = [.. s_registry.GetAll().Where(t => t.ThreadType == ZaloThreadType.User)];
+        if (friends.Count > 0)
+        {
+            System.Console.WriteLine("\n[DANH SÁCH BẠN BÈ]");
+            ConsoleTable friendTable = new("STT", "Tên bạn bè", "User ID (UID)");
+            foreach (QuickTarget f in friends)
+            {
+                friendTable.AddRow(f.Index.ToString(System.Globalization.CultureInfo.InvariantCulture), f.Name, f.TargetId);
+            }
+            friendTable.Print(ConsoleColor.DarkCyan, ConsoleColor.Yellow);
+        }
+
+        System.Console.Write("[NHẬP] Nhập STT hoặc UID người dùng cần thêm (phân cách bằng dấu phẩy nếu nhiều UID): ");
+        string? userIdsInput = System.Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(userIdsInput))
+        {
+            return;
+        }
+
+        List<string> selectedUids = [];
+        string[] parts = userIdsInput.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (string p in parts)
+        {
+            if (int.TryParse(p, out int uIdx))
+            {
+                QuickTarget? f = friends.FirstOrDefault(x => x.Index == uIdx);
+                if (f != null)
+                {
+                    selectedUids.Add(f.TargetId);
+                    continue;
+                }
+            }
+            selectedUids.Add(p);
+        }
+
+        if (selectedUids.Count == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            System.Console.WriteLine("[THÔNG BÁO] Đang gửi yêu cầu thêm thành viên vào nhóm...");
+            await ZaloWebClient.AddUserToGroupAsync(session, groupId, selectedUids, ct).ConfigureAwait(false);
+            System.Console.WriteLine("[THÀNH CÔNG] Đã thêm thành viên vào nhóm thành công!");
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[LỖI] Không thể thêm thành viên vào nhóm: {ex.Message}");
         }
     }
 
