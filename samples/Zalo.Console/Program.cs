@@ -516,7 +516,7 @@ internal static class Program
 
         if (!File.Exists(imagePath))
         {
-            System.Console.WriteLine($"[LỖI] Khôn tìm thấy file ảnh tại đường dẫn: {imagePath}");
+            System.Console.WriteLine($"[LỖI] Không tìm thấy file ảnh tại đường dẫn: {imagePath}");
             return;
         }
 
