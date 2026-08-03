@@ -15,7 +15,6 @@ namespace Zalo.Net.Endpoints;
 /// </summary>
 public static class MessageHistoryApis
 {
-    private const string DefaultChatHost = "https://chat-wpa.chat.zalo.me";
     private const string DefaultGroupHost = "https://group-wpa.chat.zalo.me";
 
     private static string GetHost(ZaloSession session, string serviceKey, string defaultHost)
@@ -34,7 +33,7 @@ public static class MessageHistoryApis
         return $"{baseClean}{path}{sep}zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}";
     }
 
-    /// <summary>Fetches old message history for a direct chat or group.</summary>
+    /// <summary>Fetches old message history for a group thread.</summary>
     public static async Task<JsonNode?> GetOldMessagesAsync(
         ZaloHttpClient http, ZaloSession session,
         string threadId, ZaloThreadType type, int count = 50,
@@ -43,23 +42,19 @@ public static class MessageHistoryApis
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(session);
 
-        bool isGroup = type == ZaloThreadType.Group;
-        string host = isGroup ? GetHost(session, "group", DefaultGroupHost) : GetHost(session, "chat", DefaultChatHost);
-        string path = isGroup ? "/api/group/history" : "/api/message/lastmessages";
-        string baseUrl = MakeUrl(host, path);
+        if (type != ZaloThreadType.Group)
+        {
+            throw new ZaloApiException("Zalo Web API chỉ hỗ trợ tải lịch sử tin nhắn đối với Nhóm (Group). Tin nhắn cá nhân (DM) được đồng bộ qua WebSocket thời gian thực.");
+        }
 
-        JsonObject payload = isGroup
-            ? new JsonObject
-            {
-                ["grid"] = threadId,
-                ["count"] = count > 0 ? count : 50
-            }
-            : new JsonObject
-            {
-                ["toid"] = threadId,
-                ["count"] = count > 0 ? count : 50,
-                ["imei"] = session.Material.Imei
-            };
+        string host = GetHost(session, "group", DefaultGroupHost);
+        string baseUrl = MakeUrl(host, "/api/group/history");
+
+        JsonObject payload = new()
+        {
+            ["grid"] = threadId,
+            ["count"] = count > 0 ? count : 50
+        };
 
         string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
         if (string.IsNullOrEmpty(encryptedParams))
