@@ -159,16 +159,31 @@ public static class MessageApis
 
         using FormUrlEncodedContent body = new([new KeyValuePair<string, string>("params", encryptedParams)]);
         using HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Post, body: body, ct: ct).ConfigureAwait(false);
-        JsonNode? root = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false)
+                      ?? throw new ZaloApiException("Invalid JSON response from SendQuoteAsync");
 
-        int errorCode = root?["error_code"]?.GetValue<int>() ?? -1;
+        int errorCode = node["error_code"]?.GetValue<int>() ?? -1;
         if (errorCode != 0)
         {
-            string message = root?["error_message"]?.GetValue<string>() ?? "Unknown error";
-            throw new ZaloApiException($"Zalo Server Error {errorCode}: {message}");
+            string msg = node["error_message"]?.GetValue<string>() ?? $"Error {errorCode}";
+            throw new ZaloApiException(msg, errorCode);
         }
 
-        return root?["data"]?["msgId"]?.GetValue<string>() ?? now.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        JsonNode? dataNode = node["data"];
+        if (dataNode?.GetValueKind() == System.Text.Json.JsonValueKind.String)
+        {
+            string encStr = dataNode.GetValue<string>();
+            string? decrypted = ZaloCipher.DecodeAes(session.Material.SecretKey, encStr);
+            if (!string.IsNullOrWhiteSpace(decrypted))
+            {
+                try { dataNode = JsonNode.Parse(decrypted); } catch { }
+            }
+        }
+
+        string msgId = dataNode?["msgId"]?.GetValue<string>()
+                    ?? dataNode?["message_id"]?.GetValue<string>()
+                    ?? now.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return msgId;
     }
 
     /// <summary>Fetches profile information for a user.</summary>

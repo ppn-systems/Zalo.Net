@@ -111,7 +111,7 @@ public static class ReactionApis
 
         JsonObject innerReact = new()
         {
-            ["react_list"] = msgList,
+            ["rMsg"] = msgList,
             ["rIcon"] = icon,
             ["rType"] = rType,
             ["source"] = 6
@@ -119,7 +119,7 @@ public static class ReactionApis
 
         JsonObject reactItem = new()
         {
-            ["react"] = innerReact.ToJsonString(),
+            ["message"] = innerReact.ToJsonString(),
             ["clientId"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         };
 
