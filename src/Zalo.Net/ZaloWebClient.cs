@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 using System;
@@ -21,8 +21,7 @@ namespace Zalo.Net;
 /// </summary>
 public sealed class ZaloWebClient : IDisposable
 {
-    private const string DefaultUserAgent =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+    private const string DefaultUserAgent = ZaloConstants.Protocol.DefaultUserAgent;
 
     private readonly System.Net.IWebProxy? _proxy;
     private readonly Dictionary<Guid, QrSession> _qrSessions = [];

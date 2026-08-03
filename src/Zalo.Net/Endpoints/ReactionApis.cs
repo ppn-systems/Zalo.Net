@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 using System;
@@ -88,7 +88,7 @@ public static class ReactionApis
         bool isGroup = type == ZaloThreadType.Group;
         string endpointHost = session.ServiceMap.TryGetValue("reaction", out string[]? rHosts) && rHosts.Length > 0
             ? rHosts[0]
-            : "https://tt-react-wpa.chat.zalo.me";
+            : ZaloConstants.Hosts.Reaction;
 
         if (!endpointHost.StartsWith("http", StringComparison.OrdinalIgnoreCase))
         {

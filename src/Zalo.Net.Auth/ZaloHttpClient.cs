@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 using System;
@@ -21,10 +21,10 @@ namespace Zalo.Net.Auth;
 public sealed class ZaloHttpClient : IDisposable
 {
     /// <summary>Default Zalo Web API type constant (30).</summary>
-    public const int ApiType = 30;
+    public const int ApiType = ZaloConstants.Protocol.ApiType;
 
     /// <summary>Default Zalo Web API version constant (671).</summary>
-    public const int ApiVersion = 671;
+    public const int ApiVersion = ZaloConstants.Protocol.ApiVersion;
 
     private readonly HttpClient _http;
     private readonly CookieStore _cookies;

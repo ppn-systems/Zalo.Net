@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 using System;
@@ -20,8 +20,7 @@ namespace Zalo.Net.WebSocket;
 /// </summary>
 public sealed class ZaloWsListener
 {
-    private const string DefaultUserAgent =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+    private const string DefaultUserAgent = ZaloConstants.Protocol.DefaultUserAgent;
 
     private readonly ZaloSession _session;
     private readonly Action<ZaloMessageEvent> _onMessage;
@@ -31,8 +30,8 @@ public sealed class ZaloWsListener
     public Func<CancellationToken, Task>? SendThrottle { get; set; }
 
     private const int InitialBufferSize = 4 * 1024;
-    private const int CloseCodeDuplicate = 3000;
-    private const int CloseCodeKicked = 3003;
+    private const int CloseCodeDuplicate = ZaloConstants.WebSocket.CloseCodeDuplicate;
+    private const int CloseCodeKicked = ZaloConstants.WebSocket.CloseCodeKicked;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="ZaloWsListener"/> class.

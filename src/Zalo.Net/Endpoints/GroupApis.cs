@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 using System;
@@ -18,7 +18,7 @@ namespace Zalo.Net.Endpoints;
 
 internal static class GroupApis
 {
-    private const string DefaultGroupHost = "https://group-wpa.chat.zalo.me";
+    private const string DefaultGroupHost = ZaloConstants.Hosts.Group;
 
     private static string GetGroupHost(ZaloSession session)
     {
