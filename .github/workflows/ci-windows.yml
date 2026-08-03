@@ -1,0 +1,35 @@
+name: "CI: Windows Build & Test"
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  push:
+    branches: ["master", "main"]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "*.sln"
+      - "*.slnx"
+  pull_request:
+    branches: ["master", "main"]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "*.sln"
+      - "*.slnx"
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write # required for test result comments
+
+jobs:
+  build:
+    name: Windows
+    uses: ./.github/workflows/_build.yml
+    with:
+      os: windows-latest
+      project: src/Zalo.Net.slnx
+      test: tests/Zalo.Net.Tests.slnx
+      deploy: false
+      coverage: false

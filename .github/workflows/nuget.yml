@@ -1,0 +1,98 @@
+name: "Publish: NuGet"
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (without v prefix, e.g., 1.0.0)'
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: "Publish NuGet"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Extract version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> "$GITHUB_ENV"
+          else
+            echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/packages.lock.json', '**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Decode signing key
+        shell: bash
+        run: |
+          if [ -n "${{ secrets.SIGNING_KEY }}" ]; then
+            echo "${{ secrets.SIGNING_KEY }}" | base64 -d > "$GITHUB_WORKSPACE/src/Zalo.Net.snk"
+          else
+            echo "SIGNING_KEY is not set. Skipping signing key creation."
+          fi
+
+      - name: Restore dependencies
+        run: dotnet restore Zalo.Net.slnx
+
+      - name: Build
+        run: dotnet build Zalo.Net.slnx --configuration Release --no-restore /p:Version=${{ env.VERSION }}
+
+      - name: Pack
+        run: dotnet pack Zalo.Net.slnx --configuration Release --no-build --output ./out /p:Version=${{ env.VERSION }}
+
+      - name: Verify package exists
+        shell: bash
+        run: |
+          count=$(ls ./out/*.nupkg 2>/dev/null | wc -l)
+          if [ "$count" -eq 0 ]; then
+            echo "❌ No .nupkg files found in ./out" && exit 1
+          fi
+          echo "✅ Found $count package(s):"
+          ls ./out/*.nupkg
+
+      # -----------------------------------------------------------------------
+      # Push to NuGet.org
+      # -----------------------------------------------------------------------
+      - name: Push to NuGet.org
+        if: env.NUGET_API_KEY != ''
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          dotnet nuget push ./out/*.nupkg \
+            --api-key "${{ secrets.NUGET_API_KEY }}" \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
+
+      # -----------------------------------------------------------------------
+      # Push to GitHub Packages
+      # -----------------------------------------------------------------------
+      - name: Push to GitHub Packages
+        run: |
+          dotnet nuget push ./out/*.nupkg \
+            --api-key "${{ secrets.GITHUB_TOKEN }}" \
+            --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+            --skip-duplicate

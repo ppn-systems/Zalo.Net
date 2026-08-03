@@ -21,6 +21,11 @@
         <NoWarn>$(NoWarn);CS1591;CA5351;CA5350;CA2007;CA1031;CA2000</NoWarn>
     </PropertyGroup>
 
+    <PropertyGroup Condition="Exists('$(MSBuildThisFileDirectory)src/Zalo.Net.snk')">
+        <SignAssembly>true</SignAssembly>
+        <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)src/Zalo.Net.snk</AssemblyOriginatorKeyFile>
+    </PropertyGroup>
+
     <PropertyGroup Condition="'$(IsTestProject)' == 'true'">
         <NoWarn>$(NoWarn);IL2026;IL3050;IL2075;IDE0005;CA1307</NoWarn>
     </PropertyGroup>
