@@ -181,21 +181,24 @@ internal static class Program
         while (!ct.IsCancellationRequested)
         {
             System.Console.WriteLine();
-            ConsoleTable menuTable = new("STT", "CHỨC NĂNG HỆ THỐNG ZALO.NET");
+            ConsoleTable menuTable = new("STT", "CHỨC NĂNG HỆ THỐNG ZALO CRM");
             menuTable.AddRow("--", "[TIN NHẮN & TRUYỀN THÔNG]");
             menuTable.AddRow("1", "  Gửi tin nhắn văn bản (Cá nhân / Nhóm)");
             menuTable.AddRow("2", "  Gửi hình ảnh đính kèm");
-            menuTable.AddRow("3", "  Tải lịch sử tin nhắn nhóm");
-            menuTable.AddRow("--", "[QUẢN LÝ BẠN BÈ]");
-            menuTable.AddRow("4", "  Danh sách bạn bè");
-            menuTable.AddRow("5", "  Tra cứu thông tin người dùng qua SĐT");
-            menuTable.AddRow("6", "  Gửi lời mời kết bạn (qua SĐT / UID)");
-            menuTable.AddRow("--", "[QUẢN LÝ NHÓM CHAT]");
-            menuTable.AddRow("7", "  Tạo nhóm chat mới");
-            menuTable.AddRow("8", "  Thêm thành viên vào nhóm");
-            menuTable.AddRow("9", "  Xóa thành viên khỏi nhóm");
+            menuTable.AddRow("3", "  Gửi File / Hóa đơn / Hợp đồng đính kèm");
+            menuTable.AddRow("4", "  Tải lịch sử tin nhắn nhóm");
+            menuTable.AddRow("--", "[QUẢN LÝ BẠN BÈ & KHÁCH HÀNG (CRM)]");
+            menuTable.AddRow("5", "  Danh sách bạn bè");
+            menuTable.AddRow("6", "  Tra cứu thông tin người dùng qua SĐT");
+            menuTable.AddRow("7", "  Gửi lời mời kết bạn (qua SĐT / UID)");
+            menuTable.AddRow("8", "  Đặt biệt danh / Gán Alias Khách hàng");
+            menuTable.AddRow("9", "  Chặn / Bỏ chặn Spammer");
+            menuTable.AddRow("--", "[QUẢN LÝ NHÓM CHAT (GROUP CRM)]");
+            menuTable.AddRow("10", " Tạo nhóm chat mới");
+            menuTable.AddRow("11", " Thêm thành viên vào nhóm");
+            menuTable.AddRow("12", " Xóa thành viên khỏi nhóm");
             menuTable.AddRow("--", "[HỆ THỐNG]");
-            menuTable.AddRow("10", " Đăng xuất khỏi phiên hiện tại");
+            menuTable.AddRow("13", " Đăng xuất khỏi phiên hiện tại");
             menuTable.AddRow("Q", "  Thoát khỏi chương trình");
             menuTable.Print(ConsoleColor.DarkCyan, ConsoleColor.Yellow);
 
@@ -217,34 +220,46 @@ internal static class Program
                     break;
 
                 case "3":
-                    await HandleGetHistoryAsync(session, ct).ConfigureAwait(false);
+                    await HandleSendFileAsync(session, ct).ConfigureAwait(false);
                     break;
 
                 case "4":
-                    await HandleGetFriendsAsync(session, ct).ConfigureAwait(false);
+                    await HandleGetHistoryAsync(session, ct).ConfigureAwait(false);
                     break;
 
                 case "5":
-                    await HandleFindUserAsync(session, ct).ConfigureAwait(false);
+                    await HandleGetFriendsAsync(session, ct).ConfigureAwait(false);
                     break;
 
                 case "6":
-                    await HandleSendFriendRequestAsync(session, ct).ConfigureAwait(false);
+                    await HandleFindUserAsync(session, ct).ConfigureAwait(false);
                     break;
 
                 case "7":
-                    await HandleCreateGroupAsync(session, ct).ConfigureAwait(false);
+                    await HandleSendFriendRequestAsync(session, ct).ConfigureAwait(false);
                     break;
 
                 case "8":
-                    await HandleAddUserToGroupAsync(session, ct).ConfigureAwait(false);
+                    await HandleChangeAliasAsync(session, ct).ConfigureAwait(false);
                     break;
 
                 case "9":
-                    await HandleRemoveUserFromGroupAsync(session, ct).ConfigureAwait(false);
+                    await HandleBlockUserAsync(session, ct).ConfigureAwait(false);
                     break;
 
                 case "10":
+                    await HandleCreateGroupAsync(session, ct).ConfigureAwait(false);
+                    break;
+
+                case "11":
+                    await HandleAddUserToGroupAsync(session, ct).ConfigureAwait(false);
+                    break;
+
+                case "12":
+                    await HandleRemoveUserFromGroupAsync(session, ct).ConfigureAwait(false);
+                    break;
+
+                case "13":
                     if (File.Exists(ConsoleConstants.SessionFilePath))
                     {
                         File.Delete(ConsoleConstants.SessionFilePath);
@@ -799,6 +814,131 @@ internal static class Program
         catch (Exception ex)
         {
             System.Console.WriteLine($"[LỖI] Không thể gửi lời mời kết bạn: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleChangeAliasAsync(ZaloSession session, CancellationToken ct)
+    {
+        List<QuickTarget> friends = [.. s_registry.GetAll().Where(t => t.ThreadType == ZaloThreadType.User)];
+        string userId = "";
+        if (friends.Count > 0)
+        {
+            System.Console.WriteLine("\n[DANH SÁCH BẠN BÈ / KHÁCH HÀNG]");
+            ConsoleTable friendTable = new("STT", "Tên hiển thị", "User ID (UID)");
+            foreach (QuickTarget f in friends)
+            {
+                friendTable.AddRow(f.Index.ToString(System.Globalization.CultureInfo.InvariantCulture), f.Name, f.TargetId);
+            }
+            friendTable.Print(ConsoleColor.DarkCyan, ConsoleColor.Yellow);
+
+            System.Console.Write("[NHẬP] Chọn STT hoặc nhập UID khách hàng cần đặt biệt danh: ");
+            string? input = System.Console.ReadLine()?.Trim();
+            if (int.TryParse(input, out int idx) && idx > 0)
+            {
+                QuickTarget? found = friends.FirstOrDefault(f => f.Index == idx);
+                if (found != null)
+                {
+                    userId = found.TargetId;
+                }
+            }
+            if (string.IsNullOrEmpty(userId))
+            {
+                userId = input ?? "";
+            }
+        }
+        else
+        {
+            System.Console.Write("[NHẬP] Nhập User ID (UID) khách hàng: ");
+            userId = System.Console.ReadLine()?.Trim() ?? "";
+        }
+
+        if (string.IsNullOrEmpty(userId))
+        {
+            return;
+        }
+
+        System.Console.Write("[NHẬP] Nhập Biệt danh / Ghi chú mới (ví dụ: '[KH VIP] Anh Nam - VinHomes'): ");
+        string? alias = System.Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(alias))
+        {
+            return;
+        }
+
+        try
+        {
+            System.Console.WriteLine("[THÔNG BÁO] Đang cập nhật biệt danh cho khách hàng...");
+            await ZaloWebClient.ChangeFriendAliasAsync(session, userId, alias, ct).ConfigureAwait(false);
+            System.Console.WriteLine($"[THÀNH CÔNG] Đã cập nhật biệt danh '{alias}' thành công!");
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[LỖI] Không thể cập nhật biệt danh: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleBlockUserAsync(ZaloSession session, CancellationToken ct)
+    {
+        System.Console.Write("[NHẬP] Nhập User ID (UID) cần thao tác (Chặn/Bỏ chặn): ");
+        string? userId = System.Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(userId))
+        {
+            return;
+        }
+
+        System.Console.Write("[NHẬP] Bạn muốn (1) Chặn hay (2) Bỏ chặn? Nhập 1 hoặc 2: ");
+        string? action = System.Console.ReadLine()?.Trim();
+
+        try
+        {
+            if (action == "1")
+            {
+                System.Console.WriteLine("[THÔNG BÁO] Đang chặn người dùng...");
+                await ZaloWebClient.BlockUserAsync(session, userId, ct).ConfigureAwait(false);
+                System.Console.WriteLine("[THÀNH CÔNG] Đã chặn người dùng thành công!");
+            }
+            else if (action == "2")
+            {
+                System.Console.WriteLine("[THÔNG BÁO] Đang bỏ chặn người dùng...");
+                await ZaloWebClient.UnblockUserAsync(session, userId, ct).ConfigureAwait(false);
+                System.Console.WriteLine("[THÀNH CÔNG] Đã bỏ chặn người dùng thành công!");
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[LỖI] Thao tác thất bại: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleSendFileAsync(ZaloSession session, CancellationToken ct)
+    {
+        (string targetId, ZaloThreadType threadType) = ResolveTargetSelection();
+        if (string.IsNullOrEmpty(targetId))
+        {
+            return;
+        }
+
+        System.Console.Write("[NHẬP] Đường dẫn file (PDF, Docx, Zip, Excel...): ");
+        string? filePath = System.Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath))
+        {
+            System.Console.WriteLine("[LỖI] Đường dẫn file không hợp lệ hoặc file không tồn tại.");
+            return;
+        }
+
+        System.Console.Write("[NHẬP] Lời nhắn / Ghi chú đính kèm (nếu có): ");
+        string? caption = System.Console.ReadLine()?.Trim();
+
+        try
+        {
+            System.Console.WriteLine("[THÔNG BÁO] Đang gửi file tài liệu...");
+            byte[] fileBytes = await File.ReadAllBytesAsync(filePath, ct).ConfigureAwait(false);
+            string fileName = Path.GetFileName(filePath);
+            _ = await ZaloWebClient.SendAttachmentAsync(session, targetId, threadType, fileBytes, fileName, caption, ct).ConfigureAwait(false);
+            System.Console.WriteLine("[THÀNH CÔNG] Đã gửi file đính kèm thành công!");
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[LỖI] Không thể gửi file: {ex.Message}");
         }
     }
 

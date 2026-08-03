@@ -471,6 +471,16 @@ public sealed class ZaloWebClient : IDisposable
         await FriendApis.UnblockUserAsync(http, session, userId, ct).ConfigureAwait(false);
     }
 
+    /// <summary>Changes the display alias (nickname) of a friend for CRM contact tracking.</summary>
+    public static async Task ChangeFriendAliasAsync(
+        ZaloSession session, string userId, string alias, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+
+        using ZaloHttpClient http = CreateHttpForSession(session.Material);
+        await FriendApis.ChangeFriendAliasAsync(http, session, userId, alias, ct).ConfigureAwait(false);
+    }
+
     #endregion
 
     /// <summary>Runs WebSocket listener with automatic exponential backoff reconnects.</summary>

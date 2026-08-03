@@ -353,4 +353,40 @@ internal static class FriendApis
             throw new ZaloApiException(msg, errorCode);
         }
     }
+
+    public static async Task ChangeFriendAliasAsync(
+        ZaloHttpClient http, ZaloSession session, string userId, string alias, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+
+        string host = GetHost(session, "alias", "https://alias-wpa.chat.zalo.me");
+        string baseUrl = MakeUrl(host, "/api/alias/update");
+
+        JsonObject payload = new()
+        {
+            ["friendId"] = userId,
+            ["alias"] = alias ?? "",
+            ["imei"] = session.Material.Imei
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt changeFriendAlias payload");
+        }
+
+        string requestUrl = $"{baseUrl}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false)
+                      ?? throw new ZaloApiException("Invalid JSON response from changeFriendAlias");
+
+        int errorCode = node["error_code"]?.GetValue<int>() ?? -1;
+        if (errorCode != 0)
+        {
+            string msg = node["error_message"]?.GetValue<string>() ?? $"Error {errorCode}";
+            throw new ZaloApiException(msg, errorCode);
+        }
+    }
 }
