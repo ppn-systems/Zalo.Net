@@ -53,6 +53,12 @@ await client.RunWithReconnectAsync(material, CancellationToken.None);
 
 ---
 
+## Disclaimer
+
+> **Chú ý**: *Zalo.Net là thư viện mã nguồn mở độc lập được phát triển phục vụ mục đích nghiên cứu học tập và giao thức kỹ thuật. Thư viện không trực thuộc, liên kết hay được ủy quyền bởi VNG Corporation hay Zalo. Người sử dụng tự chịu mọi trách nhiệm tuân thủ Điều khoản dịch vụ của Zalo khi vận hành.*
+
+---
+
 ## License & Copyright
 
 Copyright (c) 2026 PPN Corporation. All rights reserved.
