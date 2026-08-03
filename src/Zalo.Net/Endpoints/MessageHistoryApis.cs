@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -17,20 +19,49 @@ public static class MessageHistoryApis
 {
     private const string DefaultGroupHost = "https://group-wpa.chat.zalo.me";
 
-    private static string GetHost(ZaloSession session, string serviceKey, string defaultHost)
-    {
-        if (session.ServiceMap.TryGetValue(serviceKey, out string[]? hosts) && hosts.Length > 0)
-        {
-            return hosts[0].StartsWith("http", StringComparison.OrdinalIgnoreCase) ? hosts[0] : $"https://{hosts[0]}";
-        }
-        return defaultHost;
-    }
-
     private static string MakeUrl(string baseUrl, string path)
     {
         string baseClean = baseUrl.EndsWith('/') ? baseUrl[..^1] : baseUrl;
         string sep = path.Contains('?', StringComparison.Ordinal) ? "&" : "?";
         return $"{baseClean}{path}{sep}zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}";
+    }
+
+    private static JsonNode? DecryptDataNode(ZaloSession session, JsonNode? node)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+        JsonNode? dataNode = node["data"];
+        if (dataNode is null)
+        {
+            return null;
+        }
+
+        if (dataNode.GetValueKind() == System.Text.Json.JsonValueKind.String)
+        {
+            string encStr = dataNode.GetValue<string>();
+            if (!string.IsNullOrWhiteSpace(encStr))
+            {
+                string? decrypted = ZaloCipher.DecodeAes(session.Material.SecretKey, encStr)
+                                 ?? ZaloCipher.DecodeAesUtf8Key(session.Material.SecretKey, encStr);
+                if (!string.IsNullOrWhiteSpace(decrypted))
+                {
+                    try
+                    {
+                        JsonNode? decodedJson = JsonNode.Parse(decrypted);
+                        if (decodedJson is JsonObject obj && obj.ContainsKey("data"))
+                        {
+                            return obj["data"];
+                        }
+                        return decodedJson;
+                    }
+                    catch { }
+                }
+            }
+        }
+
+        return dataNode;
     }
 
     /// <summary>Fetches old message history for a group thread.</summary>
@@ -47,10 +78,21 @@ public static class MessageHistoryApis
             throw new ZaloApiException("Zalo Web API chỉ hỗ trợ tải lịch sử tin nhắn đối với Nhóm (Group). Tin nhắn cá nhân (DM) được đồng bộ qua WebSocket thời gian thực.");
         }
 
-        string host = GetHost(session, "group", DefaultGroupHost);
-        string url = MakeUrl(host, "/api/group/history");
+        List<string> candidateHosts = [];
+        if (session.ServiceMap.TryGetValue("group", out string[]? gh) && gh.Length > 0)
+        {
+            candidateHosts.Add(gh[0].StartsWith("http", StringComparison.OrdinalIgnoreCase) ? gh[0] : $"https://{gh[0]}");
+        }
+        if (session.ServiceMap.TryGetValue("group_poll", out string[]? gph) && gph.Length > 0)
+        {
+            candidateHosts.Add(gph[0].StartsWith("http", StringComparison.OrdinalIgnoreCase) ? gph[0] : $"https://{gph[0]}");
+        }
+        if (session.ServiceMap.TryGetValue("chat", out string[]? ch) && ch.Length > 0)
+        {
+            candidateHosts.Add(ch[0].StartsWith("http", StringComparison.OrdinalIgnoreCase) ? ch[0] : $"https://{ch[0]}");
+        }
+        candidateHosts.Add(DefaultGroupHost);
 
-        // Payload matched 1:1 with zca-js getGroupChatHistory: grid and count ONLY (no imei)
         JsonObject payload = new()
         {
             ["grid"] = threadId,
@@ -63,29 +105,38 @@ public static class MessageHistoryApis
             throw new ZaloApiException("Failed to encrypt getOldMessages payload");
         }
 
-        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
-        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
-        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false)
-                      ?? throw new ZaloApiException("Invalid JSON response from getGroupChatHistory");
+        JsonNode? node = null;
+        string? lastError = null;
 
-        int errorCode = node["error_code"]?.GetValue<int>() ?? -1;
-        if (errorCode != 0)
+        foreach (string host in candidateHosts.Distinct())
         {
-            string msg = node["error_message"]?.GetValue<string>() ?? node["message"]?.GetValue<string>() ?? $"Error {errorCode}";
-            throw new ZaloApiException(msg, errorCode);
-        }
-
-        JsonNode? dataNode = node["data"];
-        if (dataNode?.GetValueKind() == System.Text.Json.JsonValueKind.String)
-        {
-            string encStr = dataNode.GetValue<string>();
-            string? decrypted = ZaloCipher.DecodeAes(session.Material.SecretKey, encStr);
-            if (!string.IsNullOrWhiteSpace(decrypted))
+            string baseUrl = MakeUrl(host, "/api/group/history");
+            string requestUrl = $"{baseUrl}&params={Uri.EscapeDataString(encryptedParams)}";
+            try
             {
-                try { dataNode = JsonNode.Parse(decrypted); } catch { }
+                using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+                if (resp.IsSuccessStatusCode)
+                {
+                    JsonNode? candidate = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+                    if (candidate?["error_code"]?.GetValue<int>() == 0)
+                    {
+                        node = candidate;
+                        break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                lastError = ex.Message;
             }
         }
 
+        if (node is null)
+        {
+            throw new ZaloApiException($"Không thể tải lịch sử tin nhắn nhóm từ Zalo Server ({lastError ?? "404 Not Found"}).");
+        }
+
+        JsonNode? dataNode = DecryptDataNode(session, node) ?? node["data"];
         return dataNode;
     }
 }

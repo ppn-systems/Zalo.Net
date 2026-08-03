@@ -38,6 +38,44 @@ public static class AttachmentApis
         return $"{baseClean}{path}{sep}zpw_ver={ZaloHttpClient.ApiVersion}&zpw_type={ZaloHttpClient.ApiType}";
     }
 
+    private static JsonNode? DecryptDataNode(ZaloSession session, JsonNode? node)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+        JsonNode? dataNode = node["data"];
+        if (dataNode is null)
+        {
+            return null;
+        }
+
+        if (dataNode.GetValueKind() == System.Text.Json.JsonValueKind.String)
+        {
+            string encStr = dataNode.GetValue<string>();
+            if (!string.IsNullOrWhiteSpace(encStr))
+            {
+                string? decrypted = ZaloCipher.DecodeAes(session.Material.SecretKey, encStr)
+                                 ?? ZaloCipher.DecodeAesUtf8Key(session.Material.SecretKey, encStr);
+                if (!string.IsNullOrWhiteSpace(decrypted))
+                {
+                    try
+                    {
+                        JsonNode? decodedJson = JsonNode.Parse(decrypted);
+                        if (decodedJson is JsonObject obj && obj.ContainsKey("data"))
+                        {
+                            return obj["data"];
+                        }
+                        return decodedJson;
+                    }
+                    catch { }
+                }
+            }
+        }
+
+        return dataNode;
+    }
+
     /// <summary>Uploads an image attachment and sends an image message.</summary>
     public static async Task<ZaloSendResult> SendImageAttachmentAsync(
         ZaloHttpClient http, ZaloSession session,
@@ -112,7 +150,7 @@ public static class AttachmentApis
             content.Add(byteContent, "chunkContent", fileName);
 
             string requestUrl = $"{baseUrl}&type={typeParam}&params={Uri.EscapeDataString(encryptedParams)}";
-            HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Post, body: content, ct: ct).ConfigureAwait(false);
+            using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Post, body: content, ct: ct).ConfigureAwait(false);
             JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
 
             int errorCode = json?["error_code"]?.GetValue<int>() ?? -1;
@@ -121,7 +159,10 @@ public static class AttachmentApis
                 throw new ZaloApiException(json?["error_message"]?.GetValue<string>() ?? "uploadImage failed", errorCode);
             }
 
-            lastPhotoId = json?["data"]?["photoId"]?.GetValue<string>();
+            JsonNode? dataNode = DecryptDataNode(session, json) ?? json?["data"];
+            lastPhotoId = dataNode?["photoId"]?.GetValue<string>()
+                       ?? dataNode?["fileId"]?.GetValue<string>()
+                       ?? dataNode?["photo_id"]?.GetValue<string>();
         }
 
         if (string.IsNullOrEmpty(lastPhotoId) || lastPhotoId == "-1")
@@ -178,17 +219,7 @@ public static class AttachmentApis
             throw new ZaloApiException(json?["error_message"]?.GetValue<string>() ?? "sendPhoto failed", errorCode);
         }
 
-        JsonNode? dataNode = json?["data"];
-        if (dataNode?.GetValueKind() == System.Text.Json.JsonValueKind.String)
-        {
-            string encStr = dataNode.GetValue<string>();
-            string? decrypted = ZaloCipher.DecodeAes(session.Material.SecretKey, encStr);
-            if (!string.IsNullOrWhiteSpace(decrypted))
-            {
-                try { dataNode = JsonNode.Parse(decrypted); } catch { }
-            }
-        }
-
+        JsonNode? dataNode = DecryptDataNode(session, json) ?? json?["data"];
         string msgId = dataNode?["msgId"]?.GetValue<string>()
                     ?? dataNode?["message_id"]?.GetValue<string>()
                     ?? now.ToString(System.Globalization.CultureInfo.InvariantCulture);
