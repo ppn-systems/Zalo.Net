@@ -675,6 +675,65 @@ public sealed class ZaloWebClient : IZaloClient
         }
     }
 
+    /// <inheritdoc/>
+    public Task SendBankCardAsync(ZaloSession session, string threadId, ZaloThreadType threadType, ZaloBankCard bankCard, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(bankCard);
+        return this.SendBankCardAsync(session, threadId, threadType, bankCard.BinBank, bankCard.AccountNumber, bankCard.AccountName, ct);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendBankCardAsync(ZaloSession session, string threadId, ZaloThreadType threadType, string binBank, string accountNumber, string accountName, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
+        using ZaloHttpClient http = new(session.Material.UserAgent, cookies, _proxy);
+        await http.SendBankCardAsync(session, threadId, threadType, binBank, accountNumber, accountName, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public Task SendContactCardAsync(ZaloSession session, string threadId, ZaloThreadType threadType, ZaloContactCard contactCard, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(contactCard);
+        return this.SendContactCardAsync(session, threadId, threadType, contactCard.UserId, contactCard.PhoneNumber, contactCard.QrCodeUrl, ct);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendContactCardAsync(ZaloSession session, string threadId, ZaloThreadType threadType, string userId, string? phoneNumber = null, string? qrCodeUrl = null, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
+        using ZaloHttpClient http = new(session.Material.UserAgent, cookies, _proxy);
+        await http.SendContactCardAsync(session, threadId, threadType, userId, phoneNumber, qrCodeUrl, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task JoinGroupViaLinkAsync(ZaloSession session, string inviteUrl, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
+        using ZaloHttpClient http = new(session.Material.UserAgent, cookies, _proxy);
+        await http.JoinGroupViaLinkAsync(session, inviteUrl, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task ReviewJoinRequestsAsync(ZaloSession session, string groupId, string[] memberUids, bool approve, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
+        using ZaloHttpClient http = new(session.Material.UserAgent, cookies, _proxy);
+        await http.ReviewJoinRequestsAsync(session, groupId, memberUids, approve, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task LeaveGroupSilentlyAsync(ZaloSession session, string groupId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
+        using ZaloHttpClient http = new(session.Material.UserAgent, cookies, _proxy);
+        await http.LeaveGroupSilentlyAsync(session, groupId, ct).ConfigureAwait(false);
+    }
+
     private sealed class QrSession : IDisposable
     {
         public ZaloHttpClient Http { get; }

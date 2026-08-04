@@ -37,4 +37,25 @@ public interface IZaloClient : IDisposable
 
     /// <summary>Runs WebSocket listener with automatic exponential backoff reconnects.</summary>
     Task RunWithReconnectAsync(ZaloSessionMaterial material, IWebProxy? proxy = null, CancellationToken ct = default);
+
+    /// <summary>Sends a bank account card for quick transfer via Zalo API.</summary>
+    Task SendBankCardAsync(ZaloSession session, string threadId, ZaloThreadType threadType, ZaloBankCard bankCard, CancellationToken ct = default);
+
+    /// <summary>Sends a bank account card for quick transfer via Zalo API.</summary>
+    Task SendBankCardAsync(ZaloSession session, string threadId, ZaloThreadType threadType, string binBank, string accountNumber, string accountName, CancellationToken ct = default);
+
+    /// <summary>Sends a user contact card recommendation via Zalo API.</summary>
+    Task SendContactCardAsync(ZaloSession session, string threadId, ZaloThreadType threadType, ZaloContactCard contactCard, CancellationToken ct = default);
+
+    /// <summary>Sends a user contact card recommendation via Zalo API.</summary>
+    Task SendContactCardAsync(ZaloSession session, string threadId, ZaloThreadType threadType, string userId, string? phoneNumber = null, string? qrCodeUrl = null, CancellationToken ct = default);
+
+    /// <summary>Joins a group via invite link (e.g. https://zalo.me/g/XXXXXXXXX).</summary>
+    Task JoinGroupViaLinkAsync(ZaloSession session, string inviteUrl, CancellationToken ct = default);
+
+    /// <summary>Reviews pending group join requests (approves or rejects).</summary>
+    Task ReviewJoinRequestsAsync(ZaloSession session, string groupId, string[] memberUids, bool approve, CancellationToken ct = default);
+
+    /// <summary>Leaves a group silently without broadcasting a leave message.</summary>
+    Task LeaveGroupSilentlyAsync(ZaloSession session, string groupId, CancellationToken ct = default);
 }
