@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Zalo.Net.Mcp</RootNamespace>
+    <Title>Zalo.Net.Mcp - Model Context Protocol Server for Zalo Web API</Title>
+    <Description>MCP Server exposing Zalo Web API SDK capabilities to Claude, Cursor/VS Code, and Antigravity with local SQLite database message persistence.</Description>
+    <IsAotCompatible>false</IsAotCompatible>
+    <IsTrimmable>false</IsTrimmable>
+    <PublishSingleFile Condition="'$(RuntimeIdentifier)'!=''">true</PublishSingleFile>
+    <SelfContained Condition="'$(RuntimeIdentifier)'!=''">true</SelfContained>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <NoWarn>$(NoWarn);CA1062;CA1303;CA1849;CA1873;IDE0009;IDE0011;IDE0022;IDE0058;IL2026;IL3050;IL3000;CS1591;CA2000;CA2007;CA1031</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Zalo.Net\Zalo.Net.csproj" />
+    <ProjectReference Include="..\..\src\Zalo.Net.Contracts\Zalo.Net.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\Zalo.Net.Auth\Zalo.Net.Auth.csproj" />
+    <ProjectReference Include="..\..\src\Zalo.Net.WebSocket\Zalo.Net.WebSocket.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="ModelContextProtocol" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
+
+</Project>

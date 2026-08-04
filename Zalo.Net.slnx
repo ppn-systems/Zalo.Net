@@ -6,6 +6,9 @@
     <Project Path="src/Zalo.Net.WebSocket/Zalo.Net.WebSocket.csproj" />
     <Project Path="src/Zalo.Net/Zalo.Net.csproj" />
   </Folder>
+  <Folder Name="/mcp/">
+    <Project Path="mcp/Zalo.Net.Mcp/Zalo.Net.Mcp.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Zalo.Net.Contracts.Tests/Zalo.Net.Contracts.Tests.csproj" />
     <Project Path="tests/Zalo.Net.Cryptography.Tests/Zalo.Net.Cryptography.Tests.csproj" />
