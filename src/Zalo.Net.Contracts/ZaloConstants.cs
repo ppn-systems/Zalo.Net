@@ -39,6 +39,9 @@ public static class ZaloConstants
         /// <summary>Default authentication gateway host.</summary>
         public const string Login = "https://wpa.chat.zalo.me";
 
+        /// <summary>Default file attachment gateway host.</summary>
+        public const string File = "https://file-wpa.chat.zalo.me";
+
         /// <summary>Default Origin header value.</summary>
         public const string Origin = "https://chat.zalo.me";
     }

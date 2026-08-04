@@ -446,4 +446,125 @@ internal static class GroupApis
 
         return [.. groupIds.Select(id => new ZaloGroupInfo(id, $"Group {id}", null, 0, ""))];
     }
+
+    /// <summary>
+    /// Joins a group via invite link (e.g. https://zalo.me/g/XXXXXXXXX).
+    /// </summary>
+    public static async Task JoinGroupViaLinkAsync(
+        this ZaloHttpClient http,
+        ZaloSession session,
+        string inviteUrl,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(inviteUrl);
+
+        string host = GetGroupHost(session);
+        string url = MakeUrl(host, "/api/group/link/join");
+
+        JsonObject payload = new()
+        {
+            ["link"] = inviteUrl,
+            ["clientLang"] = session.Material.Language
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt JoinGroupViaLink payload");
+        }
+
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        int errorCode = node?["error_code"]?.GetValue<int>() ?? node?["error"]?.GetValue<int>() ?? 0;
+        if (errorCode != 0)
+        {
+            throw new ZaloApiException(node?["error_message"]?.GetValue<string>() ?? $"JoinGroupViaLink failed with code {errorCode}", errorCode);
+        }
+    }
+
+    /// <summary>
+    /// Reviews pending group join requests (approves or rejects member requests).
+    /// </summary>
+    public static async Task ReviewJoinRequestsAsync(
+        this ZaloHttpClient http,
+        ZaloSession session,
+        string groupId,
+        string[] memberUids,
+        bool approve,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
+        ArgumentNullException.ThrowIfNull(memberUids);
+
+        string host = GetGroupHost(session);
+        string url = MakeUrl(host, "/api/group/pending-mems/review");
+
+        JsonObject payload = new()
+        {
+            ["grid"] = groupId,
+            ["members"] = ToJsonArray(memberUids),
+            ["isApprove"] = approve ? 1 : 0
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt ReviewJoinRequests payload");
+        }
+
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        int errorCode = node?["error_code"]?.GetValue<int>() ?? node?["error"]?.GetValue<int>() ?? 0;
+        if (errorCode != 0)
+        {
+            throw new ZaloApiException(node?["error_message"]?.GetValue<string>() ?? $"ReviewJoinRequests failed with code {errorCode}", errorCode);
+        }
+    }
+
+    /// <summary>
+    /// Leaves a group silently without broadcasting a leave message.
+    /// </summary>
+    public static async Task LeaveGroupSilentlyAsync(
+        this ZaloHttpClient http,
+        ZaloSession session,
+        string groupId,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
+
+        string host = GetGroupHost(session);
+        string url = MakeUrl(host, "/api/group/leave");
+
+        JsonObject payload = new()
+        {
+            ["grids"] = ToJsonArray([groupId]),
+            ["imei"] = session.Material.Imei,
+            ["silent"] = 1,
+            ["language"] = session.Material.Language
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt LeaveGroupSilently payload");
+        }
+
+        using FormUrlEncodedContent content = new([new KeyValuePair<string, string>("params", encryptedParams)]);
+
+        using HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Post, body: content, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        int errorCode = node?["error_code"]?.GetValue<int>() ?? node?["error"]?.GetValue<int>() ?? 0;
+        if (errorCode != 0)
+        {
+            throw new ZaloApiException(node?["error_message"]?.GetValue<string>() ?? $"LeaveGroupSilently failed with code {errorCode}", errorCode);
+        }
+    }
 }

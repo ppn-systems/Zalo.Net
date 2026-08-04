@@ -250,4 +250,125 @@ public static class MessageApis
 
         return (uid, displayName, avatar);
     }
+
+    /// <summary>
+    /// Sends a bank account card via zimsg/api/transfer/card.
+    /// </summary>
+    public static async Task SendBankCardAsync(
+        this ZaloHttpClient http,
+        ZaloSession session,
+        string threadId,
+        ZaloThreadType threadType,
+        string binBank,
+        string accountNumber,
+        string accountName,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(binBank);
+        ArgumentException.ThrowIfNullOrWhiteSpace(accountNumber);
+
+        string host = GetHost(session, "zimsg", ZaloConstants.Hosts.Chat);
+        string url = MakeUrl(host, "/api/transfer/card");
+
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        JsonObject payload = new()
+        {
+            ["binBank"] = binBank,
+            ["numAccBank"] = accountNumber,
+            ["nameAccBank"] = (accountName ?? "---").ToUpperInvariant(),
+            ["cliMsgId"] = now.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["tsMsg"] = now,
+            ["destUid"] = threadId,
+            ["destType"] = threadType == ZaloThreadType.Group ? 1 : 0
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt SendBankCard payload");
+        }
+
+        using FormUrlEncodedContent content = new([new KeyValuePair<string, string>("params", encryptedParams)]);
+
+        using HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Post, body: content, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        int error = node?["error_code"]?.GetValue<int>() ?? node?["error"]?.GetValue<int>() ?? 0;
+        if (error != 0)
+        {
+            throw new ZaloApiException(node?["error_message"]?.GetValue<string>() ?? $"SendBankCard failed with code {error}", error);
+        }
+    }
+
+    /// <summary>
+    /// Sends a user contact card recommendation via file/api/message/forward or file/api/group/forward.
+    /// </summary>
+    public static async Task SendContactCardAsync(
+        this ZaloHttpClient http,
+        ZaloSession session,
+        string threadId,
+        ZaloThreadType threadType,
+        string userId,
+        string? phoneNumber = null,
+        string? qrCodeUrl = null,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(userId);
+
+        bool isGroup = threadType == ZaloThreadType.Group;
+        string host = GetHost(session, "file", ZaloConstants.Hosts.File);
+        string path = isGroup ? "/api/group/forward" : "/api/message/forward";
+        string url = MakeUrl(host, path);
+
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        JsonObject msgInfo = new()
+        {
+            ["contactUid"] = userId,
+            ["qrCodeUrl"] = qrCodeUrl ?? ""
+        };
+        if (!string.IsNullOrWhiteSpace(phoneNumber))
+        {
+            msgInfo["phone"] = phoneNumber;
+        }
+
+        JsonObject payload = new()
+        {
+            ["ttl"] = 0,
+            ["msgType"] = 6,
+            ["clientId"] = now.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["msgInfo"] = msgInfo.ToJsonString()
+        };
+
+        if (isGroup)
+        {
+            payload["visibility"] = 0;
+            payload["grid"] = threadId;
+        }
+        else
+        {
+            payload["toId"] = threadId;
+            payload["imei"] = session.Material.Imei;
+        }
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt SendContactCard payload");
+        }
+
+        using FormUrlEncodedContent content = new([new KeyValuePair<string, string>("params", encryptedParams)]);
+
+        using HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Post, body: content, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        int error = node?["error_code"]?.GetValue<int>() ?? node?["error"]?.GetValue<int>() ?? 0;
+        if (error != 0)
+        {
+            throw new ZaloApiException(node?["error_message"]?.GetValue<string>() ?? $"SendContactCard failed with code {error}", error);
+        }
+    }
 }

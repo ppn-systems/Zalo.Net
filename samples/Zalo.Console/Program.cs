@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 using System.Text;
@@ -241,17 +241,16 @@ internal static class Program
             menuTable.AddRow("15", " Trả lời / Trích dẫn tin nhắn (Quote / Reply)");
             menuTable.AddRow("16", " Thả cảm xúc / Reaction (Heart/Like/Haha...)");
             menuTable.AddRow("17", " Gửi Sticker / Nhãn dán");
-            menuTable.AddRow("--", "[QUẢN LÝ BẠN BÈ & KHÁCH HÀNG (CRM)]");
-            menuTable.AddRow("5", "  Danh sách bạn bè");
-            menuTable.AddRow("6", "  Tra cứu thông tin người dùng qua SĐT");
-            menuTable.AddRow("7", "  Gửi lời mời kết bạn (qua SĐT / UID)");
-            menuTable.AddRow("8", "  Đặt biệt danh / Gán Alias Khách hàng");
-            menuTable.AddRow("9", "  Chặn / Bỏ chặn Spammer");
+            menuTable.AddRow("19", " Gửi thẻ Ngân Hàng (Bank Card)");
+            menuTable.AddRow("20", " Gửi Danh Thiếp người dùng (Contact Card)");
             menuTable.AddRow("--", "[QUẢN LÝ NHÓM CHAT (GROUP CRM)]");
             menuTable.AddRow("10", " Tạo nhóm chat mới");
             menuTable.AddRow("11", " Thêm thành viên vào nhóm");
             menuTable.AddRow("12", " Xóa thành viên khỏi nhóm");
             menuTable.AddRow("18", " Danh sách nhóm chat của tôi (GetAllGroupsAsync)");
+            menuTable.AddRow("21", " Tham gia nhóm qua Link mời (Join via Link)");
+            menuTable.AddRow("22", " Duyệt thành viên xin vào nhóm (Review Pending)");
+            menuTable.AddRow("23", " Rời nhóm yên lặng (Silent Leave)");
             menuTable.AddRow("--", "[HỆ THỐNG]");
             menuTable.AddRow("13", " Đăng xuất khỏi phiên hiện tại");
             menuTable.AddRow("Q", "  Thoát khỏi chương trình");
@@ -316,6 +315,26 @@ internal static class Program
 
                 case "18":
                     await HandleGetGroupsAsync(session, ct).ConfigureAwait(false);
+                    break;
+
+                case "19":
+                    await HandleSendBankCardAsync(session, ct).ConfigureAwait(false);
+                    break;
+
+                case "20":
+                    await HandleSendContactCardAsync(session, ct).ConfigureAwait(false);
+                    break;
+
+                case "21":
+                    await HandleJoinGroupLinkAsync(session, ct).ConfigureAwait(false);
+                    break;
+
+                case "22":
+                    await HandleReviewPendingMembersAsync(session, ct).ConfigureAwait(false);
+                    break;
+
+                case "23":
+                    await HandleLeaveGroupSilentlyAsync(session, ct).ConfigureAwait(false);
                     break;
 
                 case "13":
@@ -1269,6 +1288,124 @@ internal static class Program
         catch (Exception ex)
         {
             System.Console.WriteLine($"[LỖI] Gửi sticker thất bại: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleSendBankCardAsync(ZaloSession session, CancellationToken ct)
+    {
+        (string targetId, ZaloThreadType threadType) = ResolveTargetSelection();
+        if (string.IsNullOrEmpty(targetId)) return;
+
+        System.Console.Write("[NHẬP] Mã BIN ngân hàng (mặc định '970458' - TPBank): ");
+        string? binBank = System.Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(binBank)) binBank = "970458";
+
+        System.Console.Write("[NHẬP] Số tài khoản ngân hàng: ");
+        string? accountNumber = System.Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(accountNumber)) return;
+
+        System.Console.Write("[NHẬP] Tên chủ tài khoản: ");
+        string? accountName = System.Console.ReadLine()?.Trim();
+
+        try
+        {
+            ZaloBankCard card = new(binBank, accountNumber, accountName ?? "---");
+            using ZaloWebClient client = new();
+            await client.SendBankCardAsync(session, targetId, threadType, card, ct).ConfigureAwait(false);
+            System.Console.WriteLine("[THÀNH CÔNG] Đã gửi thẻ ngân hàng thành công!");
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[LỖI] Gửi thẻ ngân hàng thất bại: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleSendContactCardAsync(ZaloSession session, CancellationToken ct)
+    {
+        (string targetId, ZaloThreadType threadType) = ResolveTargetSelection();
+        if (string.IsNullOrEmpty(targetId)) return;
+
+        System.Console.Write("[NHẬP] User ID (UID) của danh thiếp cần chia sẻ: ");
+        string? userId = System.Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(userId)) return;
+
+        System.Console.Write("[NHẬP] Số điện thoại đính kèm (tùy chọn): ");
+        string? phone = System.Console.ReadLine()?.Trim();
+
+        try
+        {
+            ZaloContactCard card = new(userId, string.IsNullOrEmpty(phone) ? null : phone);
+            using ZaloWebClient client = new();
+            await client.SendContactCardAsync(session, targetId, threadType, card, ct).ConfigureAwait(false);
+            System.Console.WriteLine("[THÀNH CÔNG] Đã gửi danh thiếp thành công!");
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[LỖI] Gửi danh thiếp thất bại: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleJoinGroupLinkAsync(ZaloSession session, CancellationToken ct)
+    {
+        System.Console.Write("[NHẬP] Đường dẫn link mời tham gia nhóm (ví dụ https://zalo.me/g/XXXXXXXXX): ");
+        string? link = System.Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(link)) return;
+
+        try
+        {
+            using ZaloWebClient client = new();
+            await client.JoinGroupViaLinkAsync(session, link, ct).ConfigureAwait(false);
+            System.Console.WriteLine("[THÀNH CÔNG] Đã tham gia nhóm qua link thành công!");
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[LỖI] Tham gia nhóm qua link thất bại: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleReviewPendingMembersAsync(ZaloSession session, CancellationToken ct)
+    {
+        System.Console.Write("[NHẬP] Group ID nhóm cần duyệt thành viên: ");
+        string? groupId = System.Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(groupId)) return;
+
+        System.Console.Write("[NHẬP] Danh sách UID thành viên xin vào (phân cách bằng dấu phẩy): ");
+        string? uidsInput = System.Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(uidsInput)) return;
+
+        string[] uids = uidsInput.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        System.Console.Write("[NHẬP] Đồng ý hay Từ chối? (1: Đồng ý, 0: Từ chối) [Mặc định 1]: ");
+        string? choice = System.Console.ReadLine()?.Trim();
+        bool approve = choice != "0";
+
+        try
+        {
+            using ZaloWebClient client = new();
+            await client.ReviewJoinRequestsAsync(session, groupId, uids, approve, ct).ConfigureAwait(false);
+            System.Console.WriteLine($"[THÀNH CÔNG] Đã {(approve ? "đồng ý" : "từ chối")} duyệt thành viên!");
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[LỖI] Duyệt thành viên thất bại: {ex.Message}");
+        }
+    }
+
+    private static async Task HandleLeaveGroupSilentlyAsync(ZaloSession session, CancellationToken ct)
+    {
+        System.Console.Write("[NHẬP] Group ID nhóm muốn rời yên lặng: ");
+        string? groupId = System.Console.ReadLine()?.Trim();
+        if (string.IsNullOrEmpty(groupId)) return;
+
+        try
+        {
+            using ZaloWebClient client = new();
+            await client.LeaveGroupSilentlyAsync(session, groupId, ct).ConfigureAwait(false);
+            System.Console.WriteLine("[THÀNH CÔNG] Đã rời nhóm yên lặng thành công!");
+        }
+        catch (Exception ex)
+        {
+            System.Console.WriteLine($"[LỖI] Rời nhóm yên lặng thất bại: {ex.Message}");
         }
     }
 

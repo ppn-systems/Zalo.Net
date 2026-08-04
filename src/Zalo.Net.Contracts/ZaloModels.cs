@@ -1,4 +1,4 @@
-﻿// Copyright (c) 2026 PPN Corporation. All rights reserved.
+// Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
 namespace Zalo.Net.Contracts;
@@ -190,3 +190,19 @@ public sealed record ZaloFriendInfo(
     string? AvatarUrl,
     string? PhoneNumber = null,
     string? Alias = null);
+
+/// <summary>
+/// Represents a bank account card for Zalo transfer requests.
+/// </summary>
+/// <param name="BinBank">The bank BIN code (e.g. 970458 for TPBank, 970436 for Vietcombank).</param>
+/// <param name="AccountNumber">The bank account number.</param>
+/// <param name="AccountName">The bank account holder name.</param>
+public sealed record ZaloBankCard(string BinBank, string AccountNumber, string AccountName);
+
+/// <summary>
+/// Represents a user contact card recommendation payload.
+/// </summary>
+/// <param name="UserId">The target user ID of the contact being shared.</param>
+/// <param name="PhoneNumber">Optional phone number associated with the contact.</param>
+/// <param name="QrCodeUrl">Optional QR Code profile URL for the contact.</param>
+public sealed record ZaloContactCard(string UserId, string? PhoneNumber = null, string? QrCodeUrl = null);
