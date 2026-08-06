@@ -5,9 +5,13 @@
     <Project Path="src/Zalo.Net.Auth/Zalo.Net.Auth.csproj" />
     <Project Path="src/Zalo.Net.WebSocket/Zalo.Net.WebSocket.csproj" />
     <Project Path="src/Zalo.Net/Zalo.Net.csproj" />
+    <Project Path="src/Zalo.Net.Bot/Zalo.Net.Bot.csproj" />
   </Folder>
   <Folder Name="/mcp/">
     <Project Path="mcp/Zalo.Net.Mcp/Zalo.Net.Mcp.csproj" />
+  </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/Zalo.Net.SampleBot/Zalo.Net.SampleBot.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Zalo.Net.Contracts.Tests/Zalo.Net.Contracts.Tests.csproj" />
@@ -15,5 +19,6 @@
     <Project Path="tests/Zalo.Net.Auth.Tests/Zalo.Net.Auth.Tests.csproj" />
     <Project Path="tests/Zalo.Net.WebSocket.Tests/Zalo.Net.WebSocket.Tests.csproj" />
     <Project Path="tests/Zalo.Net.Tests/Zalo.Net.Tests.csproj" />
+    <Project Path="tests/Zalo.Net.Bot.Tests/Zalo.Net.Bot.Tests.csproj" />
   </Folder>
 </Solution>

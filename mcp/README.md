@@ -1,69 +1,70 @@
-# Zalo.Net.Mcp — Model Context Protocol Server for Zalo API
+# Zalo.Net.Mcp - Model Context Protocol (MCP) Server for Zalo
 
-**`Zalo.Net.Mcp`** là một MCP Server chuẩn (.NET 10) cung cấp khả năng tích hợp trọn bộ tính năng Zalo API SDK cho các Trợ lý Trí tuệ Nhân tạo (AI Assistants) như **ChatGPT (Desktop App & Custom GPT Actions)**, **Claude Desktop**, **Antigravity IDE**, và **Cursor / VS Code**.
+⚡ **High-performance Model Context Protocol (MCP) Server for Zalo Messaging & AI Smart Memory** 🚀
 
----
-
-## 🌟 Tính Năng Nổi Bật
-
-- **Full 25 MCP Tools**: Hỗ trợ đầy đủ tất cả các tính năng Nhắn tin, Gửi file, Nhãn dán, Thẻ ngân hàng, Danh thiếp, Quản lý bạn bè và Nhóm chat Zalo.
-- **SQLite FTS5 Full-Text Search**: Đánh chỉ mục cơ sở dữ liệu tin nhắn cục bộ (`zalo_data.db`), tìm kiếm tin nhắn với tốc độ dưới **1ms**.
-- **Smart AI Memory & Entity Extraction**: Tự động bóc tách Số tài khoản ngân hàng (STK), Số điện thoại, Links, và Lịch hẹn/Cuộc họp từ tin nhắn Zalo đến.
-- **Đa Nền Tảng AI Client**:
-  - **ChatGPT Desktop App**: Tự động cài đặt cấu hình 1-click qua lệnh `--setup`.
-  - **ChatGPT Web (Custom GPT Actions)**: Hỗ trợ Web Action Server (`--web --port 5000`) cung cấp file OpenAPI Schema chuẩn `http://localhost:5000/openapi.json`.
-  - **Claude Desktop / Antigravity IDE / Cursor**: Tự động nhận cấu hình Stdio MCP.
-- **Hiệu năng vượt trội**: Tích hợp **System.Text.Json Source Generator**, không sử dụng Reflection runtime, tối ưu hóa bộ nhớ cho Native AOT / Single-File.
+`Zalo.Net.Mcp` bridges **Zalo messaging, contact search, group management, and AI smart CRM memory** directly into your favorite AI Clients: **ChatGPT Desktop**, **ChatGPT Web (Custom GPT Actions)**, **Claude Desktop**, **Antigravity IDE**, and **Cursor / VS Code**.
 
 ---
 
-## 🚀 Hướng Dẫn Sử Dụng Lệnh CLI
+## 🌟 Key Features
 
-### 1. Cài Đặt Tự Động Cho Các Ứng Dụng AI (`--setup`)
-Cài đặt/cập nhật file cấu hình MCP cho ChatGPT Desktop, Claude Desktop, Antigravity IDE, và Cursor:
-```bash
-dotnet run --project mcp/Zalo.Net.Mcp -- --setup
-```
-
-### 2. Đăng Nhập QR Code Trực Tiếp Từ Terminal (`--login`)
-Bắt đầu luồng đăng nhập QR Code và lưu phiên làm việc (Session) an toàn vào Local SQLite DB:
-```bash
-dotnet run --project mcp/Zalo.Net.Mcp -- --login
-```
-
-### 3. Chẩn Đoán Sức Khỏe Hệ Thống (`--diagnose`)
-Kiểm tra độ trễ SQLite Database và trạng thái file cấu hình của các ứng dụng AI:
-```bash
-dotnet run --project mcp/Zalo.Net.Mcp -- --diagnose
-```
-
-### 4. Khởi Chạy Web Action Server Cho ChatGPT Web Custom GPTs (`--web`)
-Mở HTTP Action Server cung cấp OpenAPI JSON Schema tại `http://localhost:5000/openapi.json`:
-```bash
-dotnet run --project mcp/Zalo.Net.Mcp -- --web --port 5000
-```
+- **25 Full MCP Tools**: Covers 100% of Zalo SDK endpoints (Messaging, Groups, Friends, Smart Search, CRM Insights, Reminders, Bank Card Payloads).
+- **Dual Transport Protocols**:
+  1. **Stdio JSON-RPC 2.0**: Native stdio transport for Claude Desktop, ChatGPT Desktop, Antigravity IDE, Cursor.
+  2. **ASP.NET Core Web REST API (`--web`)**: Hosts OpenAPI 3.0 schema at `http://localhost:5000/openapi.json` for ChatGPT Web Custom GPT Actions.
+- **SQLite FTS5 Sub-Millisecond Search**: Embedded SQLite WAL mode database (`zalo_data.db`) with full-text search index and automatic regex entity extraction (Bank accounts, Phone numbers, URLs, Reminders).
+- **Docker Container Support**: 24/7 Cloud deployment (`ghcr.io/ppn-systems/zalo-net-mcp:latest`).
+- **1-Click Self-Setup (`--setup`)**: Auto-configures `mcp.json` for ChatGPT Desktop, Claude Desktop, Antigravity, and Cursor.
 
 ---
 
-## 📦 Đóng Gói Binary Độc Lập Single-File
+## 📦 Downloads & Installation
 
-Để đóng gói file thực thi đơn lẻ (Self-Contained Single File) không cần cài .NET SDK:
+### Option 1: Direct Executable Downloads (Pre-compiled Single File)
+Download pre-compiled standalone single-file executables from [GitHub Releases](https://github.com/ppn-systems/Zalo.Net/releases):
+- 🪟 **Windows x64**: `zalo-net-mcp-win-x64.exe`
+- 🍏 **macOS Intel (x64)**: `zalo-net-mcp-osx-x64`
+- 🍏 **macOS Apple Silicon (ARM64)**: `zalo-net-mcp-osx-arm64`
+- 🐧 **Linux x64**: `zalo-net-mcp-linux-x64`
 
-### Chạy PowerShell script tự động đóng gói cả 4 hệ điều hành:
-```powershell
-.\pack-mcp.ps1
+### Option 2: Docker Container (24/7 Cloud / VPS Deployment)
+Pull and run the pre-built Docker image from GitHub Container Registry (GHCR):
+
+```bash
+docker run -d \
+  -p 5000:5000 \
+  -v zalo_data:/root/.local/share/Zalo.Net.Mcp \
+  --name zalo-mcp \
+  ghcr.io/ppn-systems/zalo-net-mcp:latest
 ```
 
-### Hoặc build thủ công cho từng nền tảng:
-- **macOS Intel (`osx-x64`)**:
-  ```bash
-  dotnet publish mcp/Zalo.Net.Mcp/Zalo.Net.Mcp.csproj -c Release -r osx-x64 --self-contained true -p:PublishSingleFile=true
-  ```
-- **macOS Apple Silicon (`osx-arm64`)**:
-  ```bash
-  dotnet publish mcp/Zalo.Net.Mcp/Zalo.Net.Mcp.csproj -c Release -r osx-arm64 --self-contained true -p:PublishSingleFile=true
-  ```
-- **Windows x64 (`win-x64`)**:
-  ```bash
-  dotnet publish mcp/Zalo.Net.Mcp/Zalo.Net.Mcp.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true
-  ```
+OpenAPI Schema available at: `http://localhost:5000/openapi.json`
+
+---
+
+## 🛠️ CLI Commands & Usage
+
+| Command | Description |
+| :--- | :--- |
+| `dotnet run --project mcp/Zalo.Net.Mcp -- --setup` | 1-Click auto-configuration for AI Desktop Clients. |
+| `dotnet run --project mcp/Zalo.Net.Mcp -- --login` | Interactive terminal QR code login with auto image opener. |
+| `dotnet run --project mcp/Zalo.Net.Mcp -- --diagnose` | Run system diagnostics & session status check. |
+| `dotnet run --project mcp/Zalo.Net.Mcp -- --web --port 5000` | Run ASP.NET Core Web server hosting OpenAPI schema. |
+| `dotnet run --project mcp/Zalo.Net.Mcp -- --import-session <path>` | Import session material directly into SQLite database. |
+| `dotnet run --project mcp/Zalo.Net.Mcp -- --test-all-tools` | Run 100% automated test suite across all 25 MCP tools. |
+
+---
+
+## 🔄 CI/CD & Build Matrix (GitHub Actions)
+
+Workflow defined in `.github/workflows/build-mcp.yml`:
+- **Selective Build Dispatch (`workflow_dispatch`)**: Choose specific targets (`all`, `win-x64`, `osx-x64`, `osx-arm64`, `linux-x64`, `docker`) to optimize GitHub Actions runner minutes.
+- **Cross-platform Ubuntu Build**: Cross-compiles single-file executables on `ubuntu-latest` (saving 10x macOS runner minute costs).
+- **Auto Release Attachment**: Attaches build artifacts directly to GitHub Releases.
+- **Automated GHCR Docker Push**: Builds multi-arch Docker image and pushes to `ghcr.io/ppn-systems/zalo-net-mcp:latest`.
+
+---
+
+## 📄 License
+
+Licensed under Apache 2.0. Copyright (c) 2026 PPN Corporation.

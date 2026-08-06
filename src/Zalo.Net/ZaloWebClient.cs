@@ -734,6 +734,42 @@ public sealed class ZaloWebClient : IZaloClient
         await http.LeaveGroupSilentlyAsync(session, groupId, ct).ConfigureAwait(false);
     }
 
+    /// <inheritdoc/>
+    public async Task KickGroupMemberAsync(ZaloSession session, string groupId, string memberUid, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
+        using ZaloHttpClient http = new(session.Material.UserAgent, cookies, _proxy);
+        await GroupApis.RemoveUserFromGroupAsync(http, session, groupId, [memberUid], ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task PromoteGroupAdminAsync(ZaloSession session, string groupId, string memberUid, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
+        using ZaloHttpClient http = new(session.Material.UserAgent, cookies, _proxy);
+        await GroupApis.PromoteGroupAdminAsync(http, session, groupId, memberUid, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task PinGroupMessageAsync(ZaloSession session, string groupId, string msgId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
+        using ZaloHttpClient http = new(session.Material.UserAgent, cookies, _proxy);
+        await GroupApis.PinGroupMessageAsync(http, session, groupId, msgId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendImageAsync(ZaloSession session, string threadId, ZaloThreadType threadType, byte[] imageBytes, string fileName, string? caption = null, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
+        using ZaloHttpClient http = new(session.Material.UserAgent, cookies, _proxy);
+        _ = await MessageApis.SendPhotoAsync(http, session, threadId, threadType, imageBytes, fileName, caption, ct).ConfigureAwait(false);
+    }
+
     private sealed class QrSession : IDisposable
     {
         public ZaloHttpClient Http { get; }

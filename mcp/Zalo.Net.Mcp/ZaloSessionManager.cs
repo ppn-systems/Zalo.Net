@@ -45,7 +45,8 @@ public sealed class ZaloSessionManager : IDisposable
         }
         catch (Exception ex)
         {
-            this._logger?.LogWarning(ex, "Saved Zalo session is expired or invalid.");
+            this._logger?.LogWarning("Saved Zalo session is expired or invalid ({Message}). Resetting active session.", ex.Message);
+            await this._repository.DeactivateSessionAsync(ct: ct).ConfigureAwait(false);
             this._activeSession = null;
         }
     }
@@ -87,7 +88,9 @@ public sealed class ZaloSessionManager : IDisposable
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                this._logger?.LogError(ex, "Error in Zalo WebSocket background listener.");
+                this._logger?.LogWarning("Zalo background listener stopped ({Message}). Session expired — please authenticate via zalo_login_qr or --login.", ex.Message);
+                await this._repository.DeactivateSessionAsync(material.Uid, token).ConfigureAwait(false);
+                this._activeSession = null;
             }
         }, token);
     }
@@ -114,7 +117,7 @@ public sealed class ZaloSessionManager : IDisposable
     {
         if (this._activeSession == null)
         {
-            throw new InvalidOperationException("Zalo session is not authenticated. Please perform QR code login first using zalo_login_qr.");
+            throw new InvalidOperationException("Zalo session is not authenticated or has expired. Please perform QR code login first using zalo_login_qr or --login.");
         }
     }
 

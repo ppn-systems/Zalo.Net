@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <IsAotCompatible>true</IsAotCompatible>
+    <Title>Zalo.Net.Bot</Title>
+    <Description>High-level, attribute-based Event Bot Framework for Zalo.Net SDK.</Description>
+    <PackageTags>zalo;bot;framework;sdk;events;dotnet</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Zalo.Net\Zalo.Net.csproj" />
+    <ProjectReference Include="..\Zalo.Net.WebSocket\Zalo.Net.WebSocket.csproj" />
+  </ItemGroup>
+
+</Project>

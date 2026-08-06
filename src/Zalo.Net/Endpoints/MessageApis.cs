@@ -197,6 +197,90 @@ public static class MessageApis
         return msgId;
     }
 
+    /// <summary>Sends an image/photo to a user or group thread.</summary>
+    public static async Task<string> SendPhotoAsync(
+        ZaloHttpClient http, ZaloSession session,
+        string threadId, ZaloThreadType threadType,
+        byte[] imageBytes, string fileName, string? caption,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
+        ArgumentNullException.ThrowIfNull(imageBytes);
+
+        bool isGroup = threadType == ZaloThreadType.Group;
+        string host = isGroup ? GetHost(session, "group", ZaloConstants.Hosts.Group) : GetHost(session, "chat", ZaloConstants.Hosts.Chat);
+        string path = isGroup ? "/api/group/photo" : "/api/message/photo";
+        string url = MakeUrl(host, path);
+
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        JsonObject payload = new()
+        {
+            ["clientId"] = now,
+            ["caption"] = caption ?? "",
+            ["ttl"] = 0
+        };
+
+        if (isGroup)
+        {
+            payload["grid"] = threadId;
+            payload["visibility"] = 0;
+        }
+        else
+        {
+            payload["toid"] = threadId;
+            payload["imei"] = session.Material.Imei;
+        }
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Mã hóa tham số gửi ảnh thất bại.");
+        }
+
+        using MultipartFormDataContent formData = new();
+        formData.Add(new StringContent(encryptedParams), "params");
+
+        ByteArrayContent fileContent = new(imageBytes);
+        fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/png");
+        formData.Add(fileContent, "chunkContent", fileName);
+
+        using HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Post, body: formData, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false)
+                      ?? throw new ZaloApiException("Invalid JSON response from SendPhotoAsync");
+
+        int errorCode = node["error_code"]?.GetValue<int>() ?? -1;
+        if (errorCode != 0)
+        {
+            string msg = node["error_message"]?.GetValue<string>() ?? $"Error {errorCode}";
+            throw new ZaloApiException(msg, errorCode);
+        }
+
+        JsonNode? dataNode = node["data"];
+        if (dataNode?.GetValueKind() == System.Text.Json.JsonValueKind.String)
+        {
+            string encStr = dataNode.GetValue<string>();
+            string? decrypted = ZaloCipher.DecodeAes(session.Material.SecretKey, encStr);
+            if (!string.IsNullOrWhiteSpace(decrypted))
+            {
+                try { dataNode = JsonNode.Parse(decrypted); } catch { }
+            }
+        }
+
+        if (dataNode?["error_code"]?.GetValue<int>() is int innerCode && innerCode != 0)
+        {
+            string innerMsg = dataNode["error_message"]?.GetValue<string>() ?? $"Inner photo error {innerCode}";
+            throw new ZaloApiException(innerMsg, innerCode);
+        }
+
+        string msgId = dataNode?["msgId"]?.GetValue<string>()
+                    ?? dataNode?["message_id"]?.GetValue<string>()
+                    ?? now.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
+        return msgId;
+    }
+
     /// <summary>Fetches profile information for a user.</summary>
     public static async Task<(string Uid, string DisplayName, string? AvatarUrl)> GetUserInfoAsync(
         ZaloHttpClient http, ZaloSession session, string userId, CancellationToken ct)

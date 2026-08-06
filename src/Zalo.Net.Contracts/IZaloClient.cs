@@ -58,4 +58,16 @@ public interface IZaloClient : IDisposable
 
     /// <summary>Leaves a group silently without broadcasting a leave message.</summary>
     Task LeaveGroupSilentlyAsync(ZaloSession session, string groupId, CancellationToken ct = default);
+
+    /// <summary>Removes/Kicks a member from a group chat.</summary>
+    Task KickGroupMemberAsync(ZaloSession session, string groupId, string memberUid, CancellationToken ct = default);
+
+    /// <summary>Promotes a group member to co-admin / admin.</summary>
+    Task PromoteGroupAdminAsync(ZaloSession session, string groupId, string memberUid, CancellationToken ct = default);
+
+    /// <summary>Pins an important announcement message in a group chat.</summary>
+    Task PinGroupMessageAsync(ZaloSession session, string groupId, string msgId, CancellationToken ct = default);
+
+    /// <summary>Sends an image payload to a user or group thread.</summary>
+    Task SendImageAsync(ZaloSession session, string threadId, ZaloThreadType threadType, byte[] imageBytes, string fileName, string? caption = null, CancellationToken ct = default);
 }

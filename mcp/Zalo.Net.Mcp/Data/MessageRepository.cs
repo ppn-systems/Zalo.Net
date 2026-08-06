@@ -591,4 +591,75 @@ public sealed partial class MessageRepository(ZaloDatabase db)
 
         return null;
     }
+
+    public async Task DeactivateSessionAsync(string? uid = null, CancellationToken ct = default)
+    {
+        using SqliteConnection conn = this._db.CreateConnection();
+        using SqliteCommand cmd = conn.CreateCommand();
+
+        if (string.IsNullOrWhiteSpace(uid))
+        {
+            cmd.CommandText = "UPDATE sessions SET is_active = 0;";
+        }
+        else
+        {
+            cmd.CommandText = "UPDATE sessions SET is_active = 0 WHERE uid = @uid OR session_id = @uid;";
+            _ = cmd.Parameters.AddWithValue("@uid", uid);
+        }
+
+        _ = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task<ZaloAnalyticsResult> GetAnalyticsAsync(int days = 30, CancellationToken ct = default)
+    {
+        using SqliteConnection conn = this._db.CreateConnection();
+        long cutoffMs = DateTimeOffset.UtcNow.AddDays(-Math.Abs(days)).ToUnixTimeMilliseconds();
+
+        using SqliteCommand countCmd = conn.CreateCommand();
+        countCmd.CommandText = "SELECT COUNT(*), SUM(CASE WHEN is_self = 1 THEN 1 ELSE 0 END), SUM(CASE WHEN is_self = 0 THEN 1 ELSE 0 END) FROM messages WHERE timestamp_ms >= @cutoff;";
+        _ = countCmd.Parameters.AddWithValue("@cutoff", cutoffMs);
+        using SqliteDataReader countReader = await countCmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+
+        long totalMessages = 0, sentMessages = 0, receivedMessages = 0;
+        if (await countReader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            totalMessages = countReader.IsDBNull(0) ? 0 : countReader.GetInt64(0);
+            sentMessages = countReader.IsDBNull(1) ? 0 : countReader.GetInt64(1);
+            receivedMessages = countReader.IsDBNull(2) ? 0 : countReader.GetInt64(2);
+        }
+
+        using SqliteCommand topCmd = conn.CreateCommand();
+        topCmd.CommandText = """
+            SELECT uid_from, display_name, COUNT(*) as msg_count
+            FROM messages
+            WHERE is_self = 0
+            GROUP BY uid_from
+            ORDER BY msg_count DESC
+            LIMIT 5;
+            """;
+        List<TopContactStat> topContacts = [];
+        using SqliteDataReader topReader = await topCmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await topReader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            topContacts.Add(new TopContactStat(
+                UserId: topReader.GetString(0),
+                DisplayName: topReader.IsDBNull(1) ? "Unknown" : topReader.GetString(1),
+                MessageCount: topReader.GetInt64(2)
+            ));
+        }
+
+        using SqliteCommand entityCmd = conn.CreateCommand();
+        entityCmd.CommandText = "SELECT entity_type, COUNT(*) FROM extracted_entities GROUP BY entity_type;";
+        Dictionary<string, long> entityCounts = [];
+        using SqliteDataReader entityReader = await entityCmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await entityReader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            entityCounts[entityReader.GetString(0)] = entityReader.GetInt64(1);
+        }
+
+        return new ZaloAnalyticsResult(totalMessages, sentMessages, receivedMessages, topContacts, entityCounts);
+    }
 }
+
+public sealed record TopContactStat(string UserId, string DisplayName, long MessageCount);
+public sealed record ZaloAnalyticsResult(long TotalMessages, long SentMessages, long ReceivedMessages, IReadOnlyList<TopContactStat> TopContacts, IReadOnlyDictionary<string, long> ExtractedEntityCounts);

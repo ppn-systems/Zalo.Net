@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Text.Json;
 using ModelContextProtocol.Server;
+using Zalo.Net.Auth;
 using Zalo.Net.Contracts;
 using Zalo.Net.Endpoints;
 using Zalo.Net.Mcp.Data;
@@ -55,6 +56,49 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
 
         var response = new { status = "success", msg_id = result.MsgId, thread_id = threadId };
         return JsonSerializer.Serialize(response);
+    }
+
+    [McpServerTool(Name = "zalo_broadcast_message")]
+    [Description("Gửi cùng một nội dung tin nhắn đến danh sách nhiều người nhận hoặc nhóm chat Zalo.")]
+    public async Task<string> BroadcastMessageAsync(
+        [Description("Danh sách ID người nhận hoặc Group ID (phân cách bằng dấu phẩy)")] string threadIdsCsv,
+        [Description("Loại cuộc trò chuyện: 'User' hoặc 'Group'")] string threadType,
+        [Description("Nội dung tin nhắn phát thông báo")] string text,
+        [Description("Thời gian chờ giữa các lần gửi (ms, mặc định 1000ms)")] int delayMs = 1000,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(threadIdsCsv);
+
+        this._sessionManager.EnsureAuthenticated();
+        ZaloSession session = this._sessionManager.ActiveSession!;
+
+        ZaloThreadType type = Enum.TryParse<ZaloThreadType>(threadType, ignoreCase: true, out ZaloThreadType parsedType)
+            ? parsedType
+            : ZaloThreadType.User;
+
+        string[] targets = threadIdsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        int successCount = 0;
+        List<string> sentMsgIds = [];
+
+        foreach (string target in targets)
+        {
+            try
+            {
+                ZaloSendResult res = await ZaloWebClient.SendTextAsync(session, target, type, text, ct).ConfigureAwait(false);
+                successCount++;
+                sentMsgIds.Add(res.MsgId);
+                if (delayMs > 0)
+                {
+                    await Task.Delay(delayMs, ct).ConfigureAwait(false);
+                }
+            }
+            catch
+            {
+                // Continue broadcast to next targets
+            }
+        }
+
+        return JsonSerializer.Serialize(new { status = "success", total_targets = targets.Length, success_count = successCount, sent_msg_ids = sentMsgIds });
     }
 
     [McpServerTool(Name = "zalo_send_sticker")]
@@ -254,5 +298,77 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
     {
         IReadOnlyList<SavedMessage> history = await this._sessionManager.Repository.GetChatHistoryAsync(threadId, limit, ct).ConfigureAwait(false);
         return JsonSerializer.Serialize(history);
+    }
+
+    [McpServerTool(Name = "zalo_send_image")]
+    [Description("Gửi hình ảnh (photo/image) từ đường dẫn file local hoặc URL vào cuộc trò chuyện Zalo.")]
+    public async Task<string> SendImageAsync(
+        [Description("ID của cuộc trò chuyện (ThreadId)")] string threadId,
+        [Description("Loại cuộc trò chuyện: 'User' hoặc 'Group'")] string threadType,
+        [Description("Đường dẫn file local (ví dụ: C:\\image.png) hoặc URL hình ảnh")] string imagePathOrUrl,
+        [Description("Chú thích đi kèm hình ảnh (tùy chọn)")] string? caption = null,
+        CancellationToken ct = default)
+    {
+        this._sessionManager.EnsureAuthenticated();
+        ZaloSession session = this._sessionManager.ActiveSession!;
+
+        ZaloThreadType type = Enum.TryParse<ZaloThreadType>(threadType, ignoreCase: true, out ZaloThreadType parsedType)
+            ? parsedType
+            : ZaloThreadType.User;
+
+        byte[] bytes;
+        string fileName = "image.png";
+
+        if (imagePathOrUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+        {
+            using HttpClient dlClient = new();
+            bytes = await dlClient.GetByteArrayAsync(imagePathOrUrl, ct).ConfigureAwait(false);
+            fileName = Path.GetFileName(new Uri(imagePathOrUrl).AbsolutePath);
+            if (string.IsNullOrWhiteSpace(fileName)) fileName = "image.png";
+        }
+        else
+        {
+            if (!File.Exists(imagePathOrUrl))
+            {
+                throw new FileNotFoundException($"Local image file not found: {imagePathOrUrl}");
+            }
+            bytes = await File.ReadAllBytesAsync(imagePathOrUrl, ct).ConfigureAwait(false);
+            fileName = Path.GetFileName(imagePathOrUrl);
+        }
+
+        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
+        using ZaloHttpClient zaloHttp = new(session.Material.UserAgent, cookies, session.Proxy);
+        ZaloSendResult result = await AttachmentApis.SendImageAttachmentAsync(zaloHttp, session, threadId, type, bytes, fileName, caption, ct).ConfigureAwait(false);
+
+        return JsonSerializer.Serialize(new { status = "success", msg_id = result.MsgId, thread_id = threadId, file_name = fileName, size_bytes = bytes.Length });
+    }
+
+    [McpServerTool(Name = "zalo_download_attachment")]
+    [Description("Tải về hình ảnh, tệp tin PDF, tài liệu hoặc file ghi âm thoại từ Zalo về máy.")]
+    public async Task<string> DownloadAttachmentAsync(
+        [Description("URL của đính kèm/file cần tải")] string fileUrl,
+        [Description("Tên file lưu lại trên máy (tùy chọn, mặc định lấy từ URL)")] string? outputFileName = null,
+        CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(fileUrl);
+
+        string downloadsDir = OperatingSystem.IsMacOS()
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Personal), "Downloads")
+            : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+
+        _ = Directory.CreateDirectory(downloadsDir);
+
+        string fileName = !string.IsNullOrWhiteSpace(outputFileName)
+            ? outputFileName
+            : Path.GetFileName(new Uri(fileUrl).AbsolutePath);
+
+        if (string.IsNullOrWhiteSpace(fileName)) fileName = $"zalo_download_{DateTime.UtcNow.Ticks}.bin";
+        string savePath = Path.Combine(downloadsDir, fileName);
+
+        using HttpClient http = new();
+        byte[] data = await http.GetByteArrayAsync(fileUrl, ct).ConfigureAwait(false);
+        await File.WriteAllBytesAsync(savePath, data, ct).ConfigureAwait(false);
+
+        return JsonSerializer.Serialize(new { status = "success", saved_path = savePath, file_name = fileName, size_bytes = data.Length });
     }
 }
