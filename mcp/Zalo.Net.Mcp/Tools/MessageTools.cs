@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.Text.Json;
 using ModelContextProtocol.Server;
+using Zalo.Net.Auth;
 using Zalo.Net.Contracts;
 using Zalo.Net.Endpoints;
 using Zalo.Net.Mcp.Data;
@@ -320,8 +321,8 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
 
         if (imagePathOrUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
         {
-            using HttpClient http = new();
-            bytes = await http.GetByteArrayAsync(imagePathOrUrl, ct).ConfigureAwait(false);
+            using HttpClient dlClient = new();
+            bytes = await dlClient.GetByteArrayAsync(imagePathOrUrl, ct).ConfigureAwait(false);
             fileName = Path.GetFileName(new Uri(imagePathOrUrl).AbsolutePath);
             if (string.IsNullOrWhiteSpace(fileName)) fileName = "image.png";
         }
@@ -335,10 +336,11 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
             fileName = Path.GetFileName(imagePathOrUrl);
         }
 
-        using ZaloWebClient client = new(session.Proxy);
-        await client.SendImageAsync(session, threadId, type, bytes, fileName, caption, ct).ConfigureAwait(false);
+        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
+        using ZaloHttpClient zaloHttp = new(session.Material.UserAgent, cookies, session.Proxy);
+        ZaloSendResult result = await AttachmentApis.SendImageAttachmentAsync(zaloHttp, session, threadId, type, bytes, fileName, caption, ct).ConfigureAwait(false);
 
-        return JsonSerializer.Serialize(new { status = "success", thread_id = threadId, file_name = fileName, size_bytes = bytes.Length });
+        return JsonSerializer.Serialize(new { status = "success", msg_id = result.MsgId, thread_id = threadId, file_name = fileName, size_bytes = bytes.Length });
     }
 
     [McpServerTool(Name = "zalo_download_attachment")]
