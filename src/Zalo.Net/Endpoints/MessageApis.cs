@@ -210,7 +210,7 @@ public static class MessageApis
         ArgumentNullException.ThrowIfNull(imageBytes);
 
         bool isGroup = threadType == ZaloThreadType.Group;
-        string host = GetHost(session, "file", ZaloConstants.Hosts.File);
+        string host = isGroup ? GetHost(session, "group", ZaloConstants.Hosts.Group) : GetHost(session, "chat", ZaloConstants.Hosts.Chat);
         string path = isGroup ? "/api/group/photo" : "/api/message/photo";
         string url = MakeUrl(host, path);
 
@@ -266,6 +266,12 @@ public static class MessageApis
             {
                 try { dataNode = JsonNode.Parse(decrypted); } catch { }
             }
+        }
+
+        if (dataNode?["error_code"]?.GetValue<int>() is int innerCode && innerCode != 0)
+        {
+            string innerMsg = dataNode["error_message"]?.GetValue<string>() ?? $"Inner photo error {innerCode}";
+            throw new ZaloApiException(innerMsg, innerCode);
         }
 
         string msgId = dataNode?["msgId"]?.GetValue<string>()
