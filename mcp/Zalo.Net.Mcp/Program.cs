@@ -32,6 +32,13 @@ internal class Program
             return;
         }
 
+        if (args.Contains("--import-session"))
+        {
+            string sessionPath = args.Length > 1 ? args[^1] : "session.json";
+            await ImportSessionCommand.RunAsync(sessionPath).ConfigureAwait(false);
+            return;
+        }
+
         if (args.Contains("--web") || args.Contains("--http"))
         {
             await WebCommand.RunAsync(args).ConfigureAwait(false);
