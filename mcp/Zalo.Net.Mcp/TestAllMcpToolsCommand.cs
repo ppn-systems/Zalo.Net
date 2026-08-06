@@ -239,7 +239,7 @@ public static class TestAllMcpToolsCommand
         {
             try
             {
-                Console.WriteLine($"\n[13/13] Testing 'zalo_send_image' to UID {firstFriendUid}...");
+                Console.WriteLine($"\n[13/15] Testing 'zalo_send_image' to UID {firstFriendUid}...");
                 string testImageUrl = "https://raw.githubusercontent.com/ppn-systems/Zalo.Net/main/icon.png";
                 string json = await messageTools.SendImageAsync(firstFriendUid, "User", testImageUrl, "Test photo send via Zalo.Net.Mcp Server!", CancellationToken.None).ConfigureAwait(false);
                 Console.WriteLine($"[PASS] Send Image: {json}");
@@ -250,10 +250,38 @@ public static class TestAllMcpToolsCommand
                 Console.WriteLine($"[FAIL] 'zalo_send_image': {ex.Message}");
                 failed++;
             }
+
+            // Test 14: Send Contact Card
+            try
+            {
+                Console.WriteLine($"\n[14/15] Testing 'zalo_send_contact_card' to UID {firstFriendUid}...");
+                string json = await messageTools.SendContactCardAsync(firstFriendUid, "User", targetUserId: firstFriendUid, phoneNumber: null, qrCodeUrl: null, ct: CancellationToken.None).ConfigureAwait(false);
+                Console.WriteLine($"[PASS] Send Contact Card: {json}");
+                passed++;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[FAIL] 'zalo_send_contact_card': {ex.Message}");
+                failed++;
+            }
+
+            // Test 15: Send Sticker
+            try
+            {
+                Console.WriteLine($"\n[15/15] Testing 'zalo_send_sticker' to UID {firstFriendUid}...");
+                string json = await messageTools.SendStickerAsync(firstFriendUid, "User", stickerId: 23058, cateId: 94, stickerType: 1, ct: CancellationToken.None).ConfigureAwait(false);
+                Console.WriteLine($"[PASS] Send Sticker: {json}");
+                passed++;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[FAIL] 'zalo_send_sticker': {ex.Message}");
+                failed++;
+            }
         }
         else
         {
-            Console.WriteLine("\n[13/13] [SKIP] 'zalo_send_image' (no friend UID available)");
+            Console.WriteLine("\n[13/15] [SKIP] 'zalo_send_image' & cards (no friend UID available)");
         }
 
         Console.WriteLine($"\n=== AUDIT SUMMARY: Passed {passed}, Failed {failed} ===");
