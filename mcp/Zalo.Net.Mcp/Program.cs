@@ -47,6 +47,12 @@ internal class Program
             return;
         }
 
+        if (args.Contains("--test-all-tools"))
+        {
+            await TestAllMcpToolsCommand.RunAsync().ConfigureAwait(false);
+            return;
+        }
+
         if (args.Contains("--test-mcp"))
         {
             string targetExe = Path.Combine(AppContext.BaseDirectory, "Zalo.Net.Mcp.dll");
