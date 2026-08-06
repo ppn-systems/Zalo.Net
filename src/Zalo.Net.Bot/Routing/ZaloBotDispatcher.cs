@@ -9,22 +9,84 @@ using Zalo.Net.Bot.Context;
 namespace Zalo.Net.Bot.Routing;
 
 /// <summary>
-/// High-performance handler registry and message dispatcher for routing Zalo events to handler methods.
+/// High-performance handler registry and message dispatcher for routing Zalo events to handler methods or pure AOT delegates.
 /// </summary>
 public sealed class ZaloBotDispatcher
 {
-    private sealed record CommandRegistration(string Command, MethodInfo Method, object? Instance);
-    private sealed record KeywordRegistration(IReadOnlyList<string> Keywords, MethodInfo Method, object? Instance);
-    private sealed record MessageRegistration(MethodInfo Method, object? Instance);
+    private sealed record CommandRegistration(string Command, Func<ZaloBotContext, CancellationToken, Task> Handler);
+    private sealed record KeywordRegistration(IReadOnlyList<string> Keywords, Func<ZaloBotContext, CancellationToken, Task> Handler);
+    private sealed record MessageRegistration(Func<ZaloBotContext, CancellationToken, Task> Handler);
 
     private readonly List<CommandRegistration> _commandHandlers = [];
     private readonly List<KeywordRegistration> _keywordHandlers = [];
     private readonly List<MessageRegistration> _globalHandlers = [];
 
     /// <summary>
-    /// Registers all handler methods found on a target handler instance or type.
+    /// Registers a pure Native AOT command handler delegate (e.g. <c>/ping</c>).
     /// </summary>
-    [SuppressMessage("Trimming", "IL2075:RequiresUnreferencedCode")]
+    public ZaloBotDispatcher OnCommand(string command, Func<ZaloBotContext, CancellationToken, Task> handler)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(command);
+        ArgumentNullException.ThrowIfNull(handler);
+
+        string normalized = command.StartsWith('/') || command.StartsWith('!') ? command : $"/{command}";
+        this._commandHandlers.Add(new CommandRegistration(normalized, handler));
+        return this;
+    }
+
+    /// <summary>
+    /// Registers a pure Native AOT command handler delegate (e.g. <c>/ping</c>).
+    /// </summary>
+    public ZaloBotDispatcher OnCommand(string command, Func<ZaloBotContext, Task> handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        return this.OnCommand(command, (ctx, _) => handler(ctx));
+    }
+
+    /// <summary>
+    /// Registers a pure Native AOT keyword handler delegate.
+    /// </summary>
+    public ZaloBotDispatcher OnKeyword(IEnumerable<string> keywords, Func<ZaloBotContext, CancellationToken, Task> handler)
+    {
+        ArgumentNullException.ThrowIfNull(keywords);
+        ArgumentNullException.ThrowIfNull(handler);
+
+        this._keywordHandlers.Add(new KeywordRegistration([.. keywords], handler));
+        return this;
+    }
+
+    /// <summary>
+    /// Registers a pure Native AOT keyword handler delegate.
+    /// </summary>
+    public ZaloBotDispatcher OnKeyword(IEnumerable<string> keywords, Func<ZaloBotContext, Task> handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        return this.OnKeyword(keywords, (ctx, _) => handler(ctx));
+    }
+
+    /// <summary>
+    /// Registers a pure Native AOT message handler delegate for all events.
+    /// </summary>
+    public ZaloBotDispatcher OnMessage(Func<ZaloBotContext, CancellationToken, Task> handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        this._globalHandlers.Add(new MessageRegistration(handler));
+        return this;
+    }
+
+    /// <summary>
+    /// Registers a pure Native AOT message handler delegate for all events.
+    /// </summary>
+    public ZaloBotDispatcher OnMessage(Func<ZaloBotContext, Task> handler)
+    {
+        ArgumentNullException.ThrowIfNull(handler);
+        return this.OnMessage((ctx, _) => handler(ctx));
+    }
+
+    /// <summary>
+    /// Registers all attribute-marked handler methods found on a target handler instance.
+    /// </summary>
+    [UnconditionalSuppressMessage("Trimming", "IL2075", Justification = "Reflection fallback for attribute handlers")]
     public void RegisterHandlers(object handlerInstance)
     {
         ArgumentNullException.ThrowIfNull(handlerInstance);
@@ -37,9 +99,9 @@ public sealed class ZaloBotDispatcher
     }
 
     /// <summary>
-    /// Registers static handler methods from a target type.
+    /// Registers static attribute-marked handler methods from a target type.
     /// </summary>
-    [SuppressMessage("Trimming", "IL2090:RequiresUnreferencedCode")]
+    [UnconditionalSuppressMessage("Trimming", "IL2090", Justification = "Reflection fallback for attribute handlers")]
     public void RegisterHandlers<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods | DynamicallyAccessedMemberTypes.NonPublicMethods)] T>()
     {
         Type type = typeof(T);
@@ -57,20 +119,46 @@ public sealed class ZaloBotDispatcher
             return;
         }
 
+        Func<ZaloBotContext, CancellationToken, Task> delegateHandler = CreateDelegateFromMethod(method, instance);
+
         foreach (ZaloCommandAttribute cmdAttr in method.GetCustomAttributes<ZaloCommandAttribute>())
         {
-            this._commandHandlers.Add(new CommandRegistration(cmdAttr.Command, method, instance));
+            this._commandHandlers.Add(new CommandRegistration(cmdAttr.Command, delegateHandler));
         }
 
         foreach (ZaloKeywordAttribute kwAttr in method.GetCustomAttributes<ZaloKeywordAttribute>())
         {
-            this._keywordHandlers.Add(new KeywordRegistration(kwAttr.Keywords, method, instance));
+            this._keywordHandlers.Add(new KeywordRegistration(kwAttr.Keywords, delegateHandler));
         }
 
         if (method.GetCustomAttribute<ZaloOnMessageAttribute>() != null)
         {
-            this._globalHandlers.Add(new MessageRegistration(method, instance));
+            this._globalHandlers.Add(new MessageRegistration(delegateHandler));
         }
+    }
+
+    private static Func<ZaloBotContext, CancellationToken, Task> CreateDelegateFromMethod(MethodInfo method, object? instance)
+    {
+        return async (ctx, ct) =>
+        {
+            ParameterInfo[] parameters = method.GetParameters();
+            object?[] args = new object?[parameters.Length];
+            args[0] = ctx;
+
+            for (int i = 1; i < parameters.Length; i++)
+            {
+                if (parameters[i].ParameterType == typeof(CancellationToken))
+                {
+                    args[i] = ct;
+                }
+            }
+
+            object? result = method.Invoke(instance, args);
+            if (result is Task task)
+            {
+                await task.ConfigureAwait(false);
+            }
+        };
     }
 
     /// <summary>
@@ -89,7 +177,7 @@ public sealed class ZaloBotDispatcher
             {
                 if (reg.Command.Equals(cmdName, StringComparison.OrdinalIgnoreCase))
                 {
-                    await InvokeHandlerAsync(reg.Method, reg.Instance, ctx, ct).ConfigureAwait(false);
+                    await reg.Handler(ctx, ct).ConfigureAwait(false);
                     return;
                 }
             }
@@ -102,7 +190,7 @@ public sealed class ZaloBotDispatcher
             {
                 if (text.Contains(kw, StringComparison.OrdinalIgnoreCase))
                 {
-                    await InvokeHandlerAsync(reg.Method, reg.Instance, ctx, ct).ConfigureAwait(false);
+                    await reg.Handler(ctx, ct).ConfigureAwait(false);
                     return;
                 }
             }
@@ -111,32 +199,7 @@ public sealed class ZaloBotDispatcher
         // 3. Fallback to Global Message Handlers
         foreach (MessageRegistration reg in this._globalHandlers)
         {
-            await InvokeHandlerAsync(reg.Method, reg.Instance, ctx, ct).ConfigureAwait(false);
-        }
-    }
-
-    private static async Task InvokeHandlerAsync(MethodInfo method, object? instance, ZaloBotContext ctx, CancellationToken ct)
-    {
-        ParameterInfo[] parameters = method.GetParameters();
-        object?[] args = new object?[parameters.Length];
-        args[0] = ctx;
-
-        for (int i = 1; i < parameters.Length; i++)
-        {
-            if (parameters[i].ParameterType == typeof(CancellationToken))
-            {
-                args[i] = ct;
-            }
-            else
-            {
-                args[i] = null;
-            }
-        }
-
-        object? result = method.Invoke(instance, args);
-        if (result is Task task)
-        {
-            await task.ConfigureAwait(false);
+            await reg.Handler(ctx, ct).ConfigureAwait(false);
         }
     }
 }

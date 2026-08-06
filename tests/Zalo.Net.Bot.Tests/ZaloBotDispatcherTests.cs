@@ -45,16 +45,12 @@ public class ZaloBotDispatcherTests
     {
         public bool CommandTriggered { get; private set; }
         public bool KeywordTriggered { get; private set; }
-        public bool OnMessageTriggered { get; private set; }
 
         [ZaloCommand("/help")]
         public void HandleHelp(ZaloBotContext ctx) => this.CommandTriggered = ctx != null;
 
         [ZaloKeyword("chuyển khoản", "stk")]
         public void HandlePayment(ZaloBotContext ctx) => this.KeywordTriggered = ctx != null;
-
-        [ZaloOnMessage]
-        public void HandleAny(ZaloBotContext ctx) => this.OnMessageTriggered = ctx != null;
     }
 
     [Fact]
@@ -79,23 +75,27 @@ public class ZaloBotDispatcherTests
     }
 
     [Fact]
-    public async Task Dispatcher_RoutesKeywordMessage_Correctly()
+    public async Task Dispatcher_RoutesPureNativeAotDelegate_Correctly()
     {
         // Arrange
         ZaloBotDispatcher dispatcher = new();
-        SampleBotHandlers handlers = new();
-        dispatcher.RegisterHandlers(handlers);
+        bool aotCommandExecuted = false;
+
+        _ = dispatcher.OnCommand("/ping", ctx =>
+        {
+            aotCommandExecuted = ctx != null;
+            return Task.CompletedTask;
+        });
 
         ZaloSessionMaterial material = new("cookie", "key_1", "imei_1", "uid_1", "ua");
         ZaloSession session = new(material, "uid_1", ["wss://zalo"], new Dictionary<string, string[]>(), 30000);
-        ZaloMessageEvent msg = new("msg_1", "cli_1", "text", "uid_2", "uid_1", "Sender", "uid_2", ZaloThreadType.User, "12345", "Cho xin STK ngân hàng với", null, false);
+        ZaloMessageEvent msg = new("msg_1", "cli_1", "text", "uid_2", "uid_1", "Sender", "uid_2", ZaloThreadType.User, "12345", "/ping test", null, false);
         ZaloBotContext ctx = new(msg, session, new DummyClient());
 
         // Act
         await dispatcher.DispatchAsync(ctx);
 
         // Assert
-        Assert.False(handlers.CommandTriggered);
-        Assert.True(handlers.KeywordTriggered);
+        Assert.True(aotCommandExecuted);
     }
 }

@@ -1,7 +1,9 @@
 // Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
+using Zalo.Net.Bot.Context;
 using Zalo.Net.Bot.Engine;
 using Zalo.Net.Bot.Routing;
 using Zalo.Net.Contracts;
@@ -42,15 +44,57 @@ public sealed class ZaloBotBuilder
         return this;
     }
 
-    /// <summary>Registers handler methods from a target class instance.</summary>
+    /// <summary>Registers a pure Native AOT command handler (e.g. <c>/ping</c>).</summary>
+    public ZaloBotBuilder OnCommand(string command, Func<ZaloBotContext, CancellationToken, Task> handler)
+    {
+        _ = this._dispatcher.OnCommand(command, handler);
+        return this;
+    }
+
+    /// <summary>Registers a pure Native AOT command handler (e.g. <c>/ping</c>).</summary>
+    public ZaloBotBuilder OnCommand(string command, Func<ZaloBotContext, Task> handler)
+    {
+        _ = this._dispatcher.OnCommand(command, handler);
+        return this;
+    }
+
+    /// <summary>Registers a pure Native AOT keyword handler.</summary>
+    public ZaloBotBuilder OnKeyword(IEnumerable<string> keywords, Func<ZaloBotContext, CancellationToken, Task> handler)
+    {
+        _ = this._dispatcher.OnKeyword(keywords, handler);
+        return this;
+    }
+
+    /// <summary>Registers a pure Native AOT keyword handler.</summary>
+    public ZaloBotBuilder OnKeyword(IEnumerable<string> keywords, Func<ZaloBotContext, Task> handler)
+    {
+        _ = this._dispatcher.OnKeyword(keywords, handler);
+        return this;
+    }
+
+    /// <summary>Registers a pure Native AOT global message handler.</summary>
+    public ZaloBotBuilder OnMessage(Func<ZaloBotContext, CancellationToken, Task> handler)
+    {
+        _ = this._dispatcher.OnMessage(handler);
+        return this;
+    }
+
+    /// <summary>Registers a pure Native AOT global message handler.</summary>
+    public ZaloBotBuilder OnMessage(Func<ZaloBotContext, Task> handler)
+    {
+        _ = this._dispatcher.OnMessage(handler);
+        return this;
+    }
+
+    /// <summary>Registers attribute-marked handler methods from a target class instance.</summary>
     public ZaloBotBuilder RegisterHandlers(object handlerInstance)
     {
         this._dispatcher.RegisterHandlers(handlerInstance);
         return this;
     }
 
-    /// <summary>Registers static handler methods from a target class type.</summary>
-    public ZaloBotBuilder RegisterHandlers<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicMethods | System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.NonPublicMethods)] T>()
+    /// <summary>Registers static attribute-marked handler methods from a target class type.</summary>
+    public ZaloBotBuilder RegisterHandlers<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods | DynamicallyAccessedMemberTypes.NonPublicMethods)] T>()
     {
         this._dispatcher.RegisterHandlers<T>();
         return this;

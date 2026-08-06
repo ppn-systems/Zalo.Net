@@ -15,9 +15,8 @@ public static class Program
     [SuppressMessage("Globalization", "CA1303:Do not pass literals as localized parameters")]
     public static async Task Main()
     {
-        Console.WriteLine("=== Zalo.Net.Bot AI & Automation Sample Bot ===");
+        Console.WriteLine("=== Zalo.Net.Bot Pure Native AOT & Automation Sample Bot ===");
 
-        // Note: Replace with active session material or import from Zalo.Net.Mcp SQLite database
         ZaloSessionMaterial material = new(
             CookiesJson: "[]",
             SecretKey: "sample-secret-key",
@@ -35,29 +34,35 @@ public static class Program
             Proxy: null
         );
 
+        // 100% Pure Native AOT Lambda Handlers (Zero Reflection)
         ZaloBotEngine bot = ZaloBotBuilder.Create()
             .UseSession(session)
+            .OnCommand("/ping", async ctx =>
+            {
+                Console.WriteLine($"[AOT BOT] Received /ping from {ctx.SenderUid}");
+                _ = await ctx.ReplyQuoteAsync("🏓 Pong! Pure Native AOT Zalo Bot is active!").ConfigureAwait(false);
+            })
+            .OnKeyword(["stk", "chuyển khoản"], async ctx =>
+            {
+                Console.WriteLine($"[AOT BOT] Received payment keyword from {ctx.SenderUid}");
+                await ctx.ReplyBankCardAsync(
+                    binBank: "970458",
+                    accountNumber: "1234567890",
+                    accountName: "NGUYEN VAN A"
+                ).ConfigureAwait(false);
+            })
             .RegisterHandlers<MyZaloBotHandlers>()
             .Build();
 
         bot.OnError += (sender, ex) => Console.WriteLine($"[BOT ERROR]: {ex.Message}");
 
-        Console.WriteLine("Zalo Bot registered with Handlers: /ping, /help, [chuyển khoản/stk]. Press Ctrl+C to exit.");
+        Console.WriteLine("Zalo Bot registered with pure Native AOT Handlers (/ping, /help, [stk/chuyển khoản]).");
         await bot.StartAsync().ConfigureAwait(false);
     }
 }
 
 public sealed class MyZaloBotHandlers
 {
-    [ZaloCommand("/ping")]
-    [SuppressMessage("Globalization", "CA1303:Do not pass literals as localized parameters")]
-    public static async Task HandlePingAsync(ZaloBotContext ctx)
-    {
-        ArgumentNullException.ThrowIfNull(ctx);
-        Console.WriteLine($"[BOT] Received /ping from {ctx.SenderUid}");
-        _ = await ctx.ReplyQuoteAsync("🏓 Pong! Zalo.Net.Bot is active and running!").ConfigureAwait(false);
-    }
-
     [ZaloCommand("/help")]
     [SuppressMessage("Globalization", "CA1303:Do not pass literals as localized parameters")]
     public static async Task HandleHelpAsync(ZaloBotContext ctx)
@@ -70,18 +75,5 @@ public sealed class MyZaloBotHandlers
             - Gửi 'stk' hoặc 'chuyển khoản': Nhận thông tin tài khoản ngân hàng
             """;
         _ = await ctx.ReplyTextAsync(helpText).ConfigureAwait(false);
-    }
-
-    [ZaloKeyword("stk", "chuyển khoản", "thanh toán")]
-    [SuppressMessage("Globalization", "CA1303:Do not pass literals as localized parameters")]
-    public static async Task HandlePaymentRequestAsync(ZaloBotContext ctx)
-    {
-        ArgumentNullException.ThrowIfNull(ctx);
-        Console.WriteLine($"[BOT] Received payment keyword from {ctx.SenderUid}");
-        await ctx.ReplyBankCardAsync(
-            binBank: "970458", // TPBank
-            accountNumber: "1234567890",
-            accountName: "NGUYEN VAN A"
-        ).ConfigureAwait(false);
     }
 }
