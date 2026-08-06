@@ -1,6 +1,7 @@
 // Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Zalo.Net.Bot.Attributes;
 using Zalo.Net.Bot.Context;
@@ -23,7 +24,7 @@ public sealed class ZaloBotDispatcher
     /// <summary>
     /// Registers all handler methods found on a target handler instance or type.
     /// </summary>
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2075")]
+    [SuppressMessage("Trimming", "IL2075:RequiresUnreferencedCode")]
     public void RegisterHandlers(object handlerInstance)
     {
         ArgumentNullException.ThrowIfNull(handlerInstance);
@@ -38,8 +39,8 @@ public sealed class ZaloBotDispatcher
     /// <summary>
     /// Registers static handler methods from a target type.
     /// </summary>
-    [System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessage("Trimming", "IL2090")]
-    public void RegisterHandlers<[System.Diagnostics.CodeAnalysis.DynamicallyAccessedMembers(System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.PublicMethods | System.Diagnostics.CodeAnalysis.DynamicallyAccessedMemberTypes.NonPublicMethods)] T>()
+    [SuppressMessage("Trimming", "IL2090:RequiresUnreferencedCode")]
+    public void RegisterHandlers<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicMethods | DynamicallyAccessedMemberTypes.NonPublicMethods)] T>()
     {
         Type type = typeof(T);
         foreach (MethodInfo method in type.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic))

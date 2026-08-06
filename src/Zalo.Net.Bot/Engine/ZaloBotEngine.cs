@@ -1,6 +1,7 @@
 // Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
+using System.Diagnostics.CodeAnalysis;
 using System.Net;
 using Zalo.Net.Bot.Context;
 using Zalo.Net.Bot.Routing;
@@ -12,6 +13,7 @@ namespace Zalo.Net.Bot.Engine;
 /// <summary>
 /// Execution engine managing background WebSocket listener and dispatching events to handlers.
 /// </summary>
+[SuppressMessage("Globalization", "CA1303:Do not pass literals as localized parameters")]
 public sealed class ZaloBotEngine
 {
     private readonly ZaloSession _session;
@@ -38,12 +40,11 @@ public sealed class ZaloBotEngine
     /// <summary>
     /// Starts the background Zalo WebSocket listener and runs the Bot handler loop until cancelled.
     /// </summary>
-    [System.Diagnostics.CodeAnalysis.SuppressMessage("Globalization", "CA1303:Do not pass literals as localized parameters")]
     public async Task StartAsync(CancellationToken ct = default)
     {
         Console.WriteLine($"=== Zalo.Net.Bot Engine Started for Session UID {this._session.Uid} ===");
 
-        async void OnMessageReceived(object? sender, ZaloMessageEvent msg)
+        async void handler(object? sender, ZaloMessageEvent msg)
         {
             if (msg.IsSelf || msg.UidFrom == this._session.Uid)
             {
@@ -60,8 +61,6 @@ public sealed class ZaloBotEngine
                 this.OnError?.Invoke(this, ex);
             }
         }
-
-        EventHandler<ZaloMessageEvent> handler = OnMessageReceived;
 
         this._client.MessageReceived += handler;
         try
