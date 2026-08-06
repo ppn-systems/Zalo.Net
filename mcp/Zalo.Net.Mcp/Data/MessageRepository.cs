@@ -591,4 +591,22 @@ public sealed partial class MessageRepository(ZaloDatabase db)
 
         return null;
     }
+
+    public async Task DeactivateSessionAsync(string? uid = null, CancellationToken ct = default)
+    {
+        using SqliteConnection conn = this._db.CreateConnection();
+        using SqliteCommand cmd = conn.CreateCommand();
+
+        if (string.IsNullOrWhiteSpace(uid))
+        {
+            cmd.CommandText = "UPDATE sessions SET is_active = 0;";
+        }
+        else
+        {
+            cmd.CommandText = "UPDATE sessions SET is_active = 0 WHERE uid = @uid OR session_id = @uid;";
+            _ = cmd.Parameters.AddWithValue("@uid", uid);
+        }
+
+        _ = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
 }
