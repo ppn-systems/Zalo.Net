@@ -102,6 +102,12 @@ public static class WebCommand
             return Results.Ok(threads);
         });
 
+        _ = app.MapGet("/api/zalo/analytics", async (int days = 30, CancellationToken ct = default) =>
+        {
+            ZaloAnalyticsResult analytics = await sessionManager.Repository.GetAnalyticsAsync(days, ct).ConfigureAwait(false);
+            return Results.Ok(analytics);
+        });
+
         await app.RunAsync().ConfigureAwait(false);
     }
 

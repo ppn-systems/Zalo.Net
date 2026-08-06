@@ -227,4 +227,52 @@ public sealed class GroupTools(ZaloSessionManager sessionManager)
 
         return JsonSerializer.Serialize(new { status = "success", group_id = groupId, action = "left_group_silently" });
     }
+
+    [McpServerTool(Name = "zalo_kick_group_member")]
+    [Description("Xóa (Kick) một thành viên khỏi nhóm chat Zalo.")]
+    public async Task<string> KickGroupMemberAsync(
+        [Description("ID nhóm chat Zalo (GroupId)")] string groupId,
+        [Description("User ID của thành viên cần xóa")] string memberUid,
+        CancellationToken ct = default)
+    {
+        this._sessionManager.EnsureAuthenticated();
+        ZaloSession session = this._sessionManager.ActiveSession!;
+
+        using ZaloWebClient client = new(session.Proxy);
+        await client.KickGroupMemberAsync(session, groupId, memberUid, ct).ConfigureAwait(false);
+
+        return JsonSerializer.Serialize(new { status = "success", group_id = groupId, kicked_member_uid = memberUid });
+    }
+
+    [McpServerTool(Name = "zalo_promote_group_admin")]
+    [Description("Thăng cấp phó nhóm / quản trị viên cho thành viên nhóm chat Zalo.")]
+    public async Task<string> PromoteGroupAdminAsync(
+        [Description("ID nhóm chat Zalo (GroupId)")] string groupId,
+        [Description("User ID của thành viên được thăng cấp")] string memberUid,
+        CancellationToken ct = default)
+    {
+        this._sessionManager.EnsureAuthenticated();
+        ZaloSession session = this._sessionManager.ActiveSession!;
+
+        using ZaloWebClient client = new(session.Proxy);
+        await client.PromoteGroupAdminAsync(session, groupId, memberUid, ct).ConfigureAwait(false);
+
+        return JsonSerializer.Serialize(new { status = "success", group_id = groupId, promoted_admin_uid = memberUid });
+    }
+
+    [McpServerTool(Name = "zalo_pin_group_message")]
+    [Description("Ghim tin nhắn thông báo quan trọng lên đầu nhóm chat Zalo.")]
+    public async Task<string> PinGroupMessageAsync(
+        [Description("ID nhóm chat Zalo (GroupId)")] string groupId,
+        [Description("ID của tin nhắn cần ghim (MsgId)")] string msgId,
+        CancellationToken ct = default)
+    {
+        this._sessionManager.EnsureAuthenticated();
+        ZaloSession session = this._sessionManager.ActiveSession!;
+
+        using ZaloWebClient client = new(session.Proxy);
+        await client.PinGroupMessageAsync(session, groupId, msgId, ct).ConfigureAwait(false);
+
+        return JsonSerializer.Serialize(new { status = "success", group_id = groupId, pinned_msg_id = msgId });
+    }
 }

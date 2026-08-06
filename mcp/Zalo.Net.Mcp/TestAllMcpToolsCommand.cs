@@ -205,6 +205,20 @@ public static class TestAllMcpToolsCommand
             Console.WriteLine("\n[10/10] [SKIP] 'zalo_send_bank_card' (no friend UID available)");
         }
 
+        // Test 11: Get Analytics
+        try
+        {
+            Console.WriteLine("\n[11/11] Testing 'zalo_get_analytics'...");
+            string json = await smartTools.GetAnalyticsAsync(days: 30, ct: CancellationToken.None).ConfigureAwait(false);
+            Console.WriteLine($"[PASS] Analytics Engine: {json}");
+            passed++;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FAIL] 'zalo_get_analytics': {ex.Message}");
+            failed++;
+        }
+
         Console.WriteLine($"\n=== AUDIT SUMMARY: Passed {passed}, Failed {failed} ===");
     }
 }

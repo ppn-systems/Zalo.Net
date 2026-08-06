@@ -81,4 +81,14 @@ public sealed class SmartTools(ZaloSessionManager sessionManager)
         IReadOnlyList<SavedThread> threads = await this._sessionManager.Repository.GetRecentThreadsAsync(limit, ct).ConfigureAwait(false);
         return JsonSerializer.Serialize(threads, ZaloMcpJsonContext.Default.IReadOnlyListSavedThread);
     }
+
+    [McpServerTool(Name = "zalo_get_analytics")]
+    [Description("Thống kê phân tích dữ liệu trò chuyện Zalo (tổng số tin nhắn gửi/nhận, top bạn bè tương tác nhiều nhất, phân bổ STK ngân hàng/SĐT bóc tách).")]
+    public async Task<string> GetAnalyticsAsync(
+        [Description("Số ngày cần phân tích thống kê (mặc định 30)")] int days = 30,
+        CancellationToken ct = default)
+    {
+        ZaloAnalyticsResult analytics = await this._sessionManager.Repository.GetAnalyticsAsync(days, ct).ConfigureAwait(false);
+        return JsonSerializer.Serialize(analytics);
+    }
 }

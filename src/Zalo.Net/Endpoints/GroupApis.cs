@@ -567,4 +567,72 @@ internal static class GroupApis
             throw new ZaloApiException(node?["error_message"]?.GetValue<string>() ?? $"LeaveGroupSilently failed with code {errorCode}", errorCode);
         }
     }
+
+    public static async Task PromoteGroupAdminAsync(
+        ZaloHttpClient http, ZaloSession session, string groupId, string memberUid, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(memberUid);
+
+        string host = GetGroupHost(session);
+        string url = MakeUrl(host, "/api/group/update-admin");
+
+        JsonObject payload = new()
+        {
+            ["grid"] = groupId,
+            ["members"] = ToJsonArray([memberUid]),
+            ["role"] = 1
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt PromoteGroupAdmin payload");
+        }
+
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        int errorCode = node?["error_code"]?.GetValue<int>() ?? 0;
+        if (errorCode != 0)
+        {
+            throw new ZaloApiException(node?["error_message"]?.GetValue<string>() ?? $"PromoteGroupAdmin failed with code {errorCode}", errorCode);
+        }
+    }
+
+    public static async Task PinGroupMessageAsync(
+        ZaloHttpClient http, ZaloSession session, string groupId, string msgId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(msgId);
+
+        string host = GetGroupHost(session);
+        string url = MakeUrl(host, "/api/group/pin/topic");
+
+        JsonObject payload = new()
+        {
+            ["grid"] = groupId,
+            ["msgId"] = msgId,
+            ["pinAction"] = 1
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt PinGroupMessage payload");
+        }
+
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        int errorCode = node?["error_code"]?.GetValue<int>() ?? 0;
+        if (errorCode != 0)
+        {
+            throw new ZaloApiException(node?["error_message"]?.GetValue<string>() ?? $"PinGroupMessage failed with code {errorCode}", errorCode);
+        }
+    }
 }
