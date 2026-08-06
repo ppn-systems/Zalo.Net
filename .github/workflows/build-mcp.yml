@@ -1,0 +1,169 @@
+name: build-mcp
+
+# Manual workflow_dispatch and tag push trigger for Zalo.Net.Mcp single-file executables & Docker image.
+# Cross-compiles on ubuntu-latest to minimize GitHub Actions minute cost (~1x vs 10x macOS runner).
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target platform/package to build (saves GitHub Actions minutes)"
+        type: choice
+        default: "all"
+        options:
+          - "all"
+          - "win-x64"
+          - "osx-x64"
+          - "osx-arm64"
+          - "linux-x64"
+          - "docker"
+      tag:
+        description: "Release tag (e.g. v1.0.0)"
+        type: string
+        default: "v1.0.0"
+
+concurrency:
+  group: build-mcp-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  build-binaries:
+    name: Build MCP (${{ matrix.rid }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+          - rid: osx-x64
+          - rid: osx-arm64
+          - rid: linux-x64
+    if: ${{ github.event_name == 'push' || inputs.target == 'all' || inputs.target == matrix.rid }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore NuGet Cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Publish Single-File Executable
+        run: |
+          dotnet publish mcp/Zalo.Net.Mcp/Zalo.Net.Mcp.csproj \
+            -c Release \
+            -r ${{ matrix.rid }} \
+            --self-contained true \
+            -p:PublishSingleFile=true \
+            -o dist/${{ matrix.rid }}
+
+      - name: Sanity Check Binary Output
+        shell: bash
+        run: |
+          set -euo pipefail
+          BIN="dist/${{ matrix.rid }}/Zalo.Net.Mcp"
+          if [[ "${{ matrix.rid }}" == win-* ]]; then
+            BIN="$BIN.exe"
+          fi
+          test -f "$BIN"
+          SIZE=$(stat -c%s "$BIN")
+          echo "Binary size for ${{ matrix.rid }}: $SIZE bytes"
+          [ "$SIZE" -gt 1000000 ] || { echo "Binary size too small ($SIZE bytes)"; exit 1; }
+
+      - name: Prepare Fixed Asset File Name
+        id: asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          SRC="dist/${{ matrix.rid }}/Zalo.Net.Mcp"
+          OUT="zalo-net-mcp-${{ matrix.rid }}"
+          if [[ "${{ matrix.rid }}" == win-* ]]; then
+            SRC="$SRC.exe"
+            OUT="$OUT.exe"
+          fi
+          cp "$SRC" "$OUT"
+          echo "file=$OUT" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zalo-net-mcp-${{ matrix.rid }}
+          path: ${{ steps.asset.outputs.file }}
+          if-no-files-found: error
+
+  build-docker:
+    name: Build & Push Docker Image (GHCR)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    if: ${{ github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'docker' }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/zalo-net-mcp
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ inputs.tag || 'v1.0.0' }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: mcp/Zalo.Net.Mcp/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  release:
+    name: Attach Assets to GitHub Release
+    needs: [build-binaries]
+    if: ${{ always() && (github.event_name == 'push' || inputs.tag != '') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download Binary Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: zalo-net-mcp-*
+          path: dist
+          merge-multiple: true
+          if-no-files-found: warn
+
+      - name: Create or Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: Zalo.Net.Mcp Release ${{ inputs.tag || github.ref_name }}
+          draft: false
+          prerelease: false
+          files: dist/zalo-net-mcp-*
