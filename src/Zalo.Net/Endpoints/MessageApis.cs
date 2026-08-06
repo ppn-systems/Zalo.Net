@@ -210,7 +210,7 @@ public static class MessageApis
         ArgumentNullException.ThrowIfNull(imageBytes);
 
         bool isGroup = threadType == ZaloThreadType.Group;
-        string host = isGroup ? GetHost(session, "group", ZaloConstants.Hosts.Group) : GetHost(session, "chat", ZaloConstants.Hosts.Chat);
+        string host = GetHost(session, "file", ZaloConstants.Hosts.File);
         string path = isGroup ? "/api/group/photo" : "/api/message/photo";
         string url = MakeUrl(host, path);
 

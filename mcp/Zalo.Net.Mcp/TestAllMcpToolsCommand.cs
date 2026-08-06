@@ -208,7 +208,7 @@ public static class TestAllMcpToolsCommand
         // Test 11: Get Analytics
         try
         {
-            Console.WriteLine("\n[11/11] Testing 'zalo_get_analytics'...");
+            Console.WriteLine("\n[11/13] Testing 'zalo_get_analytics'...");
             string json = await smartTools.GetAnalyticsAsync(days: 30, ct: CancellationToken.None).ConfigureAwait(false);
             Console.WriteLine($"[PASS] Analytics Engine: {json}");
             passed++;
@@ -217,6 +217,43 @@ public static class TestAllMcpToolsCommand
         {
             Console.WriteLine($"[FAIL] 'zalo_get_analytics': {ex.Message}");
             failed++;
+        }
+
+        // Test 12: Download Attachment Test
+        try
+        {
+            Console.WriteLine("\n[12/13] Testing 'zalo_download_attachment'...");
+            string testUrl = "https://raw.githubusercontent.com/ppn-systems/Zalo.Net/main/icon.png";
+            string json = await messageTools.DownloadAttachmentAsync(testUrl, "test_zalo_icon.png", CancellationToken.None).ConfigureAwait(false);
+            Console.WriteLine($"[PASS] Download Attachment: {json}");
+            passed++;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[FAIL] 'zalo_download_attachment': {ex.Message}");
+            failed++;
+        }
+
+        // Test 13: Send Image Test
+        if (!string.IsNullOrEmpty(firstFriendUid))
+        {
+            try
+            {
+                Console.WriteLine($"\n[13/13] Testing 'zalo_send_image' to UID {firstFriendUid}...");
+                string testImageUrl = "https://raw.githubusercontent.com/ppn-systems/Zalo.Net/main/icon.png";
+                string json = await messageTools.SendImageAsync(firstFriendUid, "User", testImageUrl, "Test photo send via Zalo.Net.Mcp Server!", CancellationToken.None).ConfigureAwait(false);
+                Console.WriteLine($"[PASS] Send Image: {json}");
+                passed++;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[FAIL] 'zalo_send_image': {ex.Message}");
+                failed++;
+            }
+        }
+        else
+        {
+            Console.WriteLine("\n[13/13] [SKIP] 'zalo_send_image' (no friend UID available)");
         }
 
         Console.WriteLine($"\n=== AUDIT SUMMARY: Passed {passed}, Failed {failed} ===");
