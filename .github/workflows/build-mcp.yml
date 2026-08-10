@@ -136,7 +136,7 @@ jobs:
             type=raw,value=${{ inputs.tag || 'v1.0.0' }}
 
       - name: Build and Push Docker Image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: mcp/Zalo.Net.Mcp/Dockerfile
