@@ -4,6 +4,7 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -478,7 +479,19 @@ public sealed class ZaloWsListener
                 {
                     await this.SendThrottle(ct).ConfigureAwait(false);
                 }
-                ReadOnlyMemory<byte> frame = new byte[] { 0x01, 0x00, 0x00, 0x00 };
+
+                // Khung giữ nhịp ĐÚNG của Zalo Web: version=1, cmd=2, subCmd=1, thân JSON
+                // {"eventId": <ms>} (khung 4 byte 0x01 0x00 0x00 0x00 là SAI — máy chủ sẽ
+                // cắt kết nối và không đẩy sự kiện nào).
+                byte[] payload = Encoding.UTF8.GetBytes(
+                    "{\"eventId\":" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture) + "}");
+                byte[] frame = new byte[4 + payload.Length];
+                frame[0] = 0x01;   // version
+                frame[1] = 0x02;   // cmd = 2 (little-endian)
+                frame[2] = 0x00;
+                frame[3] = 0x01;   // subCmd = 1
+                payload.CopyTo(frame, 4);
+
                 await ws.SendAsync(frame, WebSocketMessageType.Binary, endOfMessage: true, ct).ConfigureAwait(false);
             }
         }
