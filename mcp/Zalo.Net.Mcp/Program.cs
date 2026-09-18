@@ -107,7 +107,11 @@ internal class Program
             .WithTools<AuthTools>()
             .WithTools<MessageTools>()
             .WithTools<GroupTools>()
-            .WithTools<SmartTools>();
+            .WithTools<SmartTools>()
+            // The stdio transport is what wires the server to standard input/output. Without it the
+            // host starts with no transport attached, so an `initialize` request sent over stdio is
+            // never read and the client hangs until its own timeout (no stdout, no stderr).
+            .WithStdioServerTransport();
 
         using IHost app = builder.Build();
 
