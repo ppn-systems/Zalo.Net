@@ -28,6 +28,14 @@ public sealed class ZaloWsListener
     /// <summary>Gets or sets the send throttle function.</summary>
     public Func<CancellationToken, Task>? SendThrottle { get; set; }
 
+    /// <summary>
+    /// Gets or sets how often the listener asks the server for recent messages
+    /// (<c>cmd 510/511</c>). Zalo only pushes events while the socket is up, so periodic sync
+    /// is what recovers messages sent during a reconnection gap. <see cref="TimeSpan.Zero"/>
+    /// disables it.
+    /// </summary>
+    public TimeSpan HistorySyncInterval { get; set; } = TimeSpan.FromSeconds(30);
+
     private const int InitialBufferSize = 4 * 1024;
 
     /// <summary>
@@ -59,6 +67,11 @@ public sealed class ZaloWsListener
     /// <summary>Runs the WebSocket receive loop.</summary>
     public async Task<DisconnectReason> RunAsync(string wsUrl, CancellationToken ct)
     {
+        if (Environment.GetEnvironmentVariable("ZALO_WS_DEBUG") == "1")
+        {
+            await Console.Error.WriteLineAsync($"[ws-debug] kết nối {wsUrl}").ConfigureAwait(false);
+        }
+
         using ClientWebSocket ws = new();
         this.ConfigureWs(ws);
 
@@ -245,6 +258,11 @@ public sealed class ZaloWsListener
         (_, int cmd, byte subCmd) = WsFrameCodec.ParseHeader(frameBytes.AsSpan());
         ReadOnlyMemory<byte> body = new(frameBytes, 4, frameBytes.Length - 4);
 
+        if (Environment.GetEnvironmentVariable("ZALO_WS_DEBUG") == "1")
+        {
+            await Console.Error.WriteLineAsync($"[ws-debug] khung vào cmd={cmd} sub={subCmd} dài={body.Length}").ConfigureAwait(false);
+        }
+
         switch (cmd)
         {
             case 1 when subCmd == 1:
@@ -256,6 +274,11 @@ public sealed class ZaloWsListener
                 try
                 {
                     JsonNode? payload = await WsFrameCodec.DecodeFrameBodyAsync(body, state.Key, ct).ConfigureAwait(false);
+                    if (Environment.GetEnvironmentVariable("ZALO_WS_DEBUG") == "1")
+                    {
+                        string dump = payload?.ToJsonString() ?? "(null)";
+                        await Console.Error.WriteLineAsync($"[ws-debug] cmd={cmd} payload={dump[..Math.Min(600, dump.Length)]}").ConfigureAwait(false);
+                    }
                     if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.WebSocket.FrameDecoded))
                     {
                         ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.WebSocket.FrameDecoded, new { Cmd = cmd, SubCmd = subCmd, FrameLength = body.Length });
@@ -264,6 +287,10 @@ public sealed class ZaloWsListener
                 }
                 catch (Exception ex)
                 {
+                    if (Environment.GetEnvironmentVariable("ZALO_WS_DEBUG") == "1")
+                    {
+                        await Console.Error.WriteLineAsync($"[ws-debug] LỖI giải mã cmd={cmd} sub={subCmd}: {ex.GetType().Name}: {ex.Message}").ConfigureAwait(false);
+                    }
                     if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.WebSocket.FrameError))
                     {
                         ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.WebSocket.FrameError, new { Cmd = cmd, SubCmd = subCmd, Error = ex.Message });
@@ -276,6 +303,11 @@ public sealed class ZaloWsListener
                 try
                 {
                     JsonNode? payload = await WsFrameCodec.DecodeFrameBodyAsync(body, state.Key, ct).ConfigureAwait(false);
+                    if (Environment.GetEnvironmentVariable("ZALO_WS_DEBUG") == "1")
+                    {
+                        string dump = payload?.ToJsonString() ?? "(null)";
+                        await Console.Error.WriteLineAsync($"[ws-debug] cmd={cmd} payload={dump[..Math.Min(600, dump.Length)]}").ConfigureAwait(false);
+                    }
                     if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.WebSocket.FrameDecoded))
                     {
                         ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.WebSocket.FrameDecoded, new { Cmd = cmd, SubCmd = subCmd, FrameLength = body.Length });
@@ -284,6 +316,10 @@ public sealed class ZaloWsListener
                 }
                 catch (Exception ex)
                 {
+                    if (Environment.GetEnvironmentVariable("ZALO_WS_DEBUG") == "1")
+                    {
+                        await Console.Error.WriteLineAsync($"[ws-debug] LỖI giải mã cmd={cmd} sub={subCmd}: {ex.GetType().Name}: {ex.Message}").ConfigureAwait(false);
+                    }
                     if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.WebSocket.FrameError))
                     {
                         ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.WebSocket.FrameError, new { Cmd = cmd, SubCmd = subCmd, Error = ex.Message });
@@ -466,6 +502,7 @@ public sealed class ZaloWsListener
 
     private async Task PingLoopAsync(ClientWebSocket ws, int intervalMs, CancellationToken ct)
     {
+        DateTimeOffset lastSync = DateTimeOffset.MinValue;
         try
         {
             while (!ct.IsCancellationRequested)
@@ -483,18 +520,38 @@ public sealed class ZaloWsListener
                 // Khung giữ nhịp ĐÚNG của Zalo Web: version=1, cmd=2, subCmd=1, thân JSON
                 // {"eventId": <ms>} (khung 4 byte 0x01 0x00 0x00 0x00 là SAI — máy chủ sẽ
                 // cắt kết nối và không đẩy sự kiện nào).
-                byte[] payload = Encoding.UTF8.GetBytes(
-                    "{\"eventId\":" + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture) + "}");
-                byte[] frame = new byte[4 + payload.Length];
-                frame[0] = 0x01;   // version
-                frame[1] = 0x02;   // cmd = 2 (little-endian)
-                frame[2] = 0x00;
-                frame[3] = 0x01;   // subCmd = 1
-                payload.CopyTo(frame, 4);
+                await SendFrameAsync(ws, 2, 1, "{\"eventId\":" + NowMs() + "}", ct).ConfigureAwait(false);
 
-                await ws.SendAsync(frame, WebSocketMessageType.Binary, endOfMessage: true, ct).ConfigureAwait(false);
+                // Máy chủ Zalo chỉ đẩy sự kiện khi socket còn sống; muốn không mất tin trong
+                // lúc ngắt thì phải chủ động xin lại danh sách tin gần đây (cmd 510 người /
+                // 511 nhóm) rồi để DispatchMessages xử lý như tin đến bình thường.
+                if (this.HistorySyncInterval > TimeSpan.Zero
+                    && DateTimeOffset.UtcNow - lastSync >= this.HistorySyncInterval)
+                {
+                    lastSync = DateTimeOffset.UtcNow;
+                    const string syncBody = "{\"first\":true,\"lastId\":null,\"preIds\":[]}";
+                    await SendFrameAsync(ws, 510, 1, syncBody, ct).ConfigureAwait(false);
+                    await SendFrameAsync(ws, 511, 1, syncBody, ct).ConfigureAwait(false);
+                }
             }
         }
         catch (OperationCanceledException) { /* expected */ }
+    }
+
+    private static string NowMs() =>
+        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>Gửi một khung WS theo định dạng Zalo: header 4 byte (version, cmd u16 LE, subCmd) + JSON.</summary>
+    private static async Task SendFrameAsync(
+        ClientWebSocket ws, ushort cmd, byte subCmd, string jsonBody, CancellationToken ct)
+    {
+        byte[] payload = Encoding.UTF8.GetBytes(jsonBody);
+        byte[] frame = new byte[4 + payload.Length];
+        frame[0] = 0x01;                       // version
+        frame[1] = (byte)(cmd & 0xFF);         // cmd, little-endian
+        frame[2] = (byte)((cmd >> 8) & 0xFF);
+        frame[3] = subCmd;
+        payload.CopyTo(frame, 4);
+        await ws.SendAsync(frame, WebSocketMessageType.Binary, endOfMessage: true, ct).ConfigureAwait(false);
     }
 }
