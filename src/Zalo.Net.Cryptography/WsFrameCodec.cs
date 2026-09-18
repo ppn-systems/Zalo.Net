@@ -11,7 +11,6 @@ using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Security.Cryptography;
 
 namespace Zalo.Net.Cryptography;
 
@@ -92,7 +91,7 @@ public static class WsFrameCodec
         byte[] ctWithTag = buf[32..];
 
         byte[] keyBytes = Convert.FromBase64String(cipherKey);
-        byte[] plaintext = AesGcmDecrypt(keyBytes, iv, aad, ctWithTag);
+        byte[] plaintext = AesGcmAnyNonce.Decrypt(keyBytes, iv, aad, ctWithTag);
 
         if (!inflate)
         {
@@ -101,23 +100,6 @@ public static class WsFrameCodec
 
         byte[] inflated = await InflateAsync(plaintext, ct).ConfigureAwait(false);
         return ParseJsonSafe(Encoding.UTF8.GetString(inflated));
-    }
-
-    private static byte[] AesGcmDecrypt(byte[] key, byte[] nonce, byte[] aad, byte[] ctWithTag)
-    {
-        if (ctWithTag.Length < 16)
-        {
-            throw new InvalidOperationException("Ciphertext with tag must be at least 16 bytes");
-        }
-
-        ReadOnlySpan<byte> actualNonce = nonce.Length > 12 ? nonce.AsSpan(0, 12) : nonce;
-        ReadOnlySpan<byte> ciphertext = ctWithTag.AsSpan(0, ctWithTag.Length - 16);
-        ReadOnlySpan<byte> tag = ctWithTag.AsSpan(ctWithTag.Length - 16, 16);
-
-        using AesGcm gcm = new(key, 16);
-        byte[] plaintext = new byte[ciphertext.Length];
-        gcm.Decrypt(actualNonce, ciphertext, tag, plaintext, aad);
-        return plaintext;
     }
 
     private static async Task<string> InflateBase64Async(string base64, CancellationToken ct)
