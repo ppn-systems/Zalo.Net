@@ -4,4 +4,5 @@
   <Project Path="Zalo.Net.Cryptography.Tests/Zalo.Net.Cryptography.Tests.csproj" />
   <Project Path="Zalo.Net.WebSocket.Tests/Zalo.Net.WebSocket.Tests.csproj" />
   <Project Path="Zalo.Net.Tests/Zalo.Net.Tests.csproj" />
+  <Project Path="Zalo.Net.Mcp.Tests/Zalo.Net.Mcp.Tests.csproj" />
 </Solution>

@@ -117,21 +117,6 @@ public sealed partial class MessageRepository(ZaloDatabase db)
     {
         ArgumentNullException.ThrowIfNull(msg);
 
-        using SqliteConnection conn = this._db.CreateConnection();
-        using SqliteCommand cmd = conn.CreateCommand();
-
-        cmd.CommandText = """
-            INSERT INTO messages (
-                msg_id, cli_msg_id, thread_id, thread_type, uid_from,
-                display_name, content, msg_type, attachments_json, is_self, is_urgent, timestamp_ms, created_at
-            ) VALUES (
-                @msg_id, @cli_msg_id, @thread_id, @thread_type, @uid_from,
-                @display_name, @content, @msg_type, @attachments_json, @is_self, @is_urgent, @timestamp_ms, @created_at
-            ) ON CONFLICT(msg_id) DO UPDATE SET
-                content = EXCLUDED.content,
-                attachments_json = EXCLUDED.attachments_json;
-            """;
-
         string contentText = msg.Content?.ToString() ?? string.Empty;
         bool isUrgent = UrgentRegex().IsMatch(contentText);
 
@@ -143,75 +128,155 @@ public sealed partial class MessageRepository(ZaloDatabase db)
             ? parsedTs
             : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
 
-        _ = cmd.Parameters.AddWithValue("@msg_id", msg.MsgId);
-        _ = cmd.Parameters.AddWithValue("@cli_msg_id", msg.CliMsgId ?? string.Empty);
-        _ = cmd.Parameters.AddWithValue("@thread_id", msg.ThreadId);
-        _ = cmd.Parameters.AddWithValue("@thread_type", msg.ThreadType.ToString());
-        _ = cmd.Parameters.AddWithValue("@uid_from", msg.UidFrom);
-        _ = cmd.Parameters.AddWithValue("@display_name", msg.DisplayName ?? string.Empty);
-        _ = cmd.Parameters.AddWithValue("@content", contentText);
-        _ = cmd.Parameters.AddWithValue("@msg_type", msg.MsgType ?? "text");
-        _ = cmd.Parameters.AddWithValue("@attachments_json", (object?)attachmentsJson ?? DBNull.Value);
-        _ = cmd.Parameters.AddWithValue("@is_self", msg.IsSelf ? 1 : 0);
-        _ = cmd.Parameters.AddWithValue("@is_urgent", isUrgent ? 1 : 0);
-        _ = cmd.Parameters.AddWithValue("@timestamp_ms", ts);
-        _ = cmd.Parameters.AddWithValue("@created_at", DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture));
+        using SqliteConnection conn = this._db.CreateConnection();
 
-        _ = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        // The message row and every row derived from it are written in ONE transaction, so a save
+        // costs a single commit instead of one commit per statement.
+        using SqliteTransaction tx = conn.BeginTransaction();
 
-        // Update CRM Contact Insights
+        // A history sync (cmd 510/511) replays messages that are already stored, and the WebSocket
+        // listener re-emits them after every reconnect. The message row itself is de-duplicated by
+        // ON CONFLICT, but the derived rows below used to be inserted again on every replay — that is
+        // how one single message ended up with hundreds of duplicated reminders and entities, and why
+        // those tables (and their read queries) kept growing forever.
+        (bool alreadyStored, string storedContent) = await TryGetStoredContentAsync(conn, tx, msg.MsgId, ct).ConfigureAwait(false);
+        bool contentChanged = alreadyStored && !string.Equals(storedContent, contentText, StringComparison.Ordinal);
+
+        if (alreadyStored && !contentChanged)
+        {
+            // Replay of an unchanged message: keep the stored row and its derived rows untouched.
+            return;
+        }
+
+        using (SqliteCommand cmd = conn.CreateCommand())
+        {
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO messages (
+                    msg_id, cli_msg_id, thread_id, thread_type, uid_from,
+                    display_name, content, msg_type, attachments_json, is_self, is_urgent, timestamp_ms, created_at
+                ) VALUES (
+                    @msg_id, @cli_msg_id, @thread_id, @thread_type, @uid_from,
+                    @display_name, @content, @msg_type, @attachments_json, @is_self, @is_urgent, @timestamp_ms, @created_at
+                ) ON CONFLICT(msg_id) DO UPDATE SET
+                    content = EXCLUDED.content,
+                    attachments_json = EXCLUDED.attachments_json,
+                    is_urgent = EXCLUDED.is_urgent;
+                """;
+
+            _ = cmd.Parameters.AddWithValue("@msg_id", msg.MsgId);
+            _ = cmd.Parameters.AddWithValue("@cli_msg_id", msg.CliMsgId ?? string.Empty);
+            _ = cmd.Parameters.AddWithValue("@thread_id", msg.ThreadId);
+            _ = cmd.Parameters.AddWithValue("@thread_type", msg.ThreadType.ToString());
+            _ = cmd.Parameters.AddWithValue("@uid_from", msg.UidFrom);
+            _ = cmd.Parameters.AddWithValue("@display_name", msg.DisplayName ?? string.Empty);
+            _ = cmd.Parameters.AddWithValue("@content", contentText);
+            _ = cmd.Parameters.AddWithValue("@msg_type", msg.MsgType ?? "text");
+            _ = cmd.Parameters.AddWithValue("@attachments_json", (object?)attachmentsJson ?? DBNull.Value);
+            _ = cmd.Parameters.AddWithValue("@is_self", msg.IsSelf ? 1 : 0);
+            _ = cmd.Parameters.AddWithValue("@is_urgent", isUrgent ? 1 : 0);
+            _ = cmd.Parameters.AddWithValue("@timestamp_ms", ts);
+            _ = cmd.Parameters.AddWithValue("@created_at", DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture));
+
+            _ = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        }
+
+        if (contentChanged)
+        {
+            // Derived rows are rebuilt from the current text, so drop the ones extracted from the old text.
+            await DeleteDerivedRowsAsync(conn, tx, msg.MsgId, ct).ConfigureAwait(false);
+        }
+
+        // Update CRM Contact Insights — a message that is only being replayed is not a new message.
         if (!string.IsNullOrWhiteSpace(msg.UidFrom))
         {
-            await this.UpdateContactInsightInternalAsync(conn, msg.UidFrom, msg.DisplayName, ct).ConfigureAwait(false);
+            await UpdateContactInsightInternalAsync(conn, tx, msg.UidFrom, msg.DisplayName, increment: contentChanged ? 0 : 1, ct).ConfigureAwait(false);
         }
 
         // Perform smart entity & reminder extraction
         if (!string.IsNullOrWhiteSpace(contentText))
         {
-            await this.ExtractAndSaveEntitiesInternalAsync(conn, msg.MsgId, msg.ThreadId, contentText, ct).ConfigureAwait(false);
+            await ExtractAndSaveEntitiesInternalAsync(conn, tx, msg.MsgId, msg.ThreadId, contentText, ct).ConfigureAwait(false);
         }
+
+        tx.Commit();
     }
 
-    private async Task UpdateContactInsightInternalAsync(SqliteConnection conn, string userId, string? displayName, CancellationToken ct)
+    /// <summary>
+    /// Returns the content already stored for <paramref name="msgId"/>, so a replayed message can be
+    /// skipped instead of re-running the (side-effecting) extraction pipeline.
+    /// </summary>
+    private static async Task<(bool Found, string Content)> TryGetStoredContentAsync(SqliteConnection conn, SqliteTransaction tx, string msgId, CancellationToken ct)
     {
         using SqliteCommand cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "SELECT content FROM messages WHERE msg_id = @msg_id;";
+        _ = cmd.Parameters.AddWithValue("@msg_id", msgId);
+
+        using SqliteDataReader reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        if (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            bool isNull = await reader.IsDBNullAsync(0, ct).ConfigureAwait(false);
+            return (true, isNull ? string.Empty : reader.GetString(0));
+        }
+
+        return (false, string.Empty);
+    }
+
+    private static async Task DeleteDerivedRowsAsync(SqliteConnection conn, SqliteTransaction tx, string msgId, CancellationToken ct)
+    {
+        using SqliteCommand cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            DELETE FROM extracted_entities WHERE msg_id = @msg_id;
+            DELETE FROM reminders WHERE msg_id = @msg_id;
+            """;
+        _ = cmd.Parameters.AddWithValue("@msg_id", msgId);
+        _ = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
+    private async Task UpdateContactInsightInternalAsync(SqliteConnection conn, SqliteTransaction tx, string userId, string? displayName, int increment, CancellationToken ct)
+    {
+        using SqliteCommand cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
         string now = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
 
         cmd.CommandText = """
             INSERT INTO contact_insights (user_id, display_name, first_seen_at, last_active_at, total_messages)
-            VALUES (@user_id, @display_name, @now, @now, 1)
+            VALUES (@user_id, @display_name, @now, @now, @increment)
             ON CONFLICT(user_id) DO UPDATE SET
                 display_name = COALESCE(EXCLUDED.display_name, contact_insights.display_name),
                 last_active_at = EXCLUDED.last_active_at,
-                total_messages = contact_insights.total_messages + 1;
+                total_messages = contact_insights.total_messages + @increment;
             """;
         _ = cmd.Parameters.AddWithValue("@user_id", userId);
         _ = cmd.Parameters.AddWithValue("@display_name", (object?)displayName ?? DBNull.Value);
         _ = cmd.Parameters.AddWithValue("@now", now);
+        _ = cmd.Parameters.AddWithValue("@increment", increment);
 
         _ = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
-    private async Task ExtractAndSaveEntitiesInternalAsync(SqliteConnection conn, string msgId, string threadId, string text, CancellationToken ct)
+    private async Task ExtractAndSaveEntitiesInternalAsync(SqliteConnection conn, SqliteTransaction tx, string msgId, string threadId, string text, CancellationToken ct)
     {
         string now = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
 
         // Extract Phone Numbers
         foreach (Match match in PhoneRegex().Matches(text))
         {
-            await InsertEntityAsync(conn, msgId, threadId, "phone", match.Value, text, now, ct).ConfigureAwait(false);
+            await InsertEntityAsync(conn, tx, msgId, threadId, "phone", match.Value, text, now, ct).ConfigureAwait(false);
         }
 
         // Extract URLs
         foreach (Match match in UrlRegex().Matches(text))
         {
-            await InsertEntityAsync(conn, msgId, threadId, "url", match.Value, text, now, ct).ConfigureAwait(false);
+            await InsertEntityAsync(conn, tx, msgId, threadId, "url", match.Value, text, now, ct).ConfigureAwait(false);
         }
 
         // Extract Bank Accounts / STK
         foreach (Match match in BankCardRegex().Matches(text))
         {
-            await InsertEntityAsync(conn, msgId, threadId, "bank_card", match.Value, text, now, ct).ConfigureAwait(false);
+            await InsertEntityAsync(conn, tx, msgId, threadId, "bank_card", match.Value, text, now, ct).ConfigureAwait(false);
         }
 
         // Extract Reminders / Schedules
@@ -219,9 +284,11 @@ public sealed partial class MessageRepository(ZaloDatabase db)
         if (reminderMatch.Success)
         {
             using SqliteCommand cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
             cmd.CommandText = """
                 INSERT INTO reminders (msg_id, thread_id, title, raw_text, created_at)
-                VALUES (@msg_id, @thread_id, @title, @raw_text, @now);
+                VALUES (@msg_id, @thread_id, @title, @raw_text, @now)
+                ON CONFLICT(msg_id) DO NOTHING;
                 """;
             _ = cmd.Parameters.AddWithValue("@msg_id", msgId);
             _ = cmd.Parameters.AddWithValue("@thread_id", threadId);
@@ -232,12 +299,14 @@ public sealed partial class MessageRepository(ZaloDatabase db)
         }
     }
 
-    private static async Task InsertEntityAsync(SqliteConnection conn, string msgId, string threadId, string type, string value, string rawText, string now, CancellationToken ct)
+    private static async Task InsertEntityAsync(SqliteConnection conn, SqliteTransaction tx, string msgId, string threadId, string type, string value, string rawText, string now, CancellationToken ct)
     {
         using SqliteCommand cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
         cmd.CommandText = """
             INSERT INTO extracted_entities (msg_id, thread_id, entity_type, value, raw_text, created_at)
-            VALUES (@msg_id, @thread_id, @type, @value, @raw_text, @now);
+            VALUES (@msg_id, @thread_id, @type, @value, @raw_text, @now)
+            ON CONFLICT(msg_id, entity_type, value) DO NOTHING;
             """;
         _ = cmd.Parameters.AddWithValue("@msg_id", msgId);
         _ = cmd.Parameters.AddWithValue("@thread_id", threadId);
