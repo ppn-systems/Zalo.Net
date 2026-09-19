@@ -317,11 +317,18 @@ public sealed partial class MessageRepository(ZaloDatabase db)
         _ = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
-    public async Task<IReadOnlyList<ExtractedReminder>> GetRemindersAsync(int limit = 50, CancellationToken ct = default)
+    public async Task<IReadOnlyList<ExtractedReminder>> GetRemindersAsync(int limit = 50, string? contains = null, CancellationToken ct = default)
     {
         using SqliteConnection conn = this._db.CreateConnection();
         using SqliteCommand cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT id, msg_id, thread_id, title, event_time, raw_text, created_at FROM reminders ORDER BY id DESC LIMIT @limit;";
+        cmd.CommandText = """
+            SELECT id, msg_id, thread_id, title, event_time, raw_text, created_at
+            FROM reminders
+            WHERE (@like IS NULL OR title LIKE @like ESCAPE '\' OR raw_text LIKE @like ESCAPE '\')
+            ORDER BY id DESC
+            LIMIT @limit;
+            """;
+        _ = cmd.Parameters.AddWithValue("@like", LikePattern(contains));
         _ = cmd.Parameters.AddWithValue("@limit", limit);
 
         List<ExtractedReminder> list = [];
@@ -408,21 +415,25 @@ public sealed partial class MessageRepository(ZaloDatabase db)
         return list;
     }
 
-    public async Task<IReadOnlyList<ExtractedEntity>> GetExtractedEntitiesAsync(string? entityType = null, int limit = 50, CancellationToken ct = default)
+    public async Task<IReadOnlyList<ExtractedEntity>> GetExtractedEntitiesAsync(string? entityType = null, int limit = 50, string? contains = null, CancellationToken ct = default)
     {
         using SqliteConnection conn = this._db.CreateConnection();
         using SqliteCommand cmd = conn.CreateCommand();
 
-        if (string.IsNullOrWhiteSpace(entityType))
-        {
-            cmd.CommandText = "SELECT id, msg_id, thread_id, entity_type, value, raw_text, created_at FROM extracted_entities ORDER BY id DESC LIMIT @limit;";
-        }
-        else
-        {
-            cmd.CommandText = "SELECT id, msg_id, thread_id, entity_type, value, raw_text, created_at FROM extracted_entities WHERE entity_type = @type ORDER BY id DESC LIMIT @limit;";
-            _ = cmd.Parameters.AddWithValue("@type", entityType.Trim().ToLowerInvariant());
-        }
+        // Both filters live in SQL: `@type IS NULL` keeps the "no type filter" case, and the text match
+        // is evaluated against every row instead of only against the ones that were fetched.
+        cmd.CommandText = """
+            SELECT id, msg_id, thread_id, entity_type, value, raw_text, created_at
+            FROM extracted_entities
+            WHERE (@type IS NULL OR entity_type = @type)
+              AND (@like IS NULL OR value LIKE @like ESCAPE '\' OR raw_text LIKE @like ESCAPE '\')
+            ORDER BY id DESC
+            LIMIT @limit;
+            """;
 
+        string? typeFilter = string.IsNullOrWhiteSpace(entityType) ? null : entityType.Trim().ToLowerInvariant();
+        _ = cmd.Parameters.AddWithValue("@type", (object?)typeFilter ?? DBNull.Value);
+        _ = cmd.Parameters.AddWithValue("@like", LikePattern(contains));
         _ = cmd.Parameters.AddWithValue("@limit", limit);
 
         List<ExtractedEntity> list = [];
@@ -447,16 +458,28 @@ public sealed partial class MessageRepository(ZaloDatabase db)
     public async Task<SmartSearchResult> SmartSearchAsync(string query, int limit = 50, CancellationToken ct = default)
     {
         IReadOnlyList<SavedMessage> messages = await this.SearchMessagesAsync(query, limit, ct).ConfigureAwait(false);
-        IReadOnlyList<ExtractedEntity> entities = await this.GetExtractedEntitiesAsync(null, limit, ct).ConfigureAwait(false);
-        IReadOnlyList<ExtractedReminder> reminders = await this.GetRemindersAsync(limit, ct).ConfigureAwait(false);
 
-        List<ExtractedEntity> filteredEntities = [.. entities
-            .Where(e => e.Value.Contains(query, StringComparison.OrdinalIgnoreCase) || (e.RawText != null && e.RawText.Contains(query, StringComparison.OrdinalIgnoreCase)))];
+        // The entity and reminder lookups match in SQL instead of in memory. The previous version read
+        // the newest `limit` rows of each table and filtered that page with LINQ, which had two
+        // consequences: a bank account / phone / reminder that was not inside that page could never be
+        // returned by the tool, and every call loaded the whole table into the process to discard
+        // almost all of it.
+        IReadOnlyList<ExtractedEntity> entities = await this.GetExtractedEntitiesAsync(entityType: null, limit, contains: query, ct).ConfigureAwait(false);
+        IReadOnlyList<ExtractedReminder> reminders = await this.GetRemindersAsync(limit, contains: query, ct).ConfigureAwait(false);
 
-        List<ExtractedReminder> filteredReminders = [.. reminders
-            .Where(r => r.Title.Contains(query, StringComparison.OrdinalIgnoreCase) || (r.RawText != null && r.RawText.Contains(query, StringComparison.OrdinalIgnoreCase)))];
+        return new SmartSearchResult(messages, entities, reminders, messages.Count + entities.Count + reminders.Count);
+    }
 
-        return new SmartSearchResult(messages, filteredEntities, filteredReminders, messages.Count + filteredEntities.Count + filteredReminders.Count);
+    /// <summary>
+    /// Builds the <c>LIKE</c> pattern for an optional "contains" filter, escaping the wildcards in the
+    /// caller's text so a query containing <c>%</c> or <c>_</c> is matched literally. Returns
+    /// <see cref="DBNull"/> when there is nothing to filter on.
+    /// </summary>
+    private static object LikePattern(string? contains)
+    {
+        return string.IsNullOrWhiteSpace(contains)
+            ? DBNull.Value
+            : $"%{contains.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("%", "\\%", StringComparison.Ordinal).Replace("_", "\\_", StringComparison.Ordinal)}%";
     }
 
     public async Task<IReadOnlyList<SavedMessage>> GetChatHistoryAsync(string threadId, int limit = 50, CancellationToken ct = default)
@@ -589,10 +612,23 @@ public sealed partial class MessageRepository(ZaloDatabase db)
         using SqliteConnection conn = this._db.CreateConnection();
         using SqliteCommand cmd = conn.CreateCommand();
 
+        // ROW_NUMBER picks the newest message of each thread and COUNT(*) OVER counts the messages of
+        // that thread. The previous version grouped the table and read `content` / `timestamp_ms` as
+        // bare columns while the window function was evaluated over the *grouped* rows, so the count
+        // was always 1 no matter how many messages the thread held, and which message was reported as
+        // the latest depended on the order SQLite happened to scan the group in.
         cmd.CommandText = """
-            SELECT thread_id, thread_type, content, timestamp_ms, COUNT(*) over(PARTITION BY thread_id)
-            FROM messages
-            GROUP BY thread_id
+            SELECT thread_id, thread_type, content, timestamp_ms, message_count
+            FROM (
+                SELECT m.thread_id,
+                       m.thread_type,
+                       m.content,
+                       m.timestamp_ms,
+                       COUNT(*) OVER (PARTITION BY m.thread_id) AS message_count,
+                       ROW_NUMBER() OVER (PARTITION BY m.thread_id ORDER BY m.timestamp_ms DESC, m.msg_id DESC) AS row_num
+                FROM messages m
+            )
+            WHERE row_num = 1
             ORDER BY timestamp_ms DESC
             LIMIT @limit;
             """;
