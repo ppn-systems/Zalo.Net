@@ -123,12 +123,16 @@ public sealed class ZaloDatabase
             CREATE INDEX IF NOT EXISTS idx_messages_thread ON messages(thread_id, timestamp_ms DESC);
             CREATE INDEX IF NOT EXISTS idx_messages_urgent ON messages(is_urgent, timestamp_ms DESC);
 
-            -- SQLite FTS5 Virtual Table for sub-millisecond full-text message search
+            -- SQLite FTS5 Virtual Table for sub-millisecond full-text message search.
+            -- remove_diacritics 2 folds the accents of the Latin/Vietnamese alphabet, so a search
+            -- typed without accents ("tai lieu", "hoc phi", "gap") still matches the accented text
+            -- that people actually write ("Tài liệu", "học phí", "gấp").
             CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
                 msg_id UNINDEXED,
                 thread_id UNINDEXED,
                 display_name,
-                content
+                content,
+                tokenize = "unicode61 remove_diacritics 2"
             );
 
             -- Triggers to sync FTS5 table automatically on INSERT/UPDATE
@@ -226,6 +230,57 @@ public sealed class ZaloDatabase
             // Legacy rows that still collide (e.g. a message whose reminder appears twice) must not
             // keep the server from starting: the insert paths de-duplicate on their own.
         }
+
+        this.MigrateFullTextSearchTokenizer(conn);
+    }
+
+    /// <summary>
+    /// Rebuilds the full-text index with the diacritic-insensitive tokenizer declared in
+    /// <see cref="Initialize"/>. Databases created by earlier builds carry an FTS table whose
+    /// tokenizer only matches the exact accented spelling, so searching "tai lieu" for "Tài liệu"
+    /// returned nothing. FTS5 stores the tokenizer inside the virtual table definition and offers no
+    /// ALTER, so the index has to be dropped and rebuilt from the <c>messages</c> table.
+    /// <para>
+    /// The guard reads the stored definition instead of <c>PRAGMA user_version</c>: this migration is
+    /// a no-op for every database whose index is already correct, and it cannot swallow (or be
+    /// swallowed by) another migration that also uses the version counter.
+    /// </para>
+    /// </summary>
+    private void MigrateFullTextSearchTokenizer(SqliteConnection conn)
+    {
+        using (SqliteCommand definitionCmd = conn.CreateCommand())
+        {
+            definitionCmd.CommandText = "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'messages_fts';";
+            if (definitionCmd.ExecuteScalar() is string definition
+                && definition.Contains("remove_diacritics", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        using SqliteTransaction tx = conn.BeginTransaction();
+
+        using (SqliteCommand rebuildCmd = conn.CreateCommand())
+        {
+            rebuildCmd.Transaction = tx;
+            rebuildCmd.CommandText = """
+                DROP TABLE IF EXISTS messages_fts;
+
+                CREATE VIRTUAL TABLE messages_fts USING fts5(
+                    msg_id UNINDEXED,
+                    thread_id UNINDEXED,
+                    display_name,
+                    content,
+                    tokenize = "unicode61 remove_diacritics 2"
+                );
+
+                INSERT INTO messages_fts(msg_id, thread_id, display_name, content)
+                SELECT msg_id, thread_id, display_name, content FROM messages;
+                """;
+            _ = rebuildCmd.ExecuteNonQuery();
+        }
+
+        tx.Commit();
     }
 
     /// <summary>

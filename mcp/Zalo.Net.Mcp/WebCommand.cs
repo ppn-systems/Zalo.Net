@@ -92,7 +92,7 @@ public static class WebCommand
 
         _ = app.MapGet("/api/zalo/reminders", async (int limit = 50, CancellationToken ct = default) =>
         {
-            IReadOnlyList<ExtractedReminder> reminders = await sessionManager.Repository.GetRemindersAsync(limit, ct).ConfigureAwait(false);
+            IReadOnlyList<ExtractedReminder> reminders = await sessionManager.Repository.GetRemindersAsync(limit, ct: ct).ConfigureAwait(false);
             return Results.Ok(reminders);
         });
 

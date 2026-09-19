@@ -115,12 +115,17 @@ internal class Program
 
         using IHost app = builder.Build();
 
-        // Initialize SQLite Database and auto-load saved Zalo Session
+        // Initialize SQLite Database (local, milliseconds) before the transport starts.
         ZaloDatabase db = app.Services.GetRequiredService<ZaloDatabase>();
         db.Initialize();
 
         ZaloSessionManager sessionManager = app.Services.GetRequiredService<ZaloSessionManager>();
-        await sessionManager.InitializeFromDatabaseAsync().ConfigureAwait(false);
+
+        // Restoring the saved Zalo session talks to Zalo over the network and starts the WebSocket
+        // listener. It runs in the background on purpose: the MCP handshake must not wait for it.
+        // Clients sent `initialize` while the login was still in flight, got no answer within their
+        // own timeout, and reported the server as broken even though it was merely still connecting.
+        sessionManager.StartBootstrapInBackground();
 
         await app.RunAsync().ConfigureAwait(false);
     }

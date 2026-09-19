@@ -32,9 +32,10 @@ public sealed class SmartTools(ZaloSessionManager sessionManager)
     public async Task<string> GetExtractedEntitiesAsync(
         [Description("Loại thực thể cần lấy: 'bank_card', 'phone', 'url' (để trống nếu lấy tất cả)")] string? entityType = null,
         [Description("Số lượng kết quả tối đa (mặc định 50)")] int limit = 50,
+        [Description("Lọc theo nội dung: chỉ lấy thực thể có giá trị hoặc tin nhắn gốc chứa chuỗi này (tùy chọn)")] string? contains = null,
         CancellationToken ct = default)
     {
-        IReadOnlyList<ExtractedEntity> entities = await this._sessionManager.Repository.GetExtractedEntitiesAsync(entityType, limit, ct).ConfigureAwait(false);
+        IReadOnlyList<ExtractedEntity> entities = await this._sessionManager.Repository.GetExtractedEntitiesAsync(entityType, limit, contains, ct).ConfigureAwait(false);
         return JsonSerializer.Serialize(entities, ZaloMcpJsonContext.Default.IReadOnlyListExtractedEntity);
     }
 
@@ -42,9 +43,10 @@ public sealed class SmartTools(ZaloSessionManager sessionManager)
     [Description("Lấy danh sách các lịch hẹn, cuộc họp, thời gian đã tự động phát hiện từ các tin nhắn Zalo.")]
     public async Task<string> GetRemindersAsync(
         [Description("Số lượng kết quả tối đa (mặc định 50)")] int limit = 50,
+        [Description("Lọc theo nội dung: chỉ lấy nhắc hẹn có tiêu đề hoặc tin nhắn gốc chứa chuỗi này (tùy chọn)")] string? contains = null,
         CancellationToken ct = default)
     {
-        IReadOnlyList<ExtractedReminder> reminders = await this._sessionManager.Repository.GetRemindersAsync(limit, ct).ConfigureAwait(false);
+        IReadOnlyList<ExtractedReminder> reminders = await this._sessionManager.Repository.GetRemindersAsync(limit, contains, ct).ConfigureAwait(false);
         return JsonSerializer.Serialize(reminders, ZaloMcpJsonContext.Default.IReadOnlyListExtractedReminder);
     }
 
