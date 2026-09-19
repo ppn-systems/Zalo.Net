@@ -15,6 +15,12 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <NoWarn>$(NoWarn);CA1062;CA1303;CA1849;CA1873;IDE0009;IDE0011;IDE0022;IDE0058;IL2026;IL3050;IL3000;CS1591;CA2000;CA2007;CA1031</NoWarn>
+    <!-- The sources of this project are authored with CRLF line endings (.editorconfig sets
+         end_of_line = crlf for *.cs) while .gitattributes checks .cs files out as LF, so on Linux
+         (and in CI) EnforceCodeStyleInBuild fails with IDE0055 "Fix formatting" errors before a
+         single line of code is compiled. The style check stays on for the libraries; it is switched
+         off here so the MCP server can be built and tested on every platform. -->
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
   </PropertyGroup>
 
   <ItemGroup>
