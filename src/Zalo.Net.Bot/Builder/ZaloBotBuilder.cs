@@ -3,6 +3,7 @@
 
 using System.Diagnostics.CodeAnalysis;
 using System.Net;
+using Microsoft.Extensions.Logging;
 using Zalo.Net.Bot.Context;
 using Zalo.Net.Bot.Engine;
 using Zalo.Net.Bot.Routing;
@@ -19,6 +20,9 @@ public sealed class ZaloBotBuilder
     private IZaloClient? _client;
     private IWebProxy? _proxy;
     private ZaloBotDispatcher _dispatcher = new();
+    private ILogger<ZaloBotEngine>? _logger;
+    private IServiceProvider? _services;
+    private int _maxConcurrency = 50;
 
     /// <summary>Creates a new instance of <see cref="ZaloBotBuilder"/>.</summary>
     public static ZaloBotBuilder Create() => new();
@@ -48,6 +52,42 @@ public sealed class ZaloBotBuilder
     public ZaloBotBuilder UseProxy(IWebProxy proxy)
     {
         this._proxy = proxy;
+        return this;
+    }
+
+    /// <summary>Sets a logger instance for the bot engine.</summary>
+    public ZaloBotBuilder UseLogger(ILogger<ZaloBotEngine> logger)
+    {
+        this._logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        return this;
+    }
+
+    /// <summary>Sets a service provider for dependency injection across context instances.</summary>
+    public ZaloBotBuilder UseServices(IServiceProvider services)
+    {
+        this._services = services ?? throw new ArgumentNullException(nameof(services));
+        return this;
+    }
+
+    /// <summary>Sets the maximum parallel message handlers allowed to execute concurrently.</summary>
+    public ZaloBotBuilder WithConcurrencyLimit(int maxConcurrency)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConcurrency);
+        this._maxConcurrency = maxConcurrency;
+        return this;
+    }
+
+    /// <summary>Registers a middleware component into the bot execution pipeline.</summary>
+    public ZaloBotBuilder UseMiddleware(Func<ZaloBotContext, Func<Task>, CancellationToken, Task> middleware)
+    {
+        _ = this._dispatcher.Use(middleware);
+        return this;
+    }
+
+    /// <summary>Registers a middleware component into the bot execution pipeline.</summary>
+    public ZaloBotBuilder UseMiddleware(Func<ZaloBotContext, Func<Task>, Task> middleware)
+    {
+        _ = this._dispatcher.Use(middleware);
         return this;
     }
 
@@ -116,6 +156,10 @@ public sealed class ZaloBotBuilder
         }
 
         IZaloClient client = this._client ?? new ZaloWebClient(this._proxy);
-        return new ZaloBotEngine(this._session, client, this._dispatcher, this._proxy);
+        return new ZaloBotEngine(this._session, client, this._dispatcher, this._proxy, this._logger)
+        {
+            MaxConcurrency = this._maxConcurrency,
+            Services = this._services
+        };
     }
 }

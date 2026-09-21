@@ -9,7 +9,8 @@ using Zalo.Net.Bot.Context;
 namespace Zalo.Net.Bot.Routing;
 
 /// <summary>
-/// High-performance handler registry and message dispatcher for routing Zalo events to handler methods or pure AOT delegates.
+/// High-performance handler registry, middleware pipeline, and message dispatcher
+/// for routing Zalo events to handler methods or pure Native AOT delegates.
 /// </summary>
 public sealed class ZaloBotDispatcher
 {
@@ -19,6 +20,27 @@ public sealed class ZaloBotDispatcher
     private readonly Dictionary<string, Func<ZaloBotContext, CancellationToken, Task>> _commandHandlers = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<KeywordRegistration> _keywordHandlers = [];
     private readonly List<MessageRegistration> _globalHandlers = [];
+    private readonly List<Func<ZaloBotContext, Func<Task>, CancellationToken, Task>> _middlewares = [];
+
+    /// <summary>
+    /// Registers a middleware component into the execution pipeline.
+    /// Middlewares execute in registration order around downstream handlers.
+    /// </summary>
+    public ZaloBotDispatcher Use(Func<ZaloBotContext, Func<Task>, CancellationToken, Task> middleware)
+    {
+        ArgumentNullException.ThrowIfNull(middleware);
+        this._middlewares.Add(middleware);
+        return this;
+    }
+
+    /// <summary>
+    /// Registers a middleware component into the execution pipeline.
+    /// </summary>
+    public ZaloBotDispatcher Use(Func<ZaloBotContext, Func<Task>, Task> middleware)
+    {
+        ArgumentNullException.ThrowIfNull(middleware);
+        return this.Use((ctx, next, _) => middleware(ctx, next));
+    }
 
     /// <summary>
     /// Registers a pure Native AOT command handler delegate (e.g. <c>/ping</c>).
@@ -150,34 +172,114 @@ public sealed class ZaloBotDispatcher
 
     private static Func<ZaloBotContext, CancellationToken, Task> CreateDelegateFromMethod(MethodInfo method, object? instance)
     {
-        return async (ctx, ct) =>
+        ParameterInfo[] parameters = method.GetParameters();
+        bool hasCt = parameters.Length > 1 && parameters[1].ParameterType == typeof(CancellationToken);
+        bool returnsTask = typeof(Task).IsAssignableFrom(method.ReturnType);
+
+        if (returnsTask)
         {
-            ParameterInfo[] parameters = method.GetParameters();
-            object?[] args = new object?[parameters.Length];
-            args[0] = ctx;
-
-            for (int i = 1; i < parameters.Length; i++)
+            if (hasCt)
             {
-                if (parameters[i].ParameterType == typeof(CancellationToken))
+                try
                 {
-                    args[i] = ct;
+                    Func<ZaloBotContext, CancellationToken, Task> d = (Func<ZaloBotContext, CancellationToken, Task>)Delegate.CreateDelegate(
+                        typeof(Func<ZaloBotContext, CancellationToken, Task>), instance, method);
+                    return d;
                 }
-            }
+                catch { }
 
-            object? result = method.Invoke(instance, args);
-            if (result is Task task)
-            {
-                await task.ConfigureAwait(false);
+                return (ctx, ct) => (Task)method.Invoke(instance, [ctx, ct])!;
             }
-        };
+            else
+            {
+                try
+                {
+                    Func<ZaloBotContext, Task> d = (Func<ZaloBotContext, Task>)Delegate.CreateDelegate(
+                        typeof(Func<ZaloBotContext, Task>), instance, method);
+                    return (ctx, ct) => d(ctx);
+                }
+                catch { }
+
+                return (ctx, ct) => (Task)method.Invoke(instance, [ctx])!;
+            }
+        }
+        else
+        {
+            if (hasCt)
+            {
+                try
+                {
+                    Action<ZaloBotContext, CancellationToken> d = (Action<ZaloBotContext, CancellationToken>)Delegate.CreateDelegate(
+                        typeof(Action<ZaloBotContext, CancellationToken>), instance, method);
+                    return (ctx, ct) =>
+                    {
+                        d(ctx, ct);
+                        return Task.CompletedTask;
+                    };
+                }
+                catch { }
+
+                return (ctx, ct) =>
+                {
+                    _ = method.Invoke(instance, [ctx, ct]);
+                    return Task.CompletedTask;
+                };
+            }
+            else
+            {
+                try
+                {
+                    Action<ZaloBotContext> d = (Action<ZaloBotContext>)Delegate.CreateDelegate(
+                        typeof(Action<ZaloBotContext>), instance, method);
+                    return (ctx, ct) =>
+                    {
+                        d(ctx);
+                        return Task.CompletedTask;
+                    };
+                }
+                catch { }
+
+                return (ctx, ct) =>
+                {
+                    _ = method.Invoke(instance, [ctx]);
+                    return Task.CompletedTask;
+                };
+            }
+        }
     }
 
     /// <summary>
-    /// Dispatches an incoming context to matching registered handler methods.
+    /// Dispatches an incoming context through the middleware pipeline and matching registered handler methods.
     /// </summary>
     public async Task DispatchAsync(ZaloBotContext ctx, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(ctx);
+
+        if (this._middlewares.Count == 0)
+        {
+            await this.ExecuteRoutingAsync(ctx, ct).ConfigureAwait(false);
+            return;
+        }
+
+        int index = -1;
+        async Task NextAsync()
+        {
+            index++;
+            if (index < this._middlewares.Count)
+            {
+                await this._middlewares[index](ctx, NextAsync, ct).ConfigureAwait(false);
+            }
+            else if (index == this._middlewares.Count)
+            {
+                await this.ExecuteRoutingAsync(ctx, ct).ConfigureAwait(false);
+            }
+        }
+
+        await NextAsync().ConfigureAwait(false);
+    }
+
+    private async Task ExecuteRoutingAsync(ZaloBotContext ctx, CancellationToken ct)
+    {
         string? raw = ctx.Content;
         if (string.IsNullOrWhiteSpace(raw))
         {
@@ -190,16 +292,13 @@ public sealed class ZaloBotDispatcher
 
         ReadOnlySpan<char> text = raw.AsSpan().Trim();
 
-        // 1. Check Command match with O(1) hash lookup and zero string allocations
-        if (text.Length > 0 && (text[0] == '/' || text[0] == '!'))
+        // 1. Check Command match with O(1) AlternateLookup and zero string allocations
+        if (ctx.Command != null)
         {
-            int spaceIdx = text.IndexOf(' ');
-            ReadOnlySpan<char> cmdSpan = spaceIdx < 0 ? text : text[..spaceIdx];
-
             Dictionary<string, Func<ZaloBotContext, CancellationToken, Task>>.AlternateLookup<ReadOnlySpan<char>> lookup =
                 this._commandHandlers.GetAlternateLookup<ReadOnlySpan<char>>();
 
-            if (lookup.TryGetValue(cmdSpan, out Func<ZaloBotContext, CancellationToken, Task>? handler))
+            if (lookup.TryGetValue(ctx.Command.AsSpan(), out Func<ZaloBotContext, CancellationToken, Task>? handler))
             {
                 await handler(ctx, ct).ConfigureAwait(false);
                 return;

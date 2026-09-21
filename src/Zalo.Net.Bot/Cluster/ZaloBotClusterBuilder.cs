@@ -3,6 +3,7 @@
 
 using System.Diagnostics.CodeAnalysis;
 using System.Net;
+using Microsoft.Extensions.Logging;
 using Zalo.Net.Bot.Builder;
 using Zalo.Net.Bot.Context;
 using Zalo.Net.Bot.Routing;
@@ -11,7 +12,7 @@ using Zalo.Net.Contracts;
 namespace Zalo.Net.Bot.Cluster;
 
 /// <summary>
-/// Fluent builder for constructing a <see cref="ZaloBotCluster"/> with shared command/keyword routing.
+/// Fluent builder for constructing a <see cref="ZaloBotCluster"/> with shared command/keyword routing and middlewares.
 /// </summary>
 public sealed class ZaloBotClusterBuilder
 {
@@ -23,9 +24,48 @@ public sealed class ZaloBotClusterBuilder
 
     private readonly List<AccountConfig> _accountConfigs = [];
     private readonly ZaloBotDispatcher _sharedDispatcher = new();
+    private ILoggerFactory? _loggerFactory;
+    private IServiceProvider? _services;
+    private int _maxConcurrencyPerAccount = 50;
 
     /// <summary>Creates a new instance of <see cref="ZaloBotClusterBuilder"/>.</summary>
     public static ZaloBotClusterBuilder Create() => new();
+
+    /// <summary>Sets a shared logger factory for all cluster accounts.</summary>
+    public ZaloBotClusterBuilder UseLoggerFactory(ILoggerFactory loggerFactory)
+    {
+        this._loggerFactory = loggerFactory ?? throw new ArgumentNullException(nameof(loggerFactory));
+        return this;
+    }
+
+    /// <summary>Sets a shared service provider for dependency injection across all cluster accounts.</summary>
+    public ZaloBotClusterBuilder UseServices(IServiceProvider services)
+    {
+        this._services = services ?? throw new ArgumentNullException(nameof(services));
+        return this;
+    }
+
+    /// <summary>Sets the maximum concurrency limit for each individual account in the cluster.</summary>
+    public ZaloBotClusterBuilder WithConcurrencyLimit(int maxConcurrency)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxConcurrency);
+        this._maxConcurrencyPerAccount = maxConcurrency;
+        return this;
+    }
+
+    /// <summary>Registers a middleware component shared across all accounts in the cluster.</summary>
+    public ZaloBotClusterBuilder UseMiddleware(Func<ZaloBotContext, Func<Task>, CancellationToken, Task> middleware)
+    {
+        _ = this._sharedDispatcher.Use(middleware);
+        return this;
+    }
+
+    /// <summary>Registers a middleware component shared across all accounts in the cluster.</summary>
+    public ZaloBotClusterBuilder UseMiddleware(Func<ZaloBotContext, Func<Task>, Task> middleware)
+    {
+        _ = this._sharedDispatcher.Use(middleware);
+        return this;
+    }
 
     /// <summary>Registers an account to be included in the cluster.</summary>
     public ZaloBotClusterBuilder AddAccount(
@@ -121,7 +161,12 @@ public sealed class ZaloBotClusterBuilder
     /// <summary>Builds the configured <see cref="ZaloBotCluster"/>.</summary>
     public ZaloBotCluster Build()
     {
-        ZaloBotCluster cluster = new(() => this._sharedDispatcher);
+        ZaloBotCluster cluster = new(() => this._sharedDispatcher)
+        {
+            LoggerFactory = this._loggerFactory,
+            Services = this._services,
+            MaxConcurrencyPerAccount = this._maxConcurrencyPerAccount
+        };
 
         foreach (AccountConfig config in this._accountConfigs)
         {

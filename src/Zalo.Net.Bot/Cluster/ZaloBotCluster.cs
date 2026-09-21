@@ -3,6 +3,7 @@
 
 using System.Collections.Concurrent;
 using System.Net;
+using Microsoft.Extensions.Logging;
 using Zalo.Net.Bot.Builder;
 using Zalo.Net.Bot.Engine;
 using Zalo.Net.Bot.Routing;
@@ -37,6 +38,15 @@ public sealed class ZaloBotCluster : IDisposable
     private readonly Func<ZaloBotDispatcher> _dispatcherFactory;
     private readonly Lock _syncLock = new();
     private bool _disposed;
+
+    /// <summary>Gets or sets the maximum concurrency allowed for each individual bot account.</summary>
+    public int MaxConcurrencyPerAccount { get; set; } = 50;
+
+    /// <summary>Gets or sets optional logger factory for producing structured loggers for each account.</summary>
+    public Microsoft.Extensions.Logging.ILoggerFactory? LoggerFactory { get; set; }
+
+    /// <summary>Gets or sets optional service provider for dependency injection across accounts.</summary>
+    public IServiceProvider? Services { get; set; }
 
     /// <summary>Occurs when an unhandled exception is encountered in any bot account.</summary>
     public event EventHandler<ZaloBotAccountErrorEventArgs>? OnAccountError;
@@ -85,6 +95,18 @@ public sealed class ZaloBotCluster : IDisposable
         {
             _ = builder.UseProxy(proxy ?? session.Proxy!);
         }
+
+        if (this.LoggerFactory != null)
+        {
+            _ = builder.UseLogger(this.LoggerFactory.CreateLogger<ZaloBotEngine>());
+        }
+
+        if (this.Services != null)
+        {
+            _ = builder.UseServices(this.Services);
+        }
+
+        _ = builder.WithConcurrencyLimit(this.MaxConcurrencyPerAccount);
 
         // Apply shared dispatcher
         ZaloBotDispatcher dispatcher = this._dispatcherFactory();

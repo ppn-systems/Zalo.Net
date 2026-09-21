@@ -16,4 +16,8 @@
     <ProjectReference Include="..\Zalo.Net.WebSocket\Zalo.Net.WebSocket.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
 </Project>
