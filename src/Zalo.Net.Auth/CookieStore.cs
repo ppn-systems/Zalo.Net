@@ -4,8 +4,11 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
+using Zalo.Net.Contracts;
 
 namespace Zalo.Net.Auth;
 
@@ -45,6 +48,18 @@ internal partial class AuthJsonContext : JsonSerializerContext
 public sealed class CookieStore
 {
     private readonly CookieContainer _jar = new();
+    private readonly Lock _lock = new();
+    private static readonly ConditionalWeakTable<ZaloSessionMaterial, CookieStore> s_materialCache = new();
+
+    /// <summary>
+    /// Gets or creates a cached, thread-safe <see cref="CookieStore"/> for the specified session material.
+    /// Eliminates repetitive JSON deserialization across tool calls and keeps session cookies synchronized.
+    /// </summary>
+    public static CookieStore ForMaterial(ZaloSessionMaterial material)
+    {
+        ArgumentNullException.ThrowIfNull(material);
+        return s_materialCache.GetValue(material, static m => FromJson(m.CookiesJson));
+    }
 
     /// <summary>
     /// Gets the underlying <see cref="CookieContainer"/>.
@@ -58,40 +73,52 @@ public sealed class CookieStore
     {
         ArgumentNullException.ThrowIfNull(setCookieHeaders);
 
-        foreach (string header in setCookieHeaders)
+        lock (_lock)
         {
-            try
+            foreach (string header in setCookieHeaders)
             {
-                _jar.SetCookies(new Uri(url), header);
+                try
+                {
+                    _jar.SetCookies(new Uri(url), header);
+                }
+                catch { /* ignore malformed set-cookie */ }
             }
-            catch { /* ignore malformed set-cookie */ }
         }
     }
 
     /// <summary>
     /// Gets the Cookie header string for the given URL.
     /// </summary>
-    public string GetCookieHeader(string url) => _jar.GetCookieHeader(new Uri(url));
+    public string GetCookieHeader(string url)
+    {
+        lock (_lock)
+        {
+            return _jar.GetCookieHeader(new Uri(url));
+        }
+    }
 
     /// <summary>
     /// Gets a combined Cookie header containing all cookies stored in the container.
     /// </summary>
     public string GetAllCookiesHeader()
     {
-        HashSet<string> seenKeys = new(StringComparer.OrdinalIgnoreCase);
-        System.Text.StringBuilder sb = new();
-        foreach (Cookie c in _jar.GetAllCookies())
+        lock (_lock)
         {
-            if (!string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.Value) && seenKeys.Add(c.Name))
+            HashSet<string> seenKeys = new(StringComparer.OrdinalIgnoreCase);
+            System.Text.StringBuilder sb = new();
+            foreach (Cookie c in _jar.GetAllCookies())
             {
-                if (sb.Length > 0)
+                if (!string.IsNullOrWhiteSpace(c.Name) && !string.IsNullOrWhiteSpace(c.Value) && seenKeys.Add(c.Name))
                 {
-                    _ = sb.Append("; ");
+                    if (sb.Length > 0)
+                    {
+                        _ = sb.Append("; ");
+                    }
+                    _ = sb.Append(c.Name).Append('=').Append(c.Value);
                 }
-                _ = sb.Append(c.Name).Append('=').Append(c.Value);
             }
+            return sb.ToString();
         }
-        return sb.ToString();
     }
 
     /// <summary>
@@ -99,22 +126,25 @@ public sealed class CookieStore
     /// </summary>
     public string ToJson()
     {
-        List<SerializedCookie> list = [];
-        foreach (Cookie c in _jar.GetAllCookies())
+        lock (_lock)
         {
-            list.Add(new SerializedCookie
+            List<SerializedCookie> list = [];
+            foreach (Cookie c in _jar.GetAllCookies())
             {
-                Key = c.Name,
-                Name = c.Name,
-                Value = c.Value,
-                Domain = c.Domain,
-                Path = c.Path,
-                Secure = c.Secure,
-                HttpOnly = c.HttpOnly,
-                Expires = c.Expires == DateTime.MinValue ? null : c.Expires,
-            });
+                list.Add(new SerializedCookie
+                {
+                    Key = c.Name,
+                    Name = c.Name,
+                    Value = c.Value,
+                    Domain = c.Domain,
+                    Path = c.Path,
+                    Secure = c.Secure,
+                    HttpOnly = c.HttpOnly,
+                    Expires = c.Expires == DateTime.MinValue ? null : c.Expires,
+                });
+            }
+            return JsonSerializer.Serialize(list, AuthJsonContext.Default.ListSerializedCookie);
         }
-        return JsonSerializer.Serialize(list, AuthJsonContext.Default.ListSerializedCookie);
     }
 
     /// <summary>

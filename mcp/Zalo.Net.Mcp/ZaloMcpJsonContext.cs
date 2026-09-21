@@ -29,4 +29,6 @@ namespace Zalo.Net.Mcp;
 [JsonSerializable(typeof(IReadOnlyList<ZaloGroupInfo>))]
 [JsonSerializable(typeof(ZaloGroupCreateResult))]
 [JsonSerializable(typeof(ZaloSessionMaterial))]
+[JsonSerializable(typeof(ZaloAccountSummary))]
+[JsonSerializable(typeof(IReadOnlyList<ZaloAccountSummary>))]
 public partial class ZaloMcpJsonContext : JsonSerializerContext;

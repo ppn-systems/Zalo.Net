@@ -1,50 +1,63 @@
 // Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
+using System.Collections.Concurrent;
 using Zalo.Net.Contracts;
 using Zalo.Net.Mcp.Data;
 
 namespace Zalo.Net.Mcp;
 
 /// <summary>
-/// State manager owning the ZaloWebClient, active session, WebSocket listener, and SQLite persistence.
+/// State manager owning multiple isolated Zalo account contexts, their dedicated SQLite databases,
+/// WebSocket listeners, and the active session dispatching.
 /// </summary>
 public sealed class ZaloSessionManager : IDisposable
 {
-    private readonly ZaloWebClient _client;
-    private readonly MessageRepository _repository;
+    private readonly ConcurrentDictionary<string, ZaloAccountContext> _accounts = new(StringComparer.Ordinal);
+    private readonly MessageRepository _masterRepository;
+    private readonly MessageIngestPipeline _masterIngest;
+    private readonly ZaloWebClient _loginClient;
+    private readonly ILoggerFactory? _loggerFactory;
     private readonly ILogger<ZaloSessionManager>? _logger;
-    private readonly MessageIngestPipeline _ingest;
     private readonly TaskCompletionSource _bootstrapCompletion = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private ZaloSession? _activeSession;
-    private CancellationTokenSource? _listenerCts;
+
+    private string? _activeAccountUid;
     private int _bootstrapStarted;
+    private bool _disposed;
 
-    public ZaloSessionManager(MessageRepository repository, ILogger<ZaloSessionManager>? logger = null)
+    public ZaloSessionManager(
+        MessageRepository repository,
+        ILoggerFactory? loggerFactory = null,
+        ILogger<ZaloSessionManager>? logger = null)
     {
-        this._repository = repository;
+        this._masterRepository = repository ?? throw new ArgumentNullException(nameof(repository));
+        this._loggerFactory = loggerFactory;
         this._logger = logger;
-        this._client = new ZaloWebClient();
+        this._loginClient = new ZaloWebClient();
 
-        // Realtime messages go through the queue instead of being saved inline by the event handler.
-        this._ingest = new MessageIngestPipeline(repository, logger);
-
-        this._client.MessageReceived += this.OnMessageReceived;
-        this._client.StatusChanged += this.OnStatusChanged;
+        // Fallback ingest queue for backward compatibility
+        this._masterIngest = new MessageIngestPipeline(repository, logger);
     }
 
-    public ZaloSession? ActiveSession => this._activeSession;
-    public bool IsAuthenticated => this._activeSession != null;
-    public MessageRepository Repository => this._repository;
+    /// <summary>Gets the UID of the currently active account context.</summary>
+    public string? ActiveAccountUid => this._activeAccountUid;
 
-    /// <summary>Ordered write pipeline for the messages pushed by the WebSocket listener.</summary>
-    public MessageIngestPipeline Ingest => this._ingest;
+    /// <summary>Gets the active account's session, or null if unauthenticated.</summary>
+    public ZaloSession? ActiveSession => this.GetAccount()?.Session;
 
-    /// <summary>
-    /// How long a tool call waits for the background bootstrap (see
-    /// <see cref="StartBootstrapInBackground"/>) before it reports that Zalo is not connected yet.
-    /// Ten seconds by default; override with the <c>ZALO_MCP_BOOTSTRAP_WAIT_MS</c> environment variable.
-    /// </summary>
+    /// <summary>Gets whether at least one account is currently authenticated.</summary>
+    public bool IsAuthenticated => this.ActiveSession != null;
+
+    /// <summary>Gets the message repository for the active account (or fallback master repository).</summary>
+    public MessageRepository Repository => this.GetAccount()?.Repository ?? this._masterRepository;
+
+    /// <summary>Gets the ingest pipeline for the active account (or fallback master ingest).</summary>
+    public MessageIngestPipeline Ingest => this.GetAccount()?.Ingest ?? this._masterIngest;
+
+    /// <summary>Gets all registered account contexts.</summary>
+    public IReadOnlyCollection<ZaloAccountContext> Accounts => [.. this._accounts.Values];
+
+    /// <summary>How long a tool call waits for background bootstrap before reporting timeout.</summary>
     public TimeSpan BootstrapWait { get; init; } = BootstrapWaitFromEnvironment();
 
     private static TimeSpan BootstrapWaitFromEnvironment()
@@ -55,10 +68,7 @@ public sealed class ZaloSessionManager : IDisposable
     }
 
     /// <summary>
-    /// Loads the saved Zalo session and starts the listener without holding up the MCP server: the
-    /// login is network bound, so waiting for it here would keep the stdio transport from answering
-    /// <c>initialize</c> (clients time out and report "server did not respond"). Tool calls that need
-    /// a session wait for this work in <see cref="EnsureAuthenticated"/> instead.
+    /// Starts background bootstrap to restore all saved sessions without blocking MCP transport.
     /// </summary>
     public void StartBootstrapInBackground()
     {
@@ -75,7 +85,7 @@ public sealed class ZaloSessionManager : IDisposable
             }
             catch (Exception ex)
             {
-                this._logger?.LogError(ex, "Background Zalo session bootstrap failed.");
+                this._logger?.LogError(ex, "Background Zalo session bootstrap encountered an error.");
             }
             finally
             {
@@ -84,122 +94,292 @@ public sealed class ZaloSessionManager : IDisposable
         });
     }
 
+    /// <summary>
+    /// Restores all saved active accounts from database with full physical data isolation.
+    /// </summary>
     public async Task InitializeFromDatabaseAsync(CancellationToken ct = default)
     {
         try
         {
-            ZaloSessionMaterial? material = await this._repository.GetActiveSessionMaterialAsync(ct).ConfigureAwait(false);
-            if (material != null)
+            IReadOnlyList<(string Uid, ZaloSessionMaterial Material)> sessions =
+                await this._masterRepository.GetAllActiveSessionsAsync(ct).ConfigureAwait(false);
+
+            if (sessions.Count == 0)
             {
-                this._logger?.LogInformation("Attempting auto-login using saved session for UID {Uid}", material.Uid);
-                this._activeSession = await ZaloWebClient.LoginWithSessionAsync(material, ct).ConfigureAwait(false);
-                this.StartBackgroundListener(material);
+                ZaloSessionMaterial? single = await this._masterRepository.GetActiveSessionMaterialAsync(ct).ConfigureAwait(false);
+                if (single != null)
+                {
+                    sessions = [(single.Uid, single)];
+                }
+            }
+
+            foreach ((string uid, ZaloSessionMaterial material) in sessions)
+            {
+                try
+                {
+                    this._logger?.LogInformation("Attempting auto-login for account UID {Uid}", uid);
+                    _ = await this.RegisterOrUpdateAccountAsync(material, ct).ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    this._logger?.LogWarning(ex, "Saved Zalo session for UID {Uid} is expired or could not connect: {Message}", uid, ex.Message);
+                }
             }
         }
         catch (Exception ex)
         {
-            this._logger?.LogWarning("Saved Zalo session is expired or invalid ({Message}). Resetting active session.", ex.Message);
-            await this._repository.DeactivateSessionAsync(ct: ct).ConfigureAwait(false);
-            this._activeSession = null;
+            this._logger?.LogError(ex, "Failed to read sessions from database.");
         }
         finally
         {
-            // Release the tool calls waiting on the bootstrap, whether or not a session was restored.
             _ = this._bootstrapCompletion.TrySetResult();
         }
     }
 
-    public async Task<ZaloQrSession> StartQrLoginAsync(CancellationToken ct = default)
+    /// <summary>
+    /// Registers or updates an account with complete data isolation (own SQLite file, repository, and ingest queue).
+    /// </summary>
+    public async Task<ZaloAccountContext> RegisterOrUpdateAccountAsync(ZaloSessionMaterial material, CancellationToken ct = default)
     {
-        return await this._client.StartQrLoginAsync(ct).ConfigureAwait(false);
-    }
+        ArgumentNullException.ThrowIfNull(material);
 
-    public async Task<ZaloLoginState> PollQrStatusAsync(Guid sessionId, CancellationToken ct = default)
-    {
-        ZaloLoginState state = await this._client.PollQrStatusAsync(sessionId, ct).ConfigureAwait(false);
-        if (state.Status == ZaloLoginStatus.Connected)
+        string uid = material.Uid;
+        ZaloSession session = await ZaloWebClient.LoginWithSessionAsync(material, ct).ConfigureAwait(false);
+        await this._masterRepository.SaveSessionMaterialAsync(uid, material, ct).ConfigureAwait(false);
+
+        // If account already exists, stop its existing listener
+        if (this._accounts.TryGetValue(uid, out ZaloAccountContext? existing))
         {
-            ZaloSessionMaterial? material = this._client.ConsumePendingMaterial(sessionId);
-            if (material != null)
-            {
-                this._activeSession = await ZaloWebClient.LoginWithSessionAsync(material, ct).ConfigureAwait(false);
-                await this._repository.SaveSessionMaterialAsync(material.Uid, material, ct).ConfigureAwait(false);
-                this.StartBackgroundListener(material);
-            }
+            existing.StopListener();
         }
-        return state;
+
+        // Establish 100% physically isolated SQLite database for this account
+        ZaloDatabase accountDb = ZaloDatabase.ForAccount(uid);
+        accountDb.Initialize();
+
+        MessageRepository accountRepo = new(accountDb);
+        MessageIngestPipeline accountIngest = new(accountRepo, this._loggerFactory?.CreateLogger<MessageIngestPipeline>());
+        ZaloWebClient accountClient = new(session.Proxy);
+
+        (string displayName, string? avatarUrl) = await FetchProfileSafeAsync(accountClient, session, uid, ct).ConfigureAwait(false);
+
+        ZaloAccountContext accountContext = new(
+            uid: uid,
+            displayName: displayName,
+            avatarUrl: avatarUrl,
+            session: session,
+            client: accountClient,
+            database: accountDb,
+            repository: accountRepo,
+            ingest: accountIngest);
+
+        // Wire realtime message ingest specifically into this account's isolated queue
+        accountClient.MessageReceived += (_, e) =>
+        {
+            this._logger?.LogInformation("Realtime Zalo message received for account {Uid} from {Sender}: {Content}", uid, e.DisplayName ?? e.UidFrom, e.Content);
+            _ = accountIngest.Enqueue(e);
+        };
+
+        accountClient.StatusChanged += (_, e) =>
+        {
+            this._logger?.LogInformation("Zalo status changed for account {Uid}: {Status} ({Reason})", uid, e.Status, e.Reason);
+            accountContext.IsConnected = e.Status == ZaloConnectionStatus.Connected;
+        };
+
+        // Start isolated WebSocket listener
+        this.StartAccountListener(accountContext, material, session);
+
+        this._accounts[uid] = accountContext;
+        this._activeAccountUid ??= uid;
+
+        return accountContext;
     }
 
-    private void StartBackgroundListener(ZaloSessionMaterial material)
+    private void StartAccountListener(ZaloAccountContext context, ZaloSessionMaterial material, ZaloSession session)
     {
-        this._listenerCts?.Cancel();
-        this._listenerCts?.Dispose();
-        this._listenerCts = new CancellationTokenSource();
+        context.StopListener();
+        context.ListenerCts = new CancellationTokenSource();
+        CancellationToken token = context.ListenerCts.Token;
 
-        CancellationToken token = this._listenerCts.Token;
         _ = Task.Run(async () =>
         {
             try
             {
-                await this._client.RunWithReconnectAsync(material, ct: token).ConfigureAwait(false);
+                context.IsConnected = true;
+                await context.Client.RunWithReconnectAsync(material, proxy: session.Proxy, ct: token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { }
             catch (Exception ex)
             {
-                this._logger?.LogWarning("Zalo background listener stopped ({Message}). Session expired — please authenticate via zalo_login_qr or --login.", ex.Message);
-                await this._repository.DeactivateSessionAsync(material.Uid, token).ConfigureAwait(false);
-                this._activeSession = null;
+                this._logger?.LogWarning(ex, "Background listener stopped for account {Uid}", context.Uid);
+                context.IsConnected = false;
             }
         }, token);
     }
 
-    private void OnMessageReceived(object? sender, ZaloMessageEvent e)
+    private static async Task<(string DisplayName, string? AvatarUrl)> FetchProfileSafeAsync(
+        ZaloWebClient client, ZaloSession session, string uid, CancellationToken ct)
     {
-        this._logger?.LogInformation("Realtime Zalo message received from {Sender}: {Content}", e.DisplayName ?? e.UidFrom, e.Content);
-
-        // Nothing is awaited here on purpose: the handler returns immediately and the queue writes the
-        // messages one by one, in the order they arrived.
-        _ = this._ingest.Enqueue(e);
-    }
-
-    private void OnStatusChanged(object? sender, ZaloSessionStatusChanged e)
-    {
-        this._logger?.LogInformation("Zalo session status changed for {Uid}: {Status} ({Reason})", e.Uid, e.Status, e.Reason);
-    }
-
-    public void EnsureAuthenticated()
-    {
-        if (this._activeSession != null)
+        try
         {
-            return;
+            ZaloUserProfile profile = await ZaloWebClient.GetUserInfoAsync(session, uid, ct).ConfigureAwait(false);
+            return (profile.DisplayName, profile.AvatarUrl);
+        }
+        catch
+        {
+            return (uid, null);
+        }
+    }
+
+    /// <summary>Starts QR login flow using the login client.</summary>
+    public async Task<ZaloQrSession> StartQrLoginAsync(CancellationToken ct = default) =>
+        await this._loginClient.StartQrLoginAsync(ct).ConfigureAwait(false);
+
+    /// <summary>Registers an initialized account context directly into the manager.</summary>
+    public void AddAccountContext(ZaloAccountContext context)
+    {
+        ArgumentNullException.ThrowIfNull(context);
+        this._accounts[context.Uid] = context;
+        this._activeAccountUid ??= context.Uid;
+    }
+
+    /// <summary>
+    /// Polls QR status and registers the account upon successful login.
+    /// </summary>
+    public async Task<ZaloLoginState> PollQrStatusAsync(Guid sessionId, CancellationToken ct = default)
+    {
+        ZaloLoginState state = await this._loginClient.PollQrStatusAsync(sessionId, ct).ConfigureAwait(false);
+        if (state.Status == ZaloLoginStatus.Connected)
+        {
+            ZaloSessionMaterial? material = this._loginClient.ConsumePendingMaterial(sessionId);
+            if (material != null)
+            {
+                ZaloAccountContext context = await this.RegisterOrUpdateAccountAsync(material, ct).ConfigureAwait(false);
+                this._activeAccountUid = context.Uid;
+            }
         }
 
-        // The MCP transport answers `initialize` before the Zalo login finishes, so a tool call can
-        // legitimately arrive while the bootstrap is still running. Wait for that work (bounded) rather
-        // than answering with a misleading "not authenticated".
+        return state;
+    }
+
+    /// <summary>Retrieves metadata summary of all loaded accounts.</summary>
+    public IReadOnlyList<ZaloAccountSummary> ListAccounts()
+    {
+        return [.. this._accounts.Values.Select(a => new ZaloAccountSummary(
+            Uid: a.Uid,
+            DisplayName: a.DisplayName,
+            AvatarUrl: a.AvatarUrl,
+            IsActive: a.Uid == this._activeAccountUid,
+            IsConnected: a.IsConnected))];
+    }
+
+    /// <summary>
+    /// Switches the active account context to the specified UID.
+    /// </summary>
+    public bool SwitchActiveAccount(string accountUid)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(accountUid);
+
+        if (this._accounts.ContainsKey(accountUid))
+        {
+            this._activeAccountUid = accountUid;
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await this._masterRepository.SetActiveSessionAsync(accountUid).ConfigureAwait(false);
+                }
+                catch { }
+            });
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Disconnects and unloads an account context.
+    /// </summary>
+    public async Task<bool> DisconnectAccountAsync(string accountUid, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(accountUid);
+
+        if (this._accounts.TryRemove(accountUid, out ZaloAccountContext? context))
+        {
+            await context.DisposeAsync().ConfigureAwait(false);
+            await this._masterRepository.DeactivateSessionAsync(accountUid, ct).ConfigureAwait(false);
+
+            if (this._activeAccountUid == accountUid)
+            {
+                this._activeAccountUid = this._accounts.Keys.FirstOrDefault();
+            }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Retrieves the isolated account context for a specific account UID, or the active account if unspecified.
+    /// </summary>
+    public ZaloAccountContext? GetAccount(string? accountUid = null)
+    {
+        // Strict Isolation: If a specific account UID is requested, never fall back to another account
+        if (!string.IsNullOrWhiteSpace(accountUid))
+        {
+            return this._accounts.TryGetValue(accountUid, out ZaloAccountContext? specific) ? specific : null;
+        }
+
+        if (this._activeAccountUid != null && this._accounts.TryGetValue(this._activeAccountUid, out ZaloAccountContext? active))
+        {
+            return active;
+        }
+
+        return this._accounts.Values.FirstOrDefault();
+    }
+
+    /// <summary>
+    /// Ensures that the specified account (or the active account) is authenticated and ready for tool execution.
+    /// </summary>
+    public void EnsureAuthenticated(string? accountUid = null)
+    {
         if (Volatile.Read(ref this._bootstrapStarted) == 1
             && !this._bootstrapCompletion.Task.Wait(this.BootstrapWait))
         {
-            throw new InvalidOperationException("Zalo session is still connecting (the background login has not finished yet). Retry in a moment, or authenticate with zalo_login_qr.");
+            throw new InvalidOperationException("Zalo sessions are still connecting in background. Retry in a moment, or authenticate with zalo_login_qr.");
         }
 
-        if (this._activeSession == null)
+        ZaloAccountContext? account = this.GetAccount(accountUid);
+        if (account == null || account.Session == null)
         {
+            if (!string.IsNullOrWhiteSpace(accountUid))
+            {
+                throw new InvalidOperationException($"Zalo account '{accountUid}' is not authenticated or not registered.");
+            }
+
             throw new InvalidOperationException("Zalo session is not authenticated or has expired. Please perform QR code login first using zalo_login_qr or --login.");
         }
     }
 
+    /// <inheritdoc />
     public void Dispose()
     {
-        this._listenerCts?.Cancel();
-        this._listenerCts?.Dispose();
+        if (this._disposed)
+        {
+            return;
+        }
 
-        // Let the tool calls that are waiting in EnsureAuthenticated() finish instead of hanging.
+        this._disposed = true;
         _ = this._bootstrapCompletion.TrySetResult();
 
-        // Flush the messages that are already queued before the client goes away.
-        this._ingest.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        foreach (ZaloAccountContext account in this._accounts.Values)
+        {
+            account.Dispose();
+        }
 
-        this._client.Dispose();
+        this._accounts.Clear();
+        this._masterIngest.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        this._loginClient.Dispose();
     }
 }

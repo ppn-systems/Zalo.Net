@@ -13,6 +13,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Xunit;
 using Zalo.Net.Contracts;
+using Zalo.Net.Cryptography;
 
 namespace Zalo.Net.WebSocket.Tests;
 
@@ -249,10 +250,7 @@ public sealed class ZaloWsListenerTests
         RandomNumberGenerator.Fill(iv);
         RandomNumberGenerator.Fill(aad);
 
-        using AesGcm gcm = new(keyBytes, 16);
-        byte[] ciphertext = new byte[plain.Length];
-        byte[] tag = new byte[16];
-        gcm.Encrypt(iv.AsSpan(0, 12), plain, ciphertext, tag, aad);
+        (byte[] ciphertext, byte[] tag) = AesGcmAnyNonce.Encrypt(keyBytes, iv, aad, plain);
 
         byte[] buf = new byte[16 + 16 + ciphertext.Length + 16];
         iv.CopyTo(buf, 0);

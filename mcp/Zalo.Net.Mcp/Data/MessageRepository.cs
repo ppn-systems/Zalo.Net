@@ -117,8 +117,44 @@ public sealed partial class MessageRepository(ZaloDatabase db)
     {
         ArgumentNullException.ThrowIfNull(msg);
 
+        using SqliteConnection conn = this._db.CreateConnection();
+        using SqliteTransaction tx = conn.BeginTransaction();
+        await this.SaveMessageInternalAsync(conn, tx, msg, ct).ConfigureAwait(false);
+        tx.Commit();
+    }
+
+    /// <summary>
+    /// Persists a batch of realtime messages in a single SQLite transaction for maximum throughput.
+    /// </summary>
+    public async Task SaveMessagesBatchAsync(List<ZaloMessageEvent> messages, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(messages);
+        if (messages.Count == 0)
+        {
+            return;
+        }
+
+        if (messages.Count == 1)
+        {
+            await this.SaveMessageAsync(messages[0], ct).ConfigureAwait(false);
+            return;
+        }
+
+        using SqliteConnection conn = this._db.CreateConnection();
+        using SqliteTransaction tx = conn.BeginTransaction();
+
+        foreach (ZaloMessageEvent msg in messages)
+        {
+            await this.SaveMessageInternalAsync(conn, tx, msg, ct).ConfigureAwait(false);
+        }
+
+        tx.Commit();
+    }
+
+    private async Task SaveMessageInternalAsync(SqliteConnection conn, SqliteTransaction tx, ZaloMessageEvent msg, CancellationToken ct)
+    {
         string contentText = msg.Content?.ToString() ?? string.Empty;
-        bool isUrgent = UrgentRegex().IsMatch(contentText);
+        bool isUrgent = UrgentRegex().IsMatch(contentText.AsSpan());
 
         string? attachmentsJson = msg.Attachments is { Count: > 0 }
             ? JsonSerializer.Serialize(msg.Attachments, ZaloMcpJsonContext.Default.Options)
@@ -127,12 +163,6 @@ public sealed partial class MessageRepository(ZaloDatabase db)
         long ts = long.TryParse(msg.TimestampMs, CultureInfo.InvariantCulture, out long parsedTs)
             ? parsedTs
             : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-        using SqliteConnection conn = this._db.CreateConnection();
-
-        // The message row and every row derived from it are written in ONE transaction, so a save
-        // costs a single commit instead of one commit per statement.
-        using SqliteTransaction tx = conn.BeginTransaction();
 
         // A history sync (cmd 510/511) replays messages that are already stored, and the WebSocket
         // listener re-emits them after every reconnect. The message row itself is de-duplicated by
@@ -196,10 +226,8 @@ public sealed partial class MessageRepository(ZaloDatabase db)
         // Perform smart entity & reminder extraction
         if (!string.IsNullOrWhiteSpace(contentText))
         {
-            await ExtractAndSaveEntitiesInternalAsync(conn, tx, msg.MsgId, msg.ThreadId, contentText, ct).ConfigureAwait(false);
+            ExtractAndSaveEntitiesInternal(conn, tx, msg.MsgId, msg.ThreadId, contentText);
         }
-
-        tx.Commit();
     }
 
     /// <summary>
@@ -257,32 +285,39 @@ public sealed partial class MessageRepository(ZaloDatabase db)
         _ = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
-    private async Task ExtractAndSaveEntitiesInternalAsync(SqliteConnection conn, SqliteTransaction tx, string msgId, string threadId, string text, CancellationToken ct)
+    private static void ExtractAndSaveEntitiesInternal(SqliteConnection conn, SqliteTransaction tx, string msgId, string threadId, string text)
     {
         string now = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+        ReadOnlySpan<char> textSpan = text.AsSpan();
 
-        // Extract Phone Numbers
-        foreach (Match match in PhoneRegex().Matches(text))
+        // Extract Phone Numbers with zero Match heap allocations
+        foreach (System.Text.RegularExpressions.ValueMatch match in PhoneRegex().EnumerateMatches(textSpan))
         {
-            await InsertEntityAsync(conn, tx, msgId, threadId, "phone", match.Value, text, now, ct).ConfigureAwait(false);
+            string val = text.Substring(match.Index, match.Length);
+            InsertEntity(conn, tx, msgId, threadId, "phone", val, text, now);
         }
 
-        // Extract URLs
-        foreach (Match match in UrlRegex().Matches(text))
+        // Extract URLs with zero Match heap allocations
+        foreach (System.Text.RegularExpressions.ValueMatch match in UrlRegex().EnumerateMatches(textSpan))
         {
-            await InsertEntityAsync(conn, tx, msgId, threadId, "url", match.Value, text, now, ct).ConfigureAwait(false);
+            string val = text.Substring(match.Index, match.Length);
+            InsertEntity(conn, tx, msgId, threadId, "url", val, text, now);
         }
 
-        // Extract Bank Accounts / STK
-        foreach (Match match in BankCardRegex().Matches(text))
+        // Extract Bank Accounts / STK with zero Match heap allocations
+        foreach (System.Text.RegularExpressions.ValueMatch match in BankCardRegex().EnumerateMatches(textSpan))
         {
-            await InsertEntityAsync(conn, tx, msgId, threadId, "bank_card", match.Value, text, now, ct).ConfigureAwait(false);
+            string val = text.Substring(match.Index, match.Length);
+            InsertEntity(conn, tx, msgId, threadId, "bank_card", val, text, now);
         }
 
         // Extract Reminders / Schedules
-        Match reminderMatch = ReminderRegex().Match(text);
-        if (reminderMatch.Success)
+        System.Text.RegularExpressions.Regex.ValueMatchEnumerator reminderEnum = ReminderRegex().EnumerateMatches(textSpan);
+        if (reminderEnum.MoveNext())
         {
+            System.Text.RegularExpressions.ValueMatch remMatch = reminderEnum.Current;
+            string title = text.Substring(remMatch.Index, remMatch.Length);
+
             using SqliteCommand cmd = conn.CreateCommand();
             cmd.Transaction = tx;
             cmd.CommandText = """
@@ -292,14 +327,14 @@ public sealed partial class MessageRepository(ZaloDatabase db)
                 """;
             _ = cmd.Parameters.AddWithValue("@msg_id", msgId);
             _ = cmd.Parameters.AddWithValue("@thread_id", threadId);
-            _ = cmd.Parameters.AddWithValue("@title", reminderMatch.Value);
+            _ = cmd.Parameters.AddWithValue("@title", title);
             _ = cmd.Parameters.AddWithValue("@raw_text", text);
             _ = cmd.Parameters.AddWithValue("@now", now);
-            _ = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            _ = cmd.ExecuteNonQuery();
         }
     }
 
-    private static async Task InsertEntityAsync(SqliteConnection conn, SqliteTransaction tx, string msgId, string threadId, string type, string value, string rawText, string now, CancellationToken ct)
+    private static void InsertEntity(SqliteConnection conn, SqliteTransaction tx, string msgId, string threadId, string type, string value, string rawText, string now)
     {
         using SqliteCommand cmd = conn.CreateCommand();
         cmd.Transaction = tx;
@@ -314,7 +349,7 @@ public sealed partial class MessageRepository(ZaloDatabase db)
         _ = cmd.Parameters.AddWithValue("@value", value);
         _ = cmd.Parameters.AddWithValue("@raw_text", rawText);
         _ = cmd.Parameters.AddWithValue("@now", now);
-        _ = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        _ = cmd.ExecuteNonQuery();
     }
 
     public async Task<IReadOnlyList<ExtractedReminder>> GetRemindersAsync(int limit = 50, string? contains = null, CancellationToken ct = default)
@@ -695,6 +730,51 @@ public sealed partial class MessageRepository(ZaloDatabase db)
         }
 
         return null;
+    }
+
+    /// <summary>Retrieves all authenticated sessions currently marked active.</summary>
+    public async Task<IReadOnlyList<(string Uid, ZaloSessionMaterial Material)>> GetAllActiveSessionsAsync(CancellationToken ct = default)
+    {
+        using SqliteConnection conn = this._db.CreateConnection();
+        using SqliteCommand cmd = conn.CreateCommand();
+
+        cmd.CommandText = """
+            SELECT uid, material_json FROM sessions
+            WHERE is_active = 1
+            ORDER BY updated_at DESC;
+            """;
+
+        using SqliteDataReader reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        List<(string Uid, ZaloSessionMaterial Material)> list = [];
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            string uid = reader.GetString(0);
+            string json = reader.GetString(1);
+            if (!string.IsNullOrWhiteSpace(json))
+            {
+                ZaloSessionMaterial? material = JsonSerializer.Deserialize(json, ZaloMcpJsonContext.Default.ZaloSessionMaterial);
+                if (material != null)
+                {
+                    list.Add((uid, material));
+                }
+            }
+        }
+
+        return list;
+    }
+
+    /// <summary>Updates the specified session's timestamp to mark it as the most recently active session.</summary>
+    public async Task SetActiveSessionAsync(string uid, CancellationToken ct = default)
+    {
+        using SqliteConnection conn = this._db.CreateConnection();
+        using SqliteCommand cmd = conn.CreateCommand();
+
+        cmd.CommandText = "UPDATE sessions SET updated_at = @now WHERE uid = @uid OR session_id = @uid;";
+        string now = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+        _ = cmd.Parameters.AddWithValue("@uid", uid);
+        _ = cmd.Parameters.AddWithValue("@now", now);
+
+        _ = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
     public async Task DeactivateSessionAsync(string? uid = null, CancellationToken ct = default)

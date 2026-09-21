@@ -4,7 +4,6 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -159,13 +158,39 @@ public sealed class ZaloWsListener
         }
         try
         {
-            CookieStore store = CookieStore.FromJson(_session.Material.CookiesJson);
+            CookieStore store = CookieStore.ForMaterial(_session.Material);
             return store.GetCookieHeader("https://chat.zalo.me");
         }
         catch { return ""; }
     }
 
-    internal sealed class CipherState { public string? Key; }
+    internal sealed class CipherState
+    {
+        public string? Key;
+        public byte[]? KeyBytes;
+    }
+
+    internal readonly struct RentedArray : IDisposable
+    {
+        public readonly byte[]? Array;
+        public readonly int Length;
+
+        public RentedArray(byte[] array, int length)
+        {
+            this.Array = array;
+            this.Length = length;
+        }
+
+        public static RentedArray Empty => default;
+
+        public void Dispose()
+        {
+            if (this.Array != null)
+            {
+                ArrayPool<byte>.Shared.Return(this.Array);
+            }
+        }
+    }
 
     private async Task<DisconnectReason> ReceiveLoopAsync(ClientWebSocket ws, CancellationToken ct)
     {
@@ -175,19 +200,21 @@ public sealed class ZaloWsListener
         {
             while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
             {
-                (byte[] frameBytes, WebSocketMessageType msgType) = await ReceiveFullFrameAsync(ws, buffer, ct).ConfigureAwait(false);
-
-                if (msgType == WebSocketMessageType.Close)
+                (RentedArray frame, WebSocketMessageType msgType) = await ReceiveFullFrameAsync(ws, buffer, ct).ConfigureAwait(false);
+                using (frame)
                 {
-                    return InterpretCloseCode(ws);
-                }
+                    if (msgType == WebSocketMessageType.Close)
+                    {
+                        return InterpretCloseCode(ws);
+                    }
 
-                if (msgType != WebSocketMessageType.Binary || frameBytes.Length < 4)
-                {
-                    continue;
-                }
+                    if (msgType != WebSocketMessageType.Binary || frame.Length < 4)
+                    {
+                        continue;
+                    }
 
-                await this.DispatchFrameAsync(frameBytes, state, ct).ConfigureAwait(false);
+                    await this.DispatchFrameInternalAsync(frame.Array!, frame.Length, state, ct).ConfigureAwait(false);
+                }
             }
         }
         finally
@@ -209,54 +236,60 @@ public sealed class ZaloWsListener
         };
     }
 
-    private static async Task<(byte[] Bytes, WebSocketMessageType Type)> ReceiveFullFrameAsync(
+    private static async Task<(RentedArray Frame, WebSocketMessageType Type)> ReceiveFullFrameAsync(
         ClientWebSocket ws, byte[] buf, CancellationToken ct)
     {
         WebSocketReceiveResult result = await ws.ReceiveAsync(new ArraySegment<byte>(buf), ct).ConfigureAwait(false);
         if (result.MessageType == WebSocketMessageType.Close)
         {
-            return ([], WebSocketMessageType.Close);
+            return (RentedArray.Empty, WebSocketMessageType.Close);
         }
 
         if (result.EndOfMessage)
         {
-            byte[] frame = new byte[result.Count];
+            byte[] frame = ArrayPool<byte>.Shared.Rent(result.Count);
             Buffer.BlockCopy(buf, 0, frame, 0, result.Count);
-            return (frame, result.MessageType);
+            return (new RentedArray(frame, result.Count), result.MessageType);
         }
 
-        List<byte[]> segments = [buf[..result.Count]];
         int total = result.Count;
+        byte[] accumulated = ArrayPool<byte>.Shared.Rent(Math.Max(InitialBufferSize * 2, total * 2));
+        Buffer.BlockCopy(buf, 0, accumulated, 0, total);
 
         while (true)
         {
             result = await ws.ReceiveAsync(new ArraySegment<byte>(buf), ct).ConfigureAwait(false);
             if (result.MessageType == WebSocketMessageType.Close)
             {
-                return ([], WebSocketMessageType.Close);
+                ArrayPool<byte>.Shared.Return(accumulated);
+                return (RentedArray.Empty, WebSocketMessageType.Close);
             }
 
-            segments.Add(buf[..result.Count]);
+            if (total + result.Count > accumulated.Length)
+            {
+                byte[] larger = ArrayPool<byte>.Shared.Rent(Math.Max(accumulated.Length * 2, total + result.Count));
+                Buffer.BlockCopy(accumulated, 0, larger, 0, total);
+                ArrayPool<byte>.Shared.Return(accumulated);
+                accumulated = larger;
+            }
+
+            Buffer.BlockCopy(buf, 0, accumulated, total, result.Count);
             total += result.Count;
 
             if (result.EndOfMessage)
             {
-                byte[] out_ = new byte[total];
-                int off = 0;
-                foreach (byte[] s in segments)
-                {
-                    Buffer.BlockCopy(s, 0, out_, off, s.Length);
-                    off += s.Length;
-                }
-                return (out_, result.MessageType);
+                return (new RentedArray(accumulated, total), result.MessageType);
             }
         }
     }
 
-    internal async Task DispatchFrameAsync(byte[] frameBytes, CipherState state, CancellationToken ct)
+    internal Task DispatchFrameAsync(byte[] frameBytes, CipherState state, CancellationToken ct) =>
+        this.DispatchFrameInternalAsync(frameBytes, frameBytes.Length, state, ct);
+
+    private async Task DispatchFrameInternalAsync(byte[] frameBytes, int length, CipherState state, CancellationToken ct)
     {
-        (_, int cmd, byte subCmd) = WsFrameCodec.ParseHeader(frameBytes.AsSpan());
-        ReadOnlyMemory<byte> body = new(frameBytes, 4, frameBytes.Length - 4);
+        (_, int cmd, byte subCmd) = WsFrameCodec.ParseHeader(frameBytes.AsSpan(0, length));
+        ReadOnlyMemory<byte> body = new(frameBytes, 4, length - 4);
 
         if (Environment.GetEnvironmentVariable("ZALO_WS_DEBUG") == "1")
         {
@@ -267,13 +300,19 @@ public sealed class ZaloWsListener
         {
             case 1 when subCmd == 1:
                 state.Key = await ExtractCipherKeyAsync(body).ConfigureAwait(false);
+                state.KeyBytes = state.Key is not null ? Convert.FromBase64String(state.Key) : null;
                 break;
 
             case 501:
             case 510:
                 try
                 {
-                    JsonNode? payload = await WsFrameCodec.DecodeFrameBodyAsync(body, state.Key, ct).ConfigureAwait(false);
+                    if (state.KeyBytes == null && state.Key != null)
+                    {
+                        state.KeyBytes = Convert.FromBase64String(state.Key);
+                    }
+
+                    JsonNode? payload = await WsFrameCodec.DecodeFrameBodyAsync(body, state.KeyBytes, ct).ConfigureAwait(false);
                     if (Environment.GetEnvironmentVariable("ZALO_WS_DEBUG") == "1")
                     {
                         string dump = payload?.ToJsonString() ?? "(null)";
@@ -448,11 +487,66 @@ public sealed class ZaloWsListener
         }
     }
 
+    private static readonly byte[] s_sync510Frame = BuildFrame(510, 1, "{\"first\":true,\"lastId\":null,\"preIds\":[]}"u8);
+    private static readonly byte[] s_sync511Frame = BuildFrame(511, 1, "{\"first\":true,\"lastId\":null,\"preIds\":[]}"u8);
+    private static readonly byte[] s_pingPrefix = [
+        0x01, 0x02, 0x00, 0x01,
+        (byte)'{', (byte)'"', (byte)'e', (byte)'v', (byte)'e', (byte)'n', (byte)'t', (byte)'I', (byte)'d', (byte)'"', (byte)':'
+    ];
+
+    private static byte[] BuildFrame(ushort cmd, byte subCmd, ReadOnlySpan<byte> utf8Body)
+    {
+        byte[] frame = new byte[4 + utf8Body.Length];
+        frame[0] = 0x01;
+        frame[1] = (byte)(cmd & 0xFF);
+        frame[2] = (byte)((cmd >> 8) & 0xFF);
+        frame[3] = subCmd;
+        utf8Body.CopyTo(frame.AsSpan(4));
+        return frame;
+    }
+
+    private static string? GetStringOrValue(JsonNode? node)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+        if (node is JsonValue val)
+        {
+            if (val.TryGetValue<string>(out string? str))
+            {
+                return str;
+            }
+            return val.ToString();
+        }
+        return node.ToString();
+    }
+
+    private static bool ParseIsSelf(JsonNode? isSelfNode, string uidFrom, string? sessionUid)
+    {
+        if (isSelfNode is JsonValue val)
+        {
+            if (val.TryGetValue<bool>(out bool b) && b)
+            {
+                return true;
+            }
+            if (val.TryGetValue<int>(out int i) && i == 1)
+            {
+                return true;
+            }
+            if (val.TryGetValue<string>(out string? s) && (s == "1" || string.Equals(s, "true", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+        return uidFrom == "0" || (!string.IsNullOrEmpty(sessionUid) && uidFrom == sessionUid);
+    }
+
     private ZaloMessageEvent? ParseMessageEvent(JsonNode msg, ZaloThreadType threadType)
     {
-        string? msgId = msg["msgId"]?.ToJsonString()?.Trim('"');
-        string? cliMsgId = msg["cliMsgId"]?.ToJsonString()?.Trim('"');
-        if (msgId is null)
+        string? msgId = GetStringOrValue(msg["msgId"]);
+        string? cliMsgId = GetStringOrValue(msg["cliMsgId"]);
+        if (string.IsNullOrEmpty(msgId))
         {
             return null;
         }
@@ -464,10 +558,7 @@ public sealed class ZaloWsListener
             ? (msg["threadId"]?.GetValue<string>() ?? idTo)
             : (string.IsNullOrEmpty(uidFrom) || uidFrom == "0" || uidFrom == _session.Uid ? idTo : uidFrom);
 
-        string? isSelfRaw = msg["isSelf"]?.ToJsonString();
-        bool isSelf = isSelfRaw == "1" || isSelfRaw == "true"
-                     || uidFrom == "0"
-                     || (!string.IsNullOrEmpty(_session.Uid) && uidFrom == _session.Uid);
+        bool isSelf = ParseIsSelf(msg["isSelf"], uidFrom, _session.Uid);
 
         string msgType = msg["msgType"]?.GetValue<string>() ?? "";
         JsonNode? content = msg["content"];
@@ -493,7 +584,7 @@ public sealed class ZaloWsListener
             DisplayName: msg["dName"]?.GetValue<string>() ?? "",
             ThreadId: threadId,
             ThreadType: threadType,
-            TimestampMs: msg["ts"]?.ToJsonString()?.Trim('"') ?? "",
+            TimestampMs: GetStringOrValue(msg["ts"]) ?? "",
             Content: content,
             Attachments: attachments,
             IsSelf: isSelf,
@@ -517,10 +608,8 @@ public sealed class ZaloWsListener
                     await this.SendThrottle(ct).ConfigureAwait(false);
                 }
 
-                // Khung giữ nhịp ĐÚNG của Zalo Web: version=1, cmd=2, subCmd=1, thân JSON
-                // {"eventId": <ms>} (khung 4 byte 0x01 0x00 0x00 0x00 là SAI — máy chủ sẽ
-                // cắt kết nối và không đẩy sự kiện nào).
-                await SendFrameAsync(ws, 2, 1, "{\"eventId\":" + NowMs() + "}", ct).ConfigureAwait(false);
+                // Zero-GC Ping frame: version=1, cmd=2, subCmd=1, body {"eventId": <ms>}
+                await SendPingFrameAsync(ws, ct).ConfigureAwait(false);
 
                 // Máy chủ Zalo chỉ đẩy sự kiện khi socket còn sống; muốn không mất tin trong
                 // lúc ngắt thì phải chủ động xin lại danh sách tin gần đây (cmd 510 người /
@@ -529,29 +618,29 @@ public sealed class ZaloWsListener
                     && DateTimeOffset.UtcNow - lastSync >= this.HistorySyncInterval)
                 {
                     lastSync = DateTimeOffset.UtcNow;
-                    const string syncBody = "{\"first\":true,\"lastId\":null,\"preIds\":[]}";
-                    await SendFrameAsync(ws, 510, 1, syncBody, ct).ConfigureAwait(false);
-                    await SendFrameAsync(ws, 511, 1, syncBody, ct).ConfigureAwait(false);
+                    await ws.SendAsync(s_sync510Frame, WebSocketMessageType.Binary, endOfMessage: true, ct).ConfigureAwait(false);
+                    await ws.SendAsync(s_sync511Frame, WebSocketMessageType.Binary, endOfMessage: true, ct).ConfigureAwait(false);
                 }
             }
         }
         catch (OperationCanceledException) { /* expected */ }
     }
 
-    private static string NowMs() =>
-        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
-
-    /// <summary>Gửi một khung WS theo định dạng Zalo: header 4 byte (version, cmd u16 LE, subCmd) + JSON.</summary>
-    private static async Task SendFrameAsync(
-        ClientWebSocket ws, ushort cmd, byte subCmd, string jsonBody, CancellationToken ct)
+    private static async Task SendPingFrameAsync(ClientWebSocket ws, CancellationToken ct)
     {
-        byte[] payload = Encoding.UTF8.GetBytes(jsonBody);
-        byte[] frame = new byte[4 + payload.Length];
-        frame[0] = 0x01;                       // version
-        frame[1] = (byte)(cmd & 0xFF);         // cmd, little-endian
-        frame[2] = (byte)((cmd >> 8) & 0xFF);
-        frame[3] = subCmd;
-        payload.CopyTo(frame, 4);
-        await ws.SendAsync(frame, WebSocketMessageType.Binary, endOfMessage: true, ct).ConfigureAwait(false);
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(48);
+        try
+        {
+            s_pingPrefix.CopyTo(buffer.AsSpan());
+            long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            _ = System.Buffers.Text.Utf8Formatter.TryFormat(nowMs, buffer.AsSpan(s_pingPrefix.Length), out int bytesWritten);
+            int totalLen = s_pingPrefix.Length + bytesWritten;
+            buffer[totalLen++] = (byte)'}';
+            await ws.SendAsync(new ReadOnlyMemory<byte>(buffer, 0, totalLen), WebSocketMessageType.Binary, endOfMessage: true, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
 }

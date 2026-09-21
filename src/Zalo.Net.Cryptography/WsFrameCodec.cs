@@ -5,7 +5,6 @@ using System;
 using System.Buffers.Binary;
 using System.IO;
 using System.IO.Compression;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
@@ -51,8 +50,18 @@ public static class WsFrameCodec
     /// <summary>
     /// Decodes frame body according to envelope encrypt type (0 = raw json, 1 = base64+zlib, 2 = AES-GCM+zlib, 3 = AES-GCM+utf8).
     /// </summary>
-    public static async Task<JsonNode?> DecodeFrameBodyAsync(
+    public static Task<JsonNode?> DecodeFrameBodyAsync(
         ReadOnlyMemory<byte> body, string? cipherKey, CancellationToken ct = default)
+    {
+        byte[]? keyBytes = cipherKey is not null ? Convert.FromBase64String(cipherKey) : null;
+        return DecodeFrameBodyAsync(body, keyBytes, ct);
+    }
+
+    /// <summary>
+    /// Decodes frame body with pre-decoded cipher key bytes to eliminate Base64 decoding allocations per message.
+    /// </summary>
+    public static async Task<JsonNode?> DecodeFrameBodyAsync(
+        ReadOnlyMemory<byte> body, byte[]? cipherKeyBytes, CancellationToken ct = default)
     {
         WsEnvelope? envelope = JsonSerializer.Deserialize(body.Span, CryptoJsonContext.Default.WsEnvelope);
         if (envelope?.Data is null)
@@ -63,55 +72,85 @@ public static class WsFrameCodec
         return envelope.Encrypt switch
         {
             0 => ParseJsonSafe(envelope.Data),
-            1 => ParseJsonSafe(await InflateBase64Async(envelope.Data, ct).ConfigureAwait(false)),
-            2 => await DecryptGcmThenInflateAsync(envelope.Data, cipherKey, inflate: true, ct).ConfigureAwait(false),
-            3 => await DecryptGcmThenInflateAsync(envelope.Data, cipherKey, inflate: false, ct).ConfigureAwait(false),
+            1 => await InflateBase64AndParseJsonAsync(envelope.Data, ct).ConfigureAwait(false),
+            2 => await DecryptGcmThenInflateAsync(envelope.Data, cipherKeyBytes, inflate: true, ct).ConfigureAwait(false),
+            3 => await DecryptGcmThenInflateAsync(envelope.Data, cipherKeyBytes, inflate: false, ct).ConfigureAwait(false),
             _ => throw new InvalidOperationException($"Unknown encrypt type: {envelope.Encrypt}")
         };
     }
 
     private static async Task<JsonNode?> DecryptGcmThenInflateAsync(
-        string encodedData, string? cipherKey, bool inflate, CancellationToken ct)
+        string encodedData, byte[]? cipherKeyBytes, bool inflate, CancellationToken ct)
     {
-        if (cipherKey is null)
+        if (cipherKeyBytes is null)
         {
             throw new InvalidOperationException("cipherKey required for encrypt type 2/3");
         }
 
-        string decoded = Uri.UnescapeDataString(encodedData);
-        byte[] buf = Convert.FromBase64String(decoded);
+        ReadOnlySpan<char> charSpan = encodedData.Contains('%', StringComparison.Ordinal)
+            ? Uri.UnescapeDataString(encodedData).AsSpan()
+            : encodedData.AsSpan();
 
-        if (buf.Length < 48)
+        int maxByteCount = ((charSpan.Length * 3) + 3) / 4;
+        byte[] rented = System.Buffers.ArrayPool<byte>.Shared.Rent(maxByteCount);
+        try
         {
-            throw new InvalidOperationException("AES-GCM buffer too short (min 48 bytes: 16 IV + 16 AAD + 16 tag)");
+            if (!Convert.TryFromBase64Chars(charSpan, rented, out int bytesWritten) || bytesWritten < 48)
+            {
+                throw new InvalidOperationException("AES-GCM buffer too short (min 48 bytes: 16 IV + 16 AAD + 16 tag)");
+            }
+
+            ReadOnlySpan<byte> buf = rented.AsSpan(0, bytesWritten);
+            ReadOnlySpan<byte> iv = buf[..16];
+            ReadOnlySpan<byte> aad = buf.Slice(16, 16);
+            ReadOnlySpan<byte> ctWithTag = buf[32..];
+
+            int plainLen = ctWithTag.Length - 16;
+            byte[] rentedPlain = System.Buffers.ArrayPool<byte>.Shared.Rent(plainLen);
+            try
+            {
+                AesGcmAnyNonce.Decrypt(cipherKeyBytes, iv, aad, ctWithTag, rentedPlain.AsSpan(0, plainLen));
+
+                if (!inflate)
+                {
+                    return ParseJsonSafe(rentedPlain.AsSpan(0, plainLen));
+                }
+
+                return await InflateAndParseJsonAsync(rentedPlain, plainLen, ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(rentedPlain);
+            }
         }
-
-        byte[] iv = buf[..16];
-        byte[] aad = buf[16..32];
-        byte[] ctWithTag = buf[32..];
-
-        byte[] keyBytes = Convert.FromBase64String(cipherKey);
-        byte[] plaintext = AesGcmAnyNonce.Decrypt(keyBytes, iv, aad, ctWithTag);
-
-        if (!inflate)
+        finally
         {
-            return ParseJsonSafe(Encoding.UTF8.GetString(plaintext));
+            System.Buffers.ArrayPool<byte>.Shared.Return(rented);
         }
-
-        byte[] inflated = await InflateAsync(plaintext, ct).ConfigureAwait(false);
-        return ParseJsonSafe(Encoding.UTF8.GetString(inflated));
     }
 
-    private static async Task<string> InflateBase64Async(string base64, CancellationToken ct)
+    private static async Task<JsonNode?> InflateBase64AndParseJsonAsync(string base64, CancellationToken ct)
     {
-        byte[] buf = Convert.FromBase64String(base64);
-        byte[] inflated = await InflateAsync(buf, ct).ConfigureAwait(false);
-        return Encoding.UTF8.GetString(inflated);
+        ReadOnlySpan<char> charSpan = base64.AsSpan();
+        int maxByteCount = ((charSpan.Length * 3) + 3) / 4;
+        byte[] rented = System.Buffers.ArrayPool<byte>.Shared.Rent(maxByteCount);
+        try
+        {
+            if (!Convert.TryFromBase64Chars(charSpan, rented, out int bytesWritten))
+            {
+                throw new InvalidOperationException("Invalid base64 payload");
+            }
+            return await InflateAndParseJsonAsync(rented, bytesWritten, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(rented);
+        }
     }
 
-    private static async Task<byte[]> InflateAsync(byte[] data, CancellationToken ct)
+    private static async Task<JsonNode?> InflateAndParseJsonAsync(byte[] buffer, int count, CancellationToken ct)
     {
-        static Stream MakeDecompressor(MemoryStream src, byte[] headerData)
+        static Stream MakeDecompressor(Stream src, ReadOnlySpan<byte> headerData)
         {
             if (headerData.Length >= 2 && headerData[0] == 0x1f && headerData[1] == 0x8b)
             {
@@ -124,12 +163,13 @@ public static class WsFrameCodec
             return new DeflateStream(src, CompressionMode.Decompress);
         }
 
-        await using MemoryStream ms = new(data);
-        await using Stream dec = MakeDecompressor(ms, data);
-        await using MemoryStream outMs = new();
-        await dec.CopyToAsync(outMs, ct).ConfigureAwait(false);
-        return outMs.ToArray();
+        await using MemoryStream ms = new(buffer, 0, count, writable: false);
+        await using Stream dec = MakeDecompressor(ms, buffer.AsSpan(0, count));
+        return await JsonNode.ParseAsync(dec, cancellationToken: ct).ConfigureAwait(false);
     }
+
+    private static JsonNode? ParseJsonSafe(ReadOnlySpan<byte> utf8Json)
+        => JsonNode.Parse(utf8Json);
 
     private static JsonNode? ParseJsonSafe(string json)
         => JsonNode.Parse(json);

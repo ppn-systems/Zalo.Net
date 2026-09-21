@@ -18,10 +18,17 @@ public sealed class ZaloBotBuilder
     private ZaloSession? _session;
     private IZaloClient? _client;
     private IWebProxy? _proxy;
-    private readonly ZaloBotDispatcher _dispatcher = new();
+    private ZaloBotDispatcher _dispatcher = new();
 
     /// <summary>Creates a new instance of <see cref="ZaloBotBuilder"/>.</summary>
     public static ZaloBotBuilder Create() => new();
+
+    /// <summary>Sets a custom dispatcher instance.</summary>
+    public ZaloBotBuilder UseDispatcher(ZaloBotDispatcher dispatcher)
+    {
+        this._dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+        return this;
+    }
 
     /// <summary>Sets the active Zalo session material.</summary>
     public ZaloBotBuilder UseSession(ZaloSession session)

@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Net;
@@ -20,7 +21,23 @@ namespace Zalo.Net.Auth;
 /// </summary>
 public sealed class ZaloHttpClient : IDisposable
 {
+    private static readonly SocketsHttpHandler s_sharedHandler = new()
+    {
+        UseCookies = false,
+        AllowAutoRedirect = false,
+        AutomaticDecompression = DecompressionMethods.GZip
+                               | DecompressionMethods.Deflate
+                               | DecompressionMethods.Brotli,
+        PooledConnectionLifetime = TimeSpan.FromMinutes(15),
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+        EnableMultipleHttp2Connections = true
+    };
+
+    private static readonly HttpClient s_sharedClient = new(s_sharedHandler, disposeHandler: false);
+    private static readonly ConcurrentDictionary<IWebProxy, HttpClient> s_proxyClients = new();
+
     private readonly HttpClient _http;
+    private readonly bool _disposeClient;
     private readonly CookieStore _cookies;
     private readonly string _userAgent;
 
@@ -43,17 +60,37 @@ public sealed class ZaloHttpClient : IDisposable
         _cookies = cookies ?? new CookieStore();
         this.Proxy = proxy;
 
-        SocketsHttpHandler handler = new()
+        if (proxy is null)
         {
-            UseCookies = false,
-            AllowAutoRedirect = false,
-            AutomaticDecompression = DecompressionMethods.GZip
-                                   | DecompressionMethods.Deflate
-                                   | DecompressionMethods.Brotli,
-            Proxy = proxy,
-            UseProxy = proxy != null
-        };
-        _http = new HttpClient(handler, disposeHandler: true);
+            _http = s_sharedClient;
+            _disposeClient = false;
+        }
+        else
+        {
+            _http = GetOrCreateProxyClient(proxy);
+            _disposeClient = false;
+        }
+    }
+
+    private static HttpClient GetOrCreateProxyClient(IWebProxy proxy)
+    {
+        return s_proxyClients.GetOrAdd(proxy, static p =>
+        {
+            SocketsHttpHandler handler = new()
+            {
+                UseCookies = false,
+                AllowAutoRedirect = false,
+                AutomaticDecompression = DecompressionMethods.GZip
+                                       | DecompressionMethods.Deflate
+                                       | DecompressionMethods.Brotli,
+                Proxy = p,
+                UseProxy = true,
+                PooledConnectionLifetime = TimeSpan.FromMinutes(15),
+                PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+                EnableMultipleHttp2Connections = true
+            };
+            return new HttpClient(handler, disposeHandler: true);
+        });
     }
 
     /// <summary>
@@ -162,5 +199,11 @@ public sealed class ZaloHttpClient : IDisposable
     }
 
     /// <inheritdoc/>
-    public void Dispose() => _http.Dispose();
+    public void Dispose()
+    {
+        if (_disposeClient)
+        {
+            _http.Dispose();
+        }
+    }
 }

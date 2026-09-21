@@ -280,7 +280,7 @@ public sealed class ZaloWebClient : IZaloClient
     {
         ArgumentNullException.ThrowIfNull(material);
 
-        CookieStore cookies = CookieStore.FromJson(material.CookiesJson);
+        CookieStore cookies = CookieStore.ForMaterial(material);
         using ZaloHttpClient http = new(material.UserAgent, cookies, proxy);
 
         JsonNode? loginData = await LoginApis.GetLoginInfoAsync(http, material.Imei, material.Language, material.SecretKey, ct).ConfigureAwait(false);
@@ -610,7 +610,8 @@ public sealed class ZaloWebClient : IZaloClient
             this.StatusChanged?.Invoke(this, new ZaloSessionStatusChanged(material.Uid, ZaloConnectionStatus.Reconnecting));
             try
             {
-                await Task.Delay(backoff, ct).ConfigureAwait(false);
+                TimeSpan jitter = TimeSpan.FromMilliseconds(Random.Shared.Next(100, 1500));
+                await Task.Delay(backoff + jitter, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { return; }
 
@@ -648,7 +649,7 @@ public sealed class ZaloWebClient : IZaloClient
     }
 
     private static ZaloHttpClient CreateHttpForSession(ZaloSession session)
-        => new(session.Material.UserAgent, CookieStore.FromJson(session.Material.CookiesJson), session.Proxy);
+        => new(session.Material.UserAgent, CookieStore.ForMaterial(session.Material), session.Proxy);
 
     private void RemoveQrSession(Guid sessionId)
     {
@@ -686,8 +687,7 @@ public sealed class ZaloWebClient : IZaloClient
     public async Task SendBankCardAsync(ZaloSession session, string threadId, ZaloThreadType threadType, string binBank, string accountNumber, string accountName, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(session);
-        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
-        using ZaloHttpClient http = new(session.Material.UserAgent, cookies, _proxy);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         await http.SendBankCardAsync(session, threadId, threadType, binBank, accountNumber, accountName, ct).ConfigureAwait(false);
     }
 
@@ -702,8 +702,7 @@ public sealed class ZaloWebClient : IZaloClient
     public async Task SendContactCardAsync(ZaloSession session, string threadId, ZaloThreadType threadType, string userId, string? phoneNumber = null, string? qrCodeUrl = null, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(session);
-        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
-        using ZaloHttpClient http = new(session.Material.UserAgent, cookies, _proxy);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         await http.SendContactCardAsync(session, threadId, threadType, userId, phoneNumber, qrCodeUrl, ct).ConfigureAwait(false);
     }
 
@@ -711,8 +710,7 @@ public sealed class ZaloWebClient : IZaloClient
     public async Task JoinGroupViaLinkAsync(ZaloSession session, string inviteUrl, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(session);
-        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
-        using ZaloHttpClient http = new(session.Material.UserAgent, cookies, _proxy);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         await http.JoinGroupViaLinkAsync(session, inviteUrl, ct).ConfigureAwait(false);
     }
 
@@ -720,8 +718,7 @@ public sealed class ZaloWebClient : IZaloClient
     public async Task ReviewJoinRequestsAsync(ZaloSession session, string groupId, string[] memberUids, bool approve, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(session);
-        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
-        using ZaloHttpClient http = new(session.Material.UserAgent, cookies, _proxy);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         await http.ReviewJoinRequestsAsync(session, groupId, memberUids, approve, ct).ConfigureAwait(false);
     }
 
@@ -729,8 +726,7 @@ public sealed class ZaloWebClient : IZaloClient
     public async Task LeaveGroupSilentlyAsync(ZaloSession session, string groupId, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(session);
-        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
-        using ZaloHttpClient http = new(session.Material.UserAgent, cookies, _proxy);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         await http.LeaveGroupSilentlyAsync(session, groupId, ct).ConfigureAwait(false);
     }
 
@@ -738,8 +734,7 @@ public sealed class ZaloWebClient : IZaloClient
     public async Task KickGroupMemberAsync(ZaloSession session, string groupId, string memberUid, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(session);
-        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
-        using ZaloHttpClient http = new(session.Material.UserAgent, cookies, _proxy);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         await GroupApis.RemoveUserFromGroupAsync(http, session, groupId, [memberUid], ct).ConfigureAwait(false);
     }
 
@@ -747,8 +742,7 @@ public sealed class ZaloWebClient : IZaloClient
     public async Task PromoteGroupAdminAsync(ZaloSession session, string groupId, string memberUid, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(session);
-        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
-        using ZaloHttpClient http = new(session.Material.UserAgent, cookies, _proxy);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         await GroupApis.PromoteGroupAdminAsync(http, session, groupId, memberUid, ct).ConfigureAwait(false);
     }
 
@@ -756,8 +750,7 @@ public sealed class ZaloWebClient : IZaloClient
     public async Task PinGroupMessageAsync(ZaloSession session, string groupId, string msgId, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(session);
-        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
-        using ZaloHttpClient http = new(session.Material.UserAgent, cookies, _proxy);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         await GroupApis.PinGroupMessageAsync(http, session, groupId, msgId, ct).ConfigureAwait(false);
     }
 
@@ -765,8 +758,7 @@ public sealed class ZaloWebClient : IZaloClient
     public async Task SendImageAsync(ZaloSession session, string threadId, ZaloThreadType threadType, byte[] imageBytes, string fileName, string? caption = null, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(session);
-        CookieStore cookies = CookieStore.FromJson(session.Material.CookiesJson);
-        using ZaloHttpClient http = new(session.Material.UserAgent, cookies, _proxy);
+        using ZaloHttpClient http = CreateHttpForSession(session);
         _ = await MessageApis.SendPhotoAsync(http, session, threadId, threadType, imageBytes, fileName, caption, ct).ConfigureAwait(false);
     }
 

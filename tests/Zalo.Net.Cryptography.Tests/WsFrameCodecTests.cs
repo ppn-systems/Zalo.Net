@@ -152,10 +152,7 @@ public sealed class WsFrameCodecTests
         RandomNumberGenerator.Fill(iv);
         RandomNumberGenerator.Fill(aad);
 
-        using AesGcm gcm = new(keyBytes, 16);
-        byte[] ciphertext = new byte[plainBytes.Length];
-        byte[] tag = new byte[16];
-        gcm.Encrypt(iv.AsSpan(0, 12), plainBytes, ciphertext, tag, aad);
+        (byte[] ciphertext, byte[] tag) = AesGcmAnyNonce.Encrypt(keyBytes, iv, aad, plainBytes);
 
         byte[] frame = new byte[16 + 16 + ciphertext.Length + 16];
         iv.CopyTo(frame, 0);

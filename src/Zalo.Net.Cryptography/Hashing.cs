@@ -45,7 +45,7 @@ public static class Hashing
     }
 
     /// <summary>
-    /// Computes streaming MD5 hash over a large stream using 2 MB buffer chunks.
+    /// Computes streaming MD5 hash over a large stream using 2 MB buffer chunks from ArrayPool to avoid LOH allocations.
     /// </summary>
     public static async Task<string> ComputeLargeFileMd5Async(Stream stream, CancellationToken ct = default)
     {
@@ -53,20 +53,54 @@ public static class Hashing
 
         const int chunkSize = 2 * 1024 * 1024;
         using IncrementalHash md5 = IncrementalHash.CreateHash(HashAlgorithmName.MD5);
-        byte[] buf = new byte[chunkSize];
-        int read;
-        while ((read = await stream.ReadAsync(buf, ct).ConfigureAwait(false)) > 0)
+        byte[] buf = System.Buffers.ArrayPool<byte>.Shared.Rent(chunkSize);
+        try
         {
-            md5.AppendData(buf, 0, read);
+            int read;
+            while ((read = await stream.ReadAsync(buf.AsMemory(0, chunkSize), ct).ConfigureAwait(false)) > 0)
+            {
+                md5.AppendData(buf, 0, read);
+            }
+            return Convert.ToHexStringLower(md5.GetHashAndReset());
         }
-        return Convert.ToHexStringLower(md5.GetHashAndReset());
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(buf);
+        }
+    }
+
+    [SuppressMessage("Security", "CA5351:Do Not Use Broken Cryptographic Algorithms", Justification = "MD5 required by Zalo protocol specification")]
+    public static string Md5Hex(ReadOnlySpan<byte> bytes)
+    {
+        Span<byte> hash = stackalloc byte[16];
+        _ = MD5.HashData(bytes, hash);
+        return Convert.ToHexStringLower(hash);
     }
 
     [SuppressMessage("Security", "CA5351:Do Not Use Broken Cryptographic Algorithms", Justification = "MD5 required by Zalo protocol specification")]
     public static string Md5Hex(string input)
     {
-        Span<byte> hash = stackalloc byte[16];
-        _ = MD5.HashData(Encoding.UTF8.GetBytes(input), hash);
-        return Convert.ToHexStringLower(hash);
+        ArgumentNullException.ThrowIfNull(input);
+        int byteCount = Encoding.UTF8.GetByteCount(input);
+
+        if (byteCount <= 512)
+        {
+            Span<byte> utf8 = stackalloc byte[byteCount];
+            _ = Encoding.UTF8.GetBytes(input, utf8);
+            return Md5Hex(utf8);
+        }
+        else
+        {
+            byte[] rented = System.Buffers.ArrayPool<byte>.Shared.Rent(byteCount);
+            try
+            {
+                _ = Encoding.UTF8.GetBytes(input, 0, input.Length, rented, 0);
+                return Md5Hex(rented.AsSpan(0, byteCount));
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(rented);
+            }
+        }
     }
 }
