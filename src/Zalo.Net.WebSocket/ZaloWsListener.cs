@@ -158,7 +158,7 @@ public sealed class ZaloWsListener
         }
         try
         {
-            CookieStore store = CookieStore.FromJson(_session.Material.CookiesJson);
+            CookieStore store = CookieStore.ForMaterial(_session.Material);
             return store.GetCookieHeader("https://chat.zalo.me");
         }
         catch { return ""; }
