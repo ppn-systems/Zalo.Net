@@ -42,7 +42,7 @@ internal class Program
         if (args.Contains("--send-test"))
         {
             string target = args.Length > 2 ? args[1] : "";
-            string text = args.Length > 2 ? args[2] : "Xin chào từ Zalo.Net.Mcp Server!";
+            string text = args.Length > 2 ? args[2] : "Hello from Zalo.Net.Mcp Server!";
             await TestSendMessageCommand.RunAsync(target, text).ConfigureAwait(false);
             return;
         }

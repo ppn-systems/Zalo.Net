@@ -29,12 +29,12 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_send_text")]
-    [Description("Gửi tin nhắn văn bản đến người dùng cá nhân hoặc nhóm chat trên Zalo.")]
+    [Description("Send a text message to a user or group chat on Zalo.")]
     public async Task<string> SendTextAsync(
-        [Description("ID của người nhận (User ID) hoặc ID của nhóm chat (Group ID)")] string threadId,
-        [Description("Loại cuộc trò chuyện: 'User' (cá nhân) hoặc 'Group' (nhóm chat)")] string threadType,
-        [Description("Nội dung tin nhắn cần gửi")] string text,
-        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Recipient User ID or Group ID (threadId)")] string threadId,
+        [Description("Conversation type: 'User' (direct) or 'Group' (group chat)")] string threadType,
+        [Description("Text message content to send")] string text,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         (ZaloSession session, MessageRepository repository) = this.ResolveAccount(accountUid);
@@ -67,13 +67,13 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_broadcast_message")]
-    [Description("Gửi cùng một nội dung tin nhắn đến danh sách nhiều người nhận hoặc nhóm chat Zalo.")]
+    [Description("Broadcast the same message to multiple recipients or group chats on Zalo.")]
     public async Task<string> BroadcastMessageAsync(
-        [Description("Danh sách ID người nhận hoặc Group ID (phân cách bằng dấu phẩy)")] string threadIdsCsv,
-        [Description("Loại cuộc trò chuyện: 'User' hoặc 'Group'")] string threadType,
-        [Description("Nội dung tin nhắn phát thông báo")] string text,
-        [Description("Thời gian chờ giữa các lần gửi (ms, mặc định 1000ms)")] int delayMs = 1000,
-        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Comma-separated list of recipient User IDs or Group IDs")] string threadIdsCsv,
+        [Description("Conversation type: 'User' or 'Group'")] string threadType,
+        [Description("Broadcast message content")] string text,
+        [Description("Delay between sends in milliseconds (default 1000ms)")] int delayMs = 1000,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(threadIdsCsv);
@@ -110,14 +110,14 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_send_sticker")]
-    [Description("Gửi nhãn dán (Sticker) Zalo vào cuộc trò chuyện.")]
+    [Description("Send a Zalo sticker into a conversation.")]
     public async Task<string> SendStickerAsync(
-        [Description("ID của cuộc trò chuyện")] string threadId,
-        [Description("Loại cuộc trò chuyện: 'User' hoặc 'Group'")] string threadType,
-        [Description("ID của Sticker")] int stickerId,
-        [Description("ID của danh mục Sticker (Category ID)")] int cateId,
-        [Description("Loại Sticker (mặc định 1)")] int stickerType = 1,
-        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Conversation ID (ThreadId)")] string threadId,
+        [Description("Conversation type: 'User' or 'Group'")] string threadType,
+        [Description("Sticker ID")] int stickerId,
+        [Description("Sticker category ID (cateId)")] int cateId,
+        [Description("Sticker type (default 1)")] int stickerType = 1,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         (ZaloSession session, _) = this.ResolveAccount(accountUid);
@@ -133,19 +133,19 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_send_file")]
-    [Description("Gửi tệp tin đính kèm hoặc hình ảnh vào cuộc trò chuyện Zalo.")]
+    [Description("Send an attachment or document file to a Zalo conversation.")]
     public async Task<string> SendFileAsync(
-        [Description("ID của cuộc trò chuyện")] string threadId,
-        [Description("Loại cuộc trò chuyện: 'User' hoặc 'Group'")] string threadType,
-        [Description("Đường dẫn tuyệt đối đến file trên đĩa cục bộ")] string filePath,
-        [Description("Chú thích đi kèm tệp tin (tùy chọn)")] string? caption = null,
-        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Conversation ID (ThreadId)")] string threadId,
+        [Description("Conversation type: 'User' or 'Group'")] string threadType,
+        [Description("Absolute file path on local disk")] string filePath,
+        [Description("Optional file caption text")] string? caption = null,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(filePath);
         if (!File.Exists(filePath))
         {
-            return JsonSerializer.Serialize(new { error = $"Tệp tin không tồn tại tại đường dẫn: {filePath}" });
+            return JsonSerializer.Serialize(new { error = $"File does not exist at path: {filePath}" });
         }
 
         (ZaloSession session, _) = this.ResolveAccount(accountUid);
@@ -164,14 +164,14 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_send_bank_card")]
-    [Description("Gửi thông tin thẻ/tài khoản ngân hàng để nhận chuyển khoản qua Zalo.")]
+    [Description("Send bank account details card for funds transfer via Zalo.")]
     public async Task<string> SendBankCardAsync(
-        [Description("ID của cuộc trò chuyện")] string threadId,
-        [Description("Loại cuộc trò chuyện: 'User' hoặc 'Group'")] string threadType,
-        [Description("Mã BIN ngân hàng (VD: '970458' cho TPBank, '970436' cho Vietcombank, '970422' cho MBBank)")] string binBank,
-        [Description("Số tài khoản ngân hàng")] string accountNumber,
-        [Description("Tên chủ tài khoản ngân hàng")] string accountName,
-        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Conversation ID (ThreadId)")] string threadId,
+        [Description("Conversation type: 'User' or 'Group'")] string threadType,
+        [Description("Bank BIN code (e.g. '970458' for TPBank, '970436' for Vietcombank, '970422' for MBBank)")] string binBank,
+        [Description("Bank account number")] string accountNumber,
+        [Description("Bank account holder name")] string accountName,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         (ZaloSession session, _) = this.ResolveAccount(accountUid);
@@ -188,14 +188,14 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_send_contact_card")]
-    [Description("Gửi danh thiếp giới thiệu người dùng Zalo khác vào cuộc trò chuyện.")]
+    [Description("Send a contact recommendation card into a conversation.")]
     public async Task<string> SendContactCardAsync(
-        [Description("ID của cuộc trò chuyện")] string threadId,
-        [Description("Loại cuộc trò chuyện: 'User' hoặc 'Group'")] string threadType,
-        [Description("User ID của danh thiếp được giới thiệu")] string targetUserId,
-        [Description("Số điện thoại (tùy chọn)")] string? phoneNumber = null,
-        [Description("QR Code Profile URL (tùy chọn)")] string? qrCodeUrl = null,
-        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Conversation ID (ThreadId)")] string threadId,
+        [Description("Conversation type: 'User' or 'Group'")] string threadType,
+        [Description("User ID of the recommended contact")] string targetUserId,
+        [Description("Optional phone number")] string? phoneNumber = null,
+        [Description("Optional QR code profile URL")] string? qrCodeUrl = null,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         (ZaloSession session, _) = this.ResolveAccount(accountUid);
@@ -212,16 +212,16 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_quote_message")]
-    [Description("Trích dẫn (trả lời/reply) một tin nhắn cụ thể trong cuộc trò chuyện Zalo.")]
+    [Description("Quote (reply to) a specific message in a Zalo conversation.")]
     public async Task<string> QuoteMessageAsync(
-        [Description("ID của người nhận hoặc nhóm chat")] string threadId,
-        [Description("Loại cuộc trò chuyện: 'User' hoặc 'Group'")] string threadType,
-        [Description("Nội dung tin nhắn phản hồi mới")] string text,
-        [Description("MsgId của tin nhắn được trích dẫn")] string quoteMsgId,
-        [Description("CliMsgId của tin nhắn được trích dẫn")] string quoteCliMsgId,
-        [Description("User ID của người gửi tin nhắn được trích dẫn")] string quoteSenderUid,
-        [Description("Nội dung của tin nhắn được trích dẫn")] string quoteContent,
-        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Recipient User ID or Group ID (ThreadId)")] string threadId,
+        [Description("Conversation type: 'User' or 'Group'")] string threadType,
+        [Description("Reply message text content")] string text,
+        [Description("MsgId of the message being quoted")] string quoteMsgId,
+        [Description("CliMsgId of the message being quoted")] string quoteCliMsgId,
+        [Description("Sender User ID of the message being quoted")] string quoteSenderUid,
+        [Description("Content of the message being quoted")] string quoteContent,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         (ZaloSession session, _) = this.ResolveAccount(accountUid);
@@ -238,14 +238,14 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_react_message")]
-    [Description("Thả cảm xúc biểu tượng (Haha, Like, Heart, Wow, Cry, Angry, Kiss, Love, Dislike) vào tin nhắn.")]
+    [Description("Add an emoji reaction (Haha, Like, Heart, Wow, Cry, Angry, Kiss, Love, Dislike) to a message.")]
     public async Task<string> ReactMessageAsync(
-        [Description("ID của cuộc trò chuyện")] string threadId,
-        [Description("MsgId của tin nhắn cần thả cảm xúc")] string msgId,
-        [Description("CliMsgId của tin nhắn")] string cliMsgId,
-        [Description("Loại cuộc trò chuyện: 'User' hoặc 'Group'")] string threadType,
-        [Description("Loại cảm xúc: 'Haha', 'Like', 'Heart', 'Wow', 'Cry', 'Angry', 'Kiss', 'Love', 'Dislike'")] string reaction,
-        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Conversation ID (ThreadId)")] string threadId,
+        [Description("Target message MsgId")] string msgId,
+        [Description("Target message CliMsgId")] string cliMsgId,
+        [Description("Conversation type: 'User' or 'Group'")] string threadType,
+        [Description("Reaction type: 'Haha', 'Like', 'Heart', 'Wow', 'Cry', 'Angry', 'Kiss', 'Love', 'Dislike'")] string reaction,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         (ZaloSession session, _) = this.ResolveAccount(accountUid);
@@ -265,13 +265,13 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_recall_message")]
-    [Description("Thu hồi (hủy) tin nhắn Zalo đã gửi.")]
+    [Description("Recall (undo/delete) a previously sent Zalo message.")]
     public async Task<string> RecallMessageAsync(
-        [Description("ID của cuộc trò chuyện")] string threadId,
-        [Description("MsgId của tin nhắn cần thu hồi")] string msgId,
-        [Description("CliMsgId của tin nhắn cần thu hồi")] string cliMsgId,
-        [Description("Loại cuộc trò chuyện: 'User' hoặc 'Group'")] string threadType,
-        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Conversation ID (ThreadId)")] string threadId,
+        [Description("Target message MsgId to recall")] string msgId,
+        [Description("Target message CliMsgId to recall")] string cliMsgId,
+        [Description("Conversation type: 'User' or 'Group'")] string threadType,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         (ZaloSession session, _) = this.ResolveAccount(accountUid);
@@ -287,11 +287,11 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_search_messages")]
-    [Description("Tìm kiếm tin nhắn cũ trong cơ sở dữ liệu Local SQLite theo từ khóa.")]
+    [Description("Search historical messages in local SQLite database by keyword.")]
     public async Task<string> SearchMessagesAsync(
-        [Description("Từ khóa cần tìm kiếm trong nội dung tin nhắn")] string keyword,
-        [Description("Số lượng kết quả tối đa cần lấy (mặc định 50)")] int limit = 50,
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Keyword to search within message content")] string keyword,
+        [Description("Maximum number of results to return (default 50)")] int limit = 50,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         MessageRepository repo = this._sessionManager.GetAccount(accountUid)?.Repository ?? this._sessionManager.Repository;
@@ -300,11 +300,11 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_get_chat_history")]
-    [Description("Lấy lịch sử trò chuyện mới nhất của một cuộc trò chuyện từ Local SQLite Database (tốc độ siêu nhanh).")]
+    [Description("Get recent chat message history from local SQLite database (sub-millisecond query).")]
     public async Task<string> GetChatHistoryAsync(
-        [Description("ID của cuộc trò chuyện (ThreadId)")] string threadId,
-        [Description("Số lượng tin nhắn gần nhất cần lấy (mặc định 50)")] int limit = 50,
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Conversation ID (ThreadId)")] string threadId,
+        [Description("Maximum number of recent messages to retrieve (default 50)")] int limit = 50,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         MessageRepository repo = this._sessionManager.GetAccount(accountUid)?.Repository ?? this._sessionManager.Repository;
@@ -313,13 +313,13 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_send_image")]
-    [Description("Gửi hình ảnh (photo/image) từ đường dẫn file local hoặc URL vào cuộc trò chuyện Zalo.")]
+    [Description("Send a photo or image from a local file path or web URL into a Zalo conversation.")]
     public async Task<string> SendImageAsync(
-        [Description("ID của cuộc trò chuyện (ThreadId)")] string threadId,
-        [Description("Loại cuộc trò chuyện: 'User' hoặc 'Group'")] string threadType,
-        [Description("Đường dẫn file local (ví dụ: C:\\image.png) hoặc URL hình ảnh")] string imagePathOrUrl,
-        [Description("Chú thích đi kèm hình ảnh (tùy chọn)")] string? caption = null,
-        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Conversation ID (ThreadId)")] string threadId,
+        [Description("Conversation type: 'User' or 'Group'")] string threadType,
+        [Description("Local file path (e.g. C:\\image.png) or image HTTP URL")] string imagePathOrUrl,
+        [Description("Optional image caption text")] string? caption = null,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         (ZaloSession session, _) = this.ResolveAccount(accountUid);
@@ -359,10 +359,10 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_download_attachment")]
-    [Description("Tải về hình ảnh, tệp tin PDF, tài liệu hoặc file ghi âm thoại từ Zalo về máy.")]
+    [Description("Download an image, document, or audio attachment from Zalo to local disk.")]
     public async Task<string> DownloadAttachmentAsync(
-        [Description("URL của đính kèm/file cần tải")] string fileUrl,
-        [Description("Tên file lưu lại trên máy (tùy chọn, mặc định lấy từ URL)")] string? outputFileName = null,
+        [Description("URL of the attachment/file to download")] string fileUrl,
+        [Description("Optional destination file name (defaults to URL filename)")] string? outputFileName = null,
         CancellationToken ct = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(fileUrl);

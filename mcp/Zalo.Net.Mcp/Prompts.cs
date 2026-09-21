@@ -14,14 +14,14 @@ namespace Zalo.Net.Mcp;
 public sealed class Prompts
 {
     [McpServerPrompt(Name = "summarize_chat_thread")]
-    [Description("Tạo prompt mẫu cho AI tóm tắt nội dung cuộc trò chuyện Zalo gần đây.")]
+    [Description("Generates a prompt template for the AI to summarize recent messages in a Zalo chat thread.")]
     public static GetPromptResult SummarizeChatThread(
-        [Description("ID của cuộc trò chuyện cần tóm tắt")] string threadId,
-        [Description("Ngôn ngữ tóm tắt (mặc định 'vi')")] string language = "vi")
+        [Description("ID of the chat thread to summarize")] string threadId,
+        [Description("Language for the summary (default 'en')")] string language = "en")
     {
         return new GetPromptResult
         {
-            Description = $"Tóm tắt nội dung cuộc trò chuyện Zalo {threadId}",
+            Description = $"Summarize Zalo chat thread {threadId}",
             Messages = [
                 new PromptMessage
                 {
@@ -29,8 +29,8 @@ public sealed class Prompts
                     Content = new TextContentBlock
                     {
                         Text = $"""
-                            Hãy sử dụng tool `zalo_get_chat_history` với thread_id = "{threadId}" để đọc các tin nhắn gần nhất.
-                            Sau đó tổng hợp ngắn gọn các ý chính, yêu cầu hoặc cuộc hẹn trong cuộc trò chuyện này bằng tiếng {language}.
+                            Use the `zalo_get_chat_history` tool with thread_id = "{threadId}" to retrieve the most recent messages.
+                            Then concisely summarize key points, action items, requests, or scheduled events from this conversation in {language}.
                             """
                     }
                 }
@@ -39,14 +39,14 @@ public sealed class Prompts
     }
 
     [McpServerPrompt(Name = "draft_zalo_reply")]
-    [Description("Tạo prompt mẫu giúp AI soạn thảo câu trả lời lịch sự cho tin nhắn Zalo vừa nhận.")]
+    [Description("Generates a prompt template to help AI draft an appropriate reply to an incoming Zalo message.")]
     public static GetPromptResult DraftZaloReply(
-        [Description("Nội dung tin nhắn nhận được")] string receivedMessage,
-        [Description("Phong cách phản hồi (VD: 'Thân thiện', 'Lịch sự công việc', 'Ngắn gọn')")] string style = "Lịch sự công việc")
+        [Description("Content of the received message")] string receivedMessage,
+        [Description("Reply style (e.g. 'Professional', 'Casual', 'Concise')")] string style = "Professional")
     {
         return new GetPromptResult
         {
-            Description = "Soạn thảo phản hồi Zalo",
+            Description = "Draft Zalo reply",
             Messages = [
                 new PromptMessage
                 {
@@ -54,11 +54,11 @@ public sealed class Prompts
                     Content = new TextContentBlock
                     {
                         Text = $"""
-                            Tôi vừa nhận được tin nhắn Zalo sau:
+                            I received the following Zalo message:
                             "{receivedMessage}"
 
-                            Hãy đề xuất 3 phương án trả lời bằng Tiếng Việt theo phong cách '{style}'.
-                            Mỗi phương án phải tự nhiên, chuẩn văn phong nhắn tin Zalo và có kèm biểu tượng cảm xúc phù hợp.
+                            Please suggest 3 reply options adhering to a '{style}' tone.
+                            Each option should feel natural, match standard messaging etiquette, and include suitable emoji where appropriate.
                             """
                     }
                 }

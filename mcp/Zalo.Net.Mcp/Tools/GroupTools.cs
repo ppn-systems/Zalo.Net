@@ -24,10 +24,10 @@ public sealed class GroupTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_find_user")]
-    [Description("Tìm kiếm thông tin người dùng Zalo thông qua số điện thoại.")]
+    [Description("Find Zalo user profile by phone number.")]
     public async Task<string> FindUserByPhoneAsync(
-        [Description("Số điện thoại cần tìm kiếm (VD: '0912345678' hoặc '+84912345678')")] string phoneNumber,
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Phone number to search (e.g. '0912345678' or '+84912345678')")] string phoneNumber,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ZaloSession session = this.ResolveSession(accountUid);
@@ -36,10 +36,10 @@ public sealed class GroupTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_list_contacts")]
-    [Description("Lấy danh sách bạn bè / danh bạ Zalo của tài khoản hiện tại.")]
+    [Description("Get friends and contacts list for the current Zalo account.")]
     public async Task<string> ListContactsAsync(
-        [Description("Số lượng bạn bè tối đa cần lấy (mặc định 1000)")] int count = 1000,
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Maximum number of contacts to return (default 1000)")] int count = 1000,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ZaloSession session = this.ResolveSession(accountUid);
@@ -48,11 +48,11 @@ public sealed class GroupTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_send_friend_request")]
-    [Description("Gửi lời mời kết bạn đến người dùng Zalo qua User ID.")]
+    [Description("Send a friend request to a Zalo user by User ID.")]
     public async Task<string> SendFriendRequestAsync(
-        [Description("User ID của người nhận lời mời")] string targetUserId,
-        [Description("Lời nhắn kết bạn (tùy chọn)")] string? message = null,
-        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("User ID of the recipient")] string targetUserId,
+        [Description("Optional friend request message")] string? message = null,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ZaloSession session = this.ResolveSession(accountUid);
@@ -61,10 +61,10 @@ public sealed class GroupTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_accept_friend_request")]
-    [Description("Chấp nhận lời mời kết bạn từ người dùng khác.")]
+    [Description("Accept an incoming friend request from another user.")]
     public async Task<string> AcceptFriendRequestAsync(
-        [Description("User ID của người gửi lời mời kết bạn")] string targetUserId,
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("User ID of the friend request sender")] string targetUserId,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ZaloSession session = this.ResolveSession(accountUid);
@@ -73,10 +73,10 @@ public sealed class GroupTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_block_user")]
-    [Description("Chặn người dùng Zalo.")]
+    [Description("Block a Zalo user.")]
     public async Task<string> BlockUserAsync(
-        [Description("User ID của người cần chặn")] string targetUserId,
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("User ID to block")] string targetUserId,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ZaloSession session = this.ResolveSession(accountUid);
@@ -85,10 +85,10 @@ public sealed class GroupTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_unblock_user")]
-    [Description("Bỏ chặn người dùng Zalo.")]
+    [Description("Unblock a Zalo user.")]
     public async Task<string> UnblockUserAsync(
-        [Description("User ID của người cần bỏ chặn")] string targetUserId,
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("User ID to unblock")] string targetUserId,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ZaloSession session = this.ResolveSession(accountUid);
@@ -97,11 +97,11 @@ public sealed class GroupTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_change_friend_alias")]
-    [Description("Đổi biệt danh (gợi nhớ/nickname CRM) của người bạn trong danh bạ.")]
+    [Description("Change the nickname (alias) of a contact in your address book.")]
     public async Task<string> ChangeFriendAliasAsync(
-        [Description("User ID của người bạn")] string targetUserId,
-        [Description("Biệt danh mới cần đặt")] string alias,
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("User ID of the friend")] string targetUserId,
+        [Description("New alias/nickname to assign")] string alias,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ZaloSession session = this.ResolveSession(accountUid);
@@ -110,9 +110,9 @@ public sealed class GroupTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_list_groups")]
-    [Description("Lấy danh sách tất cả các nhóm chat Zalo mà tài khoản hiện tại tham gia.")]
+    [Description("List all Zalo group chats that the current account belongs to.")]
     public async Task<string> ListGroupsAsync(
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ZaloSession session = this.ResolveSession(accountUid);
@@ -121,11 +121,11 @@ public sealed class GroupTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_create_group")]
-    [Description("Tạo một nhóm chat Zalo mới với danh sách danh bạ chỉ định.")]
+    [Description("Create a new Zalo group chat with specified member contacts.")]
     public async Task<string> CreateGroupAsync(
-        [Description("Tên của nhóm chat mới")] string groupName,
-        [Description("Danh sách các User ID của thành viên tham gia (phân cách bằng dấu phẩy)")] string memberIdsCsv,
-        [Description("UID tài khoản Zalo tạo nhóm (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Name of the new group chat")] string groupName,
+        [Description("Comma-separated list of member User IDs")] string memberIdsCsv,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(memberIdsCsv);
@@ -138,12 +138,12 @@ public sealed class GroupTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_manage_group")]
-    [Description("Quản lý nhóm chat: Thêm thành viên ('add'), Xóa thành viên ('remove'), Đổi tên nhóm ('rename'), Rời nhóm ('leave').")]
+    [Description("Manage group chat: Add members ('add'), Remove members ('remove'), Rename group ('rename'), or Leave ('leave').")]
     public async Task<string> ManageGroupAsync(
-        [Description("ID của nhóm chat (GroupId)")] string groupId,
-        [Description("Hành động: 'add', 'remove', 'rename', 'leave'")] string action,
-        [Description("Danh sách User ID thành viên (nếu add/remove) hoặc Tên nhóm mới (nếu rename)")] string value,
-        [Description("UID tài khoản Zalo thực hiện (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Group chat ID (GroupId)")] string groupId,
+        [Description("Action: 'add', 'remove', 'rename', 'leave'")] string action,
+        [Description("Comma-separated member User IDs (for add/remove) or new group name (for rename)")] string value,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(action);
@@ -173,31 +173,31 @@ public sealed class GroupTools(ZaloSessionManager sessionManager)
                 return JsonSerializer.Serialize(new { status = "success", action = "left_group", group_id = groupId });
 
             default:
-                return JsonSerializer.Serialize(new { error = "Hành động không hợp lệ. Chọn 'add', 'remove', 'rename', hoặc 'leave'." });
+                return JsonSerializer.Serialize(new { error = "Invalid action. Supported actions: 'add', 'remove', 'rename', 'leave'." });
         }
     }
 
     [McpServerTool(Name = "zalo_join_group_via_link")]
-    [Description("Tham gia nhóm chat Zalo qua đường dẫn mời (VD: https://zalo.me/g/XXXXXXXXX).")]
+    [Description("Join a Zalo group chat via invite link URL (e.g. https://zalo.me/g/XXXXXXXXX).")]
     public async Task<string> JoinGroupViaLinkAsync(
-        [Description("Đường dẫn liên kết mời tham gia nhóm")] string inviteUrl,
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Group invitation link URL")] string inviteUrl,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ZaloSession session = this.ResolveSession(accountUid);
         using ZaloWebClient client = new(session.Proxy);
         await client.JoinGroupViaLinkAsync(session, inviteUrl, ct).ConfigureAwait(false);
 
-        return JsonSerializer.Serialize(new { status = "success", invite_url = inviteUrl, message = "Đã gửi yêu cầu tham gia nhóm." });
+        return JsonSerializer.Serialize(new { status = "success", invite_url = inviteUrl, message = "Group join request submitted." });
     }
 
     [McpServerTool(Name = "zalo_review_join_requests")]
-    [Description("Duyệt hoặc từ chối danh sách người dùng xin tham gia nhóm chat.")]
+    [Description("Approve or decline pending user join requests for a group chat.")]
     public async Task<string> ReviewJoinRequestsAsync(
-        [Description("ID của nhóm chat (GroupId)")] string groupId,
-        [Description("Danh sách User ID xin tham gia (phân cách bằng dấu phẩy)")] string memberUidsCsv,
-        [Description("Đồng ý tham gia (true) hoặc Từ chối (false)")] bool approve,
-        [Description("UID tài khoản Zalo quản trị (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Group chat ID (GroupId)")] string groupId,
+        [Description("Comma-separated list of applicant User IDs")] string memberUidsCsv,
+        [Description("True to approve, false to decline")] bool approve,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(memberUidsCsv);
@@ -211,10 +211,10 @@ public sealed class GroupTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_leave_group_silently")]
-    [Description("Rời khỏi nhóm chat Zalo trong âm thầm (không phát thông báo rời nhóm).")]
+    [Description("Leave a Zalo group chat silently without broadcasting notification.")]
     public async Task<string> LeaveGroupSilentlyAsync(
-        [Description("ID của nhóm chat (GroupId)")] string groupId,
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Group chat ID (GroupId)")] string groupId,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ZaloSession session = this.ResolveSession(accountUid);
@@ -225,11 +225,11 @@ public sealed class GroupTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_kick_group_member")]
-    [Description("Xóa (Kick) một thành viên khỏi nhóm chat Zalo.")]
+    [Description("Kick a member from a Zalo group chat.")]
     public async Task<string> KickGroupMemberAsync(
-        [Description("ID nhóm chat Zalo (GroupId)")] string groupId,
-        [Description("User ID của thành viên cần xóa")] string memberUid,
-        [Description("UID tài khoản Zalo quản trị (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Group chat ID (GroupId)")] string groupId,
+        [Description("User ID of the member to remove")] string memberUid,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ZaloSession session = this.ResolveSession(accountUid);
@@ -240,11 +240,11 @@ public sealed class GroupTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_promote_group_admin")]
-    [Description("Thăng cấp phó nhóm / quản trị viên cho thành viên nhóm chat Zalo.")]
+    [Description("Promote a group member to admin / deputy admin in a Zalo group chat.")]
     public async Task<string> PromoteGroupAdminAsync(
-        [Description("ID nhóm chat Zalo (GroupId)")] string groupId,
-        [Description("User ID của thành viên được thăng cấp")] string memberUid,
-        [Description("UID tài khoản Zalo quản trị (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Group chat ID (GroupId)")] string groupId,
+        [Description("User ID of the member to promote")] string memberUid,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ZaloSession session = this.ResolveSession(accountUid);
@@ -255,11 +255,11 @@ public sealed class GroupTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_pin_group_message")]
-    [Description("Ghim tin nhắn thông báo quan trọng lên đầu nhóm chat Zalo.")]
+    [Description("Pin an important announcement message at the top of a Zalo group chat.")]
     public async Task<string> PinGroupMessageAsync(
-        [Description("ID nhóm chat Zalo (GroupId)")] string groupId,
-        [Description("ID của tin nhắn cần ghim (MsgId)")] string msgId,
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Group chat ID (GroupId)")] string groupId,
+        [Description("Message ID to pin (MsgId)")] string msgId,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ZaloSession session = this.ResolveSession(accountUid);

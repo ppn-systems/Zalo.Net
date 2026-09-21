@@ -29,11 +29,11 @@ public sealed class SmartTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_smart_search")]
-    [Description("Tìm kiếm thông minh trên cả tin nhắn, thực thể trích xuất (STK, SĐT, Link) và lịch hẹn nhắc nhở.")]
+    [Description("Smart unified search across messages, extracted entities (bank accounts, phones, links), and reminders.")]
     public async Task<string> SmartSearchAsync(
-        [Description("Từ khóa hoặc thông tin cần tìm kiếm")] string query,
-        [Description("Số lượng kết quả tối đa (mặc định 50)")] int limit = 50,
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Keyword or search query text")] string query,
+        [Description("Maximum number of results to return (default 50)")] int limit = 50,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         MessageRepository repo = this.ResolveRepository(accountUid);
@@ -42,12 +42,12 @@ public sealed class SmartTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_get_extracted_entities")]
-    [Description("Lấy danh sách thông tin đã tự động trích xuất từ tin nhắn Zalo (Số tài khoản ngân hàng 'bank_card', Số điện thoại 'phone', Links 'url').")]
+    [Description("Get auto-extracted entities from messages (bank accounts 'bank_card', phone numbers 'phone', links 'url').")]
     public async Task<string> GetExtractedEntitiesAsync(
-        [Description("Loại thực thể cần lấy: 'bank_card', 'phone', 'url' (để trống nếu lấy tất cả)")] string? entityType = null,
-        [Description("Số lượng kết quả tối đa (mặc định 50)")] int limit = 50,
-        [Description("Lọc theo nội dung: chỉ lấy thực thể có giá trị hoặc tin nhắn gốc chứa chuỗi này (tùy chọn)")] string? contains = null,
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Entity type filter: 'bank_card', 'phone', 'url' (empty for all)")] string? entityType = null,
+        [Description("Maximum number of results to return (default 50)")] int limit = 50,
+        [Description("Content filter: substring match against value or raw text (optional)")] string? contains = null,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         MessageRepository repo = this.ResolveRepository(accountUid);
@@ -56,11 +56,11 @@ public sealed class SmartTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_get_reminders")]
-    [Description("Lấy danh sách các lịch hẹn, cuộc họp, thời gian đã tự động phát hiện từ các tin nhắn Zalo.")]
+    [Description("Get auto-detected appointments, meetings, and dates from Zalo messages.")]
     public async Task<string> GetRemindersAsync(
-        [Description("Số lượng kết quả tối đa (mặc định 50)")] int limit = 50,
-        [Description("Lọc theo nội dung: chỉ lấy nhắc hẹn có tiêu đề hoặc tin nhắn gốc chứa chuỗi này (tùy chọn)")] string? contains = null,
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Maximum number of results to return (default 50)")] int limit = 50,
+        [Description("Content filter: substring match against reminder title or raw text (optional)")] string? contains = null,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         MessageRepository repo = this.ResolveRepository(accountUid);
@@ -69,10 +69,10 @@ public sealed class SmartTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_get_urgent_messages")]
-    [Description("Lọc danh sách các tin nhắn Zalo quan trọng / khẩn cấp (gấp, khiếu nại, hỗ trợ ngay).")]
+    [Description("Filter urgent or high-priority Zalo messages (e.g. urgent requests, escalations, priority support).")]
     public async Task<string> GetUrgentMessagesAsync(
-        [Description("Số lượng kết quả tối đa (mặc định 50)")] int limit = 50,
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Maximum number of results to return (default 50)")] int limit = 50,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         MessageRepository repo = this.ResolveRepository(accountUid);
@@ -81,26 +81,26 @@ public sealed class SmartTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_get_contact_insights")]
-    [Description("Xem hồ sơ tương tác CRM memory của một người dùng Zalo (tổng tin nhắn trao đổi, lần hoạt động cuối, ngày đầu giao tiếp).")]
+    [Description("View CRM interaction memory for a Zalo user (total message exchange, last active timestamp, first contact date).")]
     public async Task<string> GetContactInsightsAsync(
-        [Description("User ID của người dùng Zalo")] string userId,
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("User ID of the Zalo user")] string userId,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         MessageRepository repo = this.ResolveRepository(accountUid);
         ContactInsight? insight = await repo.GetContactInsightAsync(userId, ct).ConfigureAwait(false);
         if (insight == null)
         {
-            return JsonSerializer.Serialize(new { message = "Chưa có hồ sơ tương tác cho người dùng này." });
+            return JsonSerializer.Serialize(new { message = "No interaction history found for this user." });
         }
         return JsonSerializer.Serialize(insight, ZaloMcpJsonContext.Default.ContactInsight);
     }
 
     [McpServerTool(Name = "zalo_get_chat_summary")]
-    [Description("Lấy danh sách các cuộc trò chuyện Zalo mới nhất cùng tin nhắn cuối cùng để AI tổng hợp báo cáo.")]
+    [Description("Get recent Zalo conversations with their latest messages for AI executive summaries.")]
     public async Task<string> GetChatSummaryAsync(
-        [Description("Số lượng cuộc trò chuyện gần nhất (mặc định 20)")] int limit = 20,
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Maximum number of recent conversations to retrieve (default 20)")] int limit = 20,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         MessageRepository repo = this.ResolveRepository(accountUid);
@@ -109,10 +109,10 @@ public sealed class SmartTools(ZaloSessionManager sessionManager)
     }
 
     [McpServerTool(Name = "zalo_get_analytics")]
-    [Description("Thống kê phân tích dữ liệu trò chuyện Zalo (tổng số tin nhắn gửi/nhận, top bạn bè tương tác nhiều nhất, phân bổ STK ngân hàng/SĐT bóc tách).")]
+    [Description("Analytics and statistics on Zalo chat data (sent/received counts, top active contacts, entity distribution).")]
     public async Task<string> GetAnalyticsAsync(
-        [Description("Số ngày cần phân tích thống kê (mặc định 30)")] int days = 30,
-        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
+        [Description("Analysis time window in days (default 30)")] int days = 30,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         MessageRepository repo = this.ResolveRepository(accountUid);
