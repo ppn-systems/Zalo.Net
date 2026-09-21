@@ -117,6 +117,42 @@ public sealed partial class MessageRepository(ZaloDatabase db)
     {
         ArgumentNullException.ThrowIfNull(msg);
 
+        using SqliteConnection conn = this._db.CreateConnection();
+        using SqliteTransaction tx = conn.BeginTransaction();
+        await this.SaveMessageInternalAsync(conn, tx, msg, ct).ConfigureAwait(false);
+        tx.Commit();
+    }
+
+    /// <summary>
+    /// Persists a batch of realtime messages in a single SQLite transaction for maximum throughput.
+    /// </summary>
+    public async Task SaveMessagesBatchAsync(List<ZaloMessageEvent> messages, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(messages);
+        if (messages.Count == 0)
+        {
+            return;
+        }
+
+        if (messages.Count == 1)
+        {
+            await this.SaveMessageAsync(messages[0], ct).ConfigureAwait(false);
+            return;
+        }
+
+        using SqliteConnection conn = this._db.CreateConnection();
+        using SqliteTransaction tx = conn.BeginTransaction();
+
+        foreach (ZaloMessageEvent msg in messages)
+        {
+            await this.SaveMessageInternalAsync(conn, tx, msg, ct).ConfigureAwait(false);
+        }
+
+        tx.Commit();
+    }
+
+    private async Task SaveMessageInternalAsync(SqliteConnection conn, SqliteTransaction tx, ZaloMessageEvent msg, CancellationToken ct)
+    {
         string contentText = msg.Content?.ToString() ?? string.Empty;
         bool isUrgent = UrgentRegex().IsMatch(contentText.AsSpan());
 
@@ -127,12 +163,6 @@ public sealed partial class MessageRepository(ZaloDatabase db)
         long ts = long.TryParse(msg.TimestampMs, CultureInfo.InvariantCulture, out long parsedTs)
             ? parsedTs
             : DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-        using SqliteConnection conn = this._db.CreateConnection();
-
-        // The message row and every row derived from it are written in ONE transaction, so a save
-        // costs a single commit instead of one commit per statement.
-        using SqliteTransaction tx = conn.BeginTransaction();
 
         // A history sync (cmd 510/511) replays messages that are already stored, and the WebSocket
         // listener re-emits them after every reconnect. The message row itself is de-duplicated by
@@ -198,8 +228,6 @@ public sealed partial class MessageRepository(ZaloDatabase db)
         {
             ExtractAndSaveEntitiesInternal(conn, tx, msg.MsgId, msg.ThreadId, contentText);
         }
-
-        tx.Commit();
     }
 
     /// <summary>

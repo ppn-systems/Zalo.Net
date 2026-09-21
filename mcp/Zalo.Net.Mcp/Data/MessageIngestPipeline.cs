@@ -74,18 +74,50 @@ public sealed class MessageIngestPipeline : IAsyncDisposable
 
     private async Task PumpAsync()
     {
-        await foreach (ZaloMessageEvent message in this._channel.Reader.ReadAllAsync().ConfigureAwait(false))
+        List<ZaloMessageEvent> batch = [];
+
+        while (await this._channel.Reader.WaitToReadAsync().ConfigureAwait(false))
         {
+            batch.Clear();
+            while (batch.Count < 50 && this._channel.Reader.TryRead(out ZaloMessageEvent? message))
+            {
+                batch.Add(message);
+            }
+
+            if (batch.Count == 0)
+            {
+                continue;
+            }
+
             try
             {
-                await this._repository.SaveMessageAsync(message).ConfigureAwait(false);
-                _ = Interlocked.Increment(ref this._persisted);
+                if (batch.Count == 1)
+                {
+                    await this._repository.SaveMessageAsync(batch[0]).ConfigureAwait(false);
+                }
+                else
+                {
+                    await this._repository.SaveMessagesBatchAsync(batch).ConfigureAwait(false);
+                }
+
+                _ = Interlocked.Add(ref this._persisted, batch.Count);
             }
             catch (Exception ex)
             {
-                // One unwritable message must not stop the pipeline for every message after it.
-                _ = Interlocked.Increment(ref this._failed);
-                this._logger?.LogError(ex, "Failed to save realtime Zalo message {MsgId} to SQLite database.", message.MsgId);
+                // Fallback to saving one-by-one so a single invalid message doesn't abort the entire batch
+                foreach (ZaloMessageEvent single in batch)
+                {
+                    try
+                    {
+                        await this._repository.SaveMessageAsync(single).ConfigureAwait(false);
+                        _ = Interlocked.Increment(ref this._persisted);
+                    }
+                    catch (Exception singleEx)
+                    {
+                        _ = Interlocked.Increment(ref this._failed);
+                        this._logger?.LogError(singleEx, "Failed to save realtime Zalo message {MsgId} to SQLite database (fallback: {Error}).", single.MsgId, ex.Message);
+                    }
+                }
             }
         }
     }

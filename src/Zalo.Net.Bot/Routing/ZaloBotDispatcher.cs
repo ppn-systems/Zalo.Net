@@ -13,11 +13,10 @@ namespace Zalo.Net.Bot.Routing;
 /// </summary>
 public sealed class ZaloBotDispatcher
 {
-    private sealed record CommandRegistration(string Command, Func<ZaloBotContext, CancellationToken, Task> Handler);
     private sealed record KeywordRegistration(IReadOnlyList<string> Keywords, Func<ZaloBotContext, CancellationToken, Task> Handler);
     private sealed record MessageRegistration(Func<ZaloBotContext, CancellationToken, Task> Handler);
 
-    private readonly List<CommandRegistration> _commandHandlers = [];
+    private readonly Dictionary<string, Func<ZaloBotContext, CancellationToken, Task>> _commandHandlers = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<KeywordRegistration> _keywordHandlers = [];
     private readonly List<MessageRegistration> _globalHandlers = [];
 
@@ -30,7 +29,19 @@ public sealed class ZaloBotDispatcher
         ArgumentNullException.ThrowIfNull(handler);
 
         string normalized = command.StartsWith('/') || command.StartsWith('!') ? command : $"/{command}";
-        this._commandHandlers.Add(new CommandRegistration(normalized, handler));
+        if (this._commandHandlers.TryGetValue(normalized, out Func<ZaloBotContext, CancellationToken, Task>? existing))
+        {
+            this._commandHandlers[normalized] = async (ctx, ct) =>
+            {
+                await existing(ctx, ct).ConfigureAwait(false);
+                await handler(ctx, ct).ConfigureAwait(false);
+            };
+        }
+        else
+        {
+            this._commandHandlers[normalized] = handler;
+        }
+
         return this;
     }
 
@@ -123,7 +134,7 @@ public sealed class ZaloBotDispatcher
 
         foreach (ZaloCommandAttribute cmdAttr in method.GetCustomAttributes<ZaloCommandAttribute>())
         {
-            this._commandHandlers.Add(new CommandRegistration(cmdAttr.Command, delegateHandler));
+            _ = this.OnCommand(cmdAttr.Command, delegateHandler);
         }
 
         foreach (ZaloKeywordAttribute kwAttr in method.GetCustomAttributes<ZaloKeywordAttribute>())
@@ -179,19 +190,19 @@ public sealed class ZaloBotDispatcher
 
         ReadOnlySpan<char> text = raw.AsSpan().Trim();
 
-        // 1. Check Command match with zero string allocations
+        // 1. Check Command match with O(1) hash lookup and zero string allocations
         if (text.Length > 0 && (text[0] == '/' || text[0] == '!'))
         {
             int spaceIdx = text.IndexOf(' ');
             ReadOnlySpan<char> cmdSpan = spaceIdx < 0 ? text : text[..spaceIdx];
 
-            foreach (CommandRegistration reg in this._commandHandlers)
+            Dictionary<string, Func<ZaloBotContext, CancellationToken, Task>>.AlternateLookup<ReadOnlySpan<char>> lookup =
+                this._commandHandlers.GetAlternateLookup<ReadOnlySpan<char>>();
+
+            if (lookup.TryGetValue(cmdSpan, out Func<ZaloBotContext, CancellationToken, Task>? handler))
             {
-                if (cmdSpan.Equals(reg.Command.AsSpan(), StringComparison.OrdinalIgnoreCase))
-                {
-                    await reg.Handler(ctx, ct).ConfigureAwait(false);
-                    return;
-                }
+                await handler(ctx, ct).ConfigureAwait(false);
+                return;
             }
         }
 
