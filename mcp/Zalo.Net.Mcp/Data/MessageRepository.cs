@@ -118,7 +118,7 @@ public sealed partial class MessageRepository(ZaloDatabase db)
         ArgumentNullException.ThrowIfNull(msg);
 
         string contentText = msg.Content?.ToString() ?? string.Empty;
-        bool isUrgent = UrgentRegex().IsMatch(contentText);
+        bool isUrgent = UrgentRegex().IsMatch(contentText.AsSpan());
 
         string? attachmentsJson = msg.Attachments is { Count: > 0 }
             ? JsonSerializer.Serialize(msg.Attachments, ZaloMcpJsonContext.Default.Options)
@@ -196,7 +196,7 @@ public sealed partial class MessageRepository(ZaloDatabase db)
         // Perform smart entity & reminder extraction
         if (!string.IsNullOrWhiteSpace(contentText))
         {
-            await ExtractAndSaveEntitiesInternalAsync(conn, tx, msg.MsgId, msg.ThreadId, contentText, ct).ConfigureAwait(false);
+            ExtractAndSaveEntitiesInternal(conn, tx, msg.MsgId, msg.ThreadId, contentText);
         }
 
         tx.Commit();
@@ -257,32 +257,39 @@ public sealed partial class MessageRepository(ZaloDatabase db)
         _ = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
     }
 
-    private async Task ExtractAndSaveEntitiesInternalAsync(SqliteConnection conn, SqliteTransaction tx, string msgId, string threadId, string text, CancellationToken ct)
+    private static void ExtractAndSaveEntitiesInternal(SqliteConnection conn, SqliteTransaction tx, string msgId, string threadId, string text)
     {
         string now = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+        ReadOnlySpan<char> textSpan = text.AsSpan();
 
-        // Extract Phone Numbers
-        foreach (Match match in PhoneRegex().Matches(text))
+        // Extract Phone Numbers with zero Match heap allocations
+        foreach (System.Text.RegularExpressions.ValueMatch match in PhoneRegex().EnumerateMatches(textSpan))
         {
-            await InsertEntityAsync(conn, tx, msgId, threadId, "phone", match.Value, text, now, ct).ConfigureAwait(false);
+            string val = text.Substring(match.Index, match.Length);
+            InsertEntity(conn, tx, msgId, threadId, "phone", val, text, now);
         }
 
-        // Extract URLs
-        foreach (Match match in UrlRegex().Matches(text))
+        // Extract URLs with zero Match heap allocations
+        foreach (System.Text.RegularExpressions.ValueMatch match in UrlRegex().EnumerateMatches(textSpan))
         {
-            await InsertEntityAsync(conn, tx, msgId, threadId, "url", match.Value, text, now, ct).ConfigureAwait(false);
+            string val = text.Substring(match.Index, match.Length);
+            InsertEntity(conn, tx, msgId, threadId, "url", val, text, now);
         }
 
-        // Extract Bank Accounts / STK
-        foreach (Match match in BankCardRegex().Matches(text))
+        // Extract Bank Accounts / STK with zero Match heap allocations
+        foreach (System.Text.RegularExpressions.ValueMatch match in BankCardRegex().EnumerateMatches(textSpan))
         {
-            await InsertEntityAsync(conn, tx, msgId, threadId, "bank_card", match.Value, text, now, ct).ConfigureAwait(false);
+            string val = text.Substring(match.Index, match.Length);
+            InsertEntity(conn, tx, msgId, threadId, "bank_card", val, text, now);
         }
 
         // Extract Reminders / Schedules
-        Match reminderMatch = ReminderRegex().Match(text);
-        if (reminderMatch.Success)
+        System.Text.RegularExpressions.Regex.ValueMatchEnumerator reminderEnum = ReminderRegex().EnumerateMatches(textSpan);
+        if (reminderEnum.MoveNext())
         {
+            System.Text.RegularExpressions.ValueMatch remMatch = reminderEnum.Current;
+            string title = text.Substring(remMatch.Index, remMatch.Length);
+
             using SqliteCommand cmd = conn.CreateCommand();
             cmd.Transaction = tx;
             cmd.CommandText = """
@@ -292,14 +299,14 @@ public sealed partial class MessageRepository(ZaloDatabase db)
                 """;
             _ = cmd.Parameters.AddWithValue("@msg_id", msgId);
             _ = cmd.Parameters.AddWithValue("@thread_id", threadId);
-            _ = cmd.Parameters.AddWithValue("@title", reminderMatch.Value);
+            _ = cmd.Parameters.AddWithValue("@title", title);
             _ = cmd.Parameters.AddWithValue("@raw_text", text);
             _ = cmd.Parameters.AddWithValue("@now", now);
-            _ = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            _ = cmd.ExecuteNonQuery();
         }
     }
 
-    private static async Task InsertEntityAsync(SqliteConnection conn, SqliteTransaction tx, string msgId, string threadId, string type, string value, string rawText, string now, CancellationToken ct)
+    private static void InsertEntity(SqliteConnection conn, SqliteTransaction tx, string msgId, string threadId, string type, string value, string rawText, string now)
     {
         using SqliteCommand cmd = conn.CreateCommand();
         cmd.Transaction = tx;
@@ -314,7 +321,7 @@ public sealed partial class MessageRepository(ZaloDatabase db)
         _ = cmd.Parameters.AddWithValue("@value", value);
         _ = cmd.Parameters.AddWithValue("@raw_text", rawText);
         _ = cmd.Parameters.AddWithValue("@now", now);
-        _ = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        _ = cmd.ExecuteNonQuery();
     }
 
     public async Task<IReadOnlyList<ExtractedReminder>> GetRemindersAsync(int limit = 50, string? contains = null, CancellationToken ct = default)

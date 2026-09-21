@@ -167,15 +167,27 @@ public sealed class ZaloBotDispatcher
     public async Task DispatchAsync(ZaloBotContext ctx, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(ctx);
-        string text = ctx.Content?.Trim() ?? string.Empty;
-
-        // 1. Check Command match
-        if (text.StartsWith('/') || text.StartsWith('!'))
+        string? raw = ctx.Content;
+        if (string.IsNullOrWhiteSpace(raw))
         {
-            string cmdName = text.Split(' ', 2)[0].ToLowerInvariant();
+            foreach (MessageRegistration reg in this._globalHandlers)
+            {
+                await reg.Handler(ctx, ct).ConfigureAwait(false);
+            }
+            return;
+        }
+
+        ReadOnlySpan<char> text = raw.AsSpan().Trim();
+
+        // 1. Check Command match with zero string allocations
+        if (text.Length > 0 && (text[0] == '/' || text[0] == '!'))
+        {
+            int spaceIdx = text.IndexOf(' ');
+            ReadOnlySpan<char> cmdSpan = spaceIdx < 0 ? text : text[..spaceIdx];
+
             foreach (CommandRegistration reg in this._commandHandlers)
             {
-                if (reg.Command.Equals(cmdName, StringComparison.OrdinalIgnoreCase))
+                if (cmdSpan.Equals(reg.Command.AsSpan(), StringComparison.OrdinalIgnoreCase))
                 {
                     await reg.Handler(ctx, ct).ConfigureAwait(false);
                     return;
@@ -188,7 +200,7 @@ public sealed class ZaloBotDispatcher
         {
             foreach (string kw in reg.Keywords)
             {
-                if (text.Contains(kw, StringComparison.OrdinalIgnoreCase))
+                if (text.Contains(kw.AsSpan(), StringComparison.OrdinalIgnoreCase))
                 {
                     await reg.Handler(ctx, ct).ConfigureAwait(false);
                     return;

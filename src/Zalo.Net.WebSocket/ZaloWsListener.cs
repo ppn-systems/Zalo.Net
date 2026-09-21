@@ -165,7 +165,33 @@ public sealed class ZaloWsListener
         catch { return ""; }
     }
 
-    internal sealed class CipherState { public string? Key; }
+    internal sealed class CipherState
+    {
+        public string? Key;
+        public byte[]? KeyBytes;
+    }
+
+    internal readonly struct RentedArray : IDisposable
+    {
+        public readonly byte[]? Array;
+        public readonly int Length;
+
+        public RentedArray(byte[] array, int length)
+        {
+            this.Array = array;
+            this.Length = length;
+        }
+
+        public static RentedArray Empty => default;
+
+        public void Dispose()
+        {
+            if (this.Array != null)
+            {
+                ArrayPool<byte>.Shared.Return(this.Array);
+            }
+        }
+    }
 
     private async Task<DisconnectReason> ReceiveLoopAsync(ClientWebSocket ws, CancellationToken ct)
     {
@@ -175,19 +201,21 @@ public sealed class ZaloWsListener
         {
             while (!ct.IsCancellationRequested && ws.State == WebSocketState.Open)
             {
-                (byte[] frameBytes, WebSocketMessageType msgType) = await ReceiveFullFrameAsync(ws, buffer, ct).ConfigureAwait(false);
-
-                if (msgType == WebSocketMessageType.Close)
+                (RentedArray frame, WebSocketMessageType msgType) = await ReceiveFullFrameAsync(ws, buffer, ct).ConfigureAwait(false);
+                using (frame)
                 {
-                    return InterpretCloseCode(ws);
-                }
+                    if (msgType == WebSocketMessageType.Close)
+                    {
+                        return InterpretCloseCode(ws);
+                    }
 
-                if (msgType != WebSocketMessageType.Binary || frameBytes.Length < 4)
-                {
-                    continue;
-                }
+                    if (msgType != WebSocketMessageType.Binary || frame.Length < 4)
+                    {
+                        continue;
+                    }
 
-                await this.DispatchFrameAsync(frameBytes, state, ct).ConfigureAwait(false);
+                    await this.DispatchFrameInternalAsync(frame.Array!, frame.Length, state, ct).ConfigureAwait(false);
+                }
             }
         }
         finally
@@ -209,54 +237,60 @@ public sealed class ZaloWsListener
         };
     }
 
-    private static async Task<(byte[] Bytes, WebSocketMessageType Type)> ReceiveFullFrameAsync(
+    private static async Task<(RentedArray Frame, WebSocketMessageType Type)> ReceiveFullFrameAsync(
         ClientWebSocket ws, byte[] buf, CancellationToken ct)
     {
         WebSocketReceiveResult result = await ws.ReceiveAsync(new ArraySegment<byte>(buf), ct).ConfigureAwait(false);
         if (result.MessageType == WebSocketMessageType.Close)
         {
-            return ([], WebSocketMessageType.Close);
+            return (RentedArray.Empty, WebSocketMessageType.Close);
         }
 
         if (result.EndOfMessage)
         {
-            byte[] frame = new byte[result.Count];
+            byte[] frame = ArrayPool<byte>.Shared.Rent(result.Count);
             Buffer.BlockCopy(buf, 0, frame, 0, result.Count);
-            return (frame, result.MessageType);
+            return (new RentedArray(frame, result.Count), result.MessageType);
         }
 
-        List<byte[]> segments = [buf[..result.Count]];
         int total = result.Count;
+        byte[] accumulated = ArrayPool<byte>.Shared.Rent(Math.Max(InitialBufferSize * 2, total * 2));
+        Buffer.BlockCopy(buf, 0, accumulated, 0, total);
 
         while (true)
         {
             result = await ws.ReceiveAsync(new ArraySegment<byte>(buf), ct).ConfigureAwait(false);
             if (result.MessageType == WebSocketMessageType.Close)
             {
-                return ([], WebSocketMessageType.Close);
+                ArrayPool<byte>.Shared.Return(accumulated);
+                return (RentedArray.Empty, WebSocketMessageType.Close);
             }
 
-            segments.Add(buf[..result.Count]);
+            if (total + result.Count > accumulated.Length)
+            {
+                byte[] larger = ArrayPool<byte>.Shared.Rent(Math.Max(accumulated.Length * 2, total + result.Count));
+                Buffer.BlockCopy(accumulated, 0, larger, 0, total);
+                ArrayPool<byte>.Shared.Return(accumulated);
+                accumulated = larger;
+            }
+
+            Buffer.BlockCopy(buf, 0, accumulated, total, result.Count);
             total += result.Count;
 
             if (result.EndOfMessage)
             {
-                byte[] out_ = new byte[total];
-                int off = 0;
-                foreach (byte[] s in segments)
-                {
-                    Buffer.BlockCopy(s, 0, out_, off, s.Length);
-                    off += s.Length;
-                }
-                return (out_, result.MessageType);
+                return (new RentedArray(accumulated, total), result.MessageType);
             }
         }
     }
 
-    internal async Task DispatchFrameAsync(byte[] frameBytes, CipherState state, CancellationToken ct)
+    internal Task DispatchFrameAsync(byte[] frameBytes, CipherState state, CancellationToken ct) =>
+        this.DispatchFrameInternalAsync(frameBytes, frameBytes.Length, state, ct);
+
+    private async Task DispatchFrameInternalAsync(byte[] frameBytes, int length, CipherState state, CancellationToken ct)
     {
-        (_, int cmd, byte subCmd) = WsFrameCodec.ParseHeader(frameBytes.AsSpan());
-        ReadOnlyMemory<byte> body = new(frameBytes, 4, frameBytes.Length - 4);
+        (_, int cmd, byte subCmd) = WsFrameCodec.ParseHeader(frameBytes.AsSpan(0, length));
+        ReadOnlyMemory<byte> body = new(frameBytes, 4, length - 4);
 
         if (Environment.GetEnvironmentVariable("ZALO_WS_DEBUG") == "1")
         {
@@ -267,13 +301,19 @@ public sealed class ZaloWsListener
         {
             case 1 when subCmd == 1:
                 state.Key = await ExtractCipherKeyAsync(body).ConfigureAwait(false);
+                state.KeyBytes = state.Key is not null ? Convert.FromBase64String(state.Key) : null;
                 break;
 
             case 501:
             case 510:
                 try
                 {
-                    JsonNode? payload = await WsFrameCodec.DecodeFrameBodyAsync(body, state.Key, ct).ConfigureAwait(false);
+                    if (state.KeyBytes == null && state.Key != null)
+                    {
+                        state.KeyBytes = Convert.FromBase64String(state.Key);
+                    }
+
+                    JsonNode? payload = await WsFrameCodec.DecodeFrameBodyAsync(body, state.KeyBytes, ct).ConfigureAwait(false);
                     if (Environment.GetEnvironmentVariable("ZALO_WS_DEBUG") == "1")
                     {
                         string dump = payload?.ToJsonString() ?? "(null)";

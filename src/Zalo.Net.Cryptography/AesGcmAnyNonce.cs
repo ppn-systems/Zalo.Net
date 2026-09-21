@@ -7,7 +7,7 @@ using System.Security.Cryptography;
 namespace Zalo.Net.Cryptography;
 
 /// <summary>
-/// AES-GCM cho IV không phải 12 byte (Zalo dùng IV 16 byte).
+/// AES-GCM cho IV độ dài bất kỳ (đặc biệt IV 16 byte của Zalo) với thuật toán GHASH + GCTR không cấp phát heap (Zero GC).
 /// </summary>
 /// <remarks>
 /// <see cref="AesGcm"/> của .NET chỉ chấp nhận nonce 12 byte và ném
@@ -15,10 +15,43 @@ namespace Zalo.Net.Cryptography;
 /// nonce 16 byte. GCM theo NIST SP 800-38D cho phép IV dài bất kỳ (khi đó J0 được suy ra bằng
 /// GHASH thay vì đệm IV), nên lớp này tự cài GHASH + CTR để giải mã đúng những khung Zalo
 /// dùng IV 16 byte. Với IV 12 byte, lớp uỷ quyền cho <see cref="AesGcm"/> của .NET.
+/// Toàn bộ các mảng tạm đều dùng <c>stackalloc</c> để giảm tối đa áp lực GC.
 /// </remarks>
-internal static class AesGcmAnyNonce
+public static class AesGcmAnyNonce
 {
     private const int BlockSize = 16;
+
+    /// <summary>Mã hoá AES-GCM với IV độ dài bất kỳ.</summary>
+    public static (byte[] Ciphertext, byte[] Tag) Encrypt(byte[] key, ReadOnlySpan<byte> iv, ReadOnlySpan<byte> aad, ReadOnlySpan<byte> plaintext)
+    {
+        byte[] ciphertext = new byte[plaintext.Length];
+        byte[] tag = new byte[BlockSize];
+
+        if (iv.Length == 12)
+        {
+            using AesGcm gcm = new(key, 16);
+            gcm.Encrypt(iv, plaintext, ciphertext, tag, aad);
+            return (ciphertext, tag);
+        }
+
+        Span<byte> h = stackalloc byte[BlockSize];
+        Span<byte> zero = stackalloc byte[BlockSize];
+        using (Aes aes = Aes.Create())
+        {
+            aes.Key = key;
+            _ = aes.EncryptEcb(zero, h, PaddingMode.None);
+        }
+
+        Span<byte> j0 = stackalloc byte[BlockSize];
+        ComputeJ0(h, iv, j0);
+        Gctr(key, j0, plaintext, ciphertext, incrementFirst: true);
+
+        Span<byte> s = stackalloc byte[BlockSize];
+        ComputeS(h, aad, ciphertext, s);
+        Gctr(key, j0, s, tag, incrementFirst: false);
+
+        return (ciphertext, tag);
+    }
 
     /// <summary>Giải mã AES-GCM với IV độ dài bất kỳ; ném nếu tag không khớp.</summary>
     public static byte[] Decrypt(byte[] key, ReadOnlySpan<byte> iv, ReadOnlySpan<byte> aad, ReadOnlySpan<byte> ctWithTag)
@@ -40,22 +73,23 @@ internal static class AesGcmAnyNonce
             return plainStandard;
         }
 
-        byte[] h = new byte[BlockSize];
+        Span<byte> h = stackalloc byte[BlockSize];
+        Span<byte> zero = stackalloc byte[BlockSize];
         using (Aes aes = Aes.Create())
         {
             aes.Key = key;
-            _ = aes.EncryptEcb(new byte[BlockSize], h, PaddingMode.None);
+            _ = aes.EncryptEcb(zero, h, PaddingMode.None);
         }
 
-        byte[] j0 = ComputeJ0(h, iv);
+        Span<byte> j0 = stackalloc byte[BlockSize];
+        ComputeJ0(h, iv, j0);
         byte[] plaintext = new byte[ciphertext.Length];
         Gctr(key, j0, ciphertext, plaintext, incrementFirst: true);
 
-        byte[] expected = new byte[BlockSize];
-        byte[] s = ComputeS(h, aad, ciphertext);
-        byte[] mask = new byte[BlockSize];
-        Gctr(key, j0, s, mask, incrementFirst: false);
-        Array.Copy(mask, expected, BlockSize);
+        Span<byte> s = stackalloc byte[BlockSize];
+        ComputeS(h, aad, ciphertext, s);
+        Span<byte> expected = stackalloc byte[BlockSize];
+        Gctr(key, j0, s, expected, incrementFirst: false);
 
         if (!CryptographicOperations.FixedTimeEquals(expected, tag))
         {
@@ -66,50 +100,54 @@ internal static class AesGcmAnyNonce
     }
 
     /// <summary>J0 cho IV khác 96 bit: GHASH_H(IV || 0^(s+64) || [len(IV)]_64).</summary>
-    private static byte[] ComputeJ0(byte[] h, ReadOnlySpan<byte> iv)
+    private static void ComputeJ0(ReadOnlySpan<byte> h, ReadOnlySpan<byte> iv, Span<byte> j0)
     {
         int padBytes = (BlockSize - (iv.Length % BlockSize)) % BlockSize;
-        byte[] data = new byte[iv.Length + padBytes + 8 + 8];
+        int totalLen = iv.Length + padBytes + 16;
+        Span<byte> data = totalLen <= 256 ? stackalloc byte[totalLen] : new byte[totalLen];
+        data.Clear();
         iv.CopyTo(data);
-        WriteUInt64BigEndian(data.AsSpan(iv.Length + padBytes + 8), (ulong)iv.Length * 8);
-        return GHash(h, data);
+        WriteUInt64BigEndian(data[(iv.Length + padBytes + 8)..], (ulong)iv.Length * 8);
+        GHash(h, data, j0);
     }
 
     /// <summary>S = GHASH_H(A || pad || C || pad || [len(A)]_64 || [len(C)]_64).</summary>
-    private static byte[] ComputeS(byte[] h, ReadOnlySpan<byte> aad, ReadOnlySpan<byte> ciphertext)
+    private static void ComputeS(ReadOnlySpan<byte> h, ReadOnlySpan<byte> aad, ReadOnlySpan<byte> ciphertext, Span<byte> s)
     {
         int aadPad = (BlockSize - (aad.Length % BlockSize)) % BlockSize;
         int ctPad = (BlockSize - (ciphertext.Length % BlockSize)) % BlockSize;
-        byte[] data = new byte[aad.Length + aadPad + ciphertext.Length + ctPad + 16];
-        Span<byte> w = data;
-        aad.CopyTo(w);
+        int totalLen = aad.Length + aadPad + ciphertext.Length + ctPad + 16;
+        Span<byte> data = totalLen <= 512 ? stackalloc byte[totalLen] : new byte[totalLen];
+        data.Clear();
+        aad.CopyTo(data);
         int offset = aad.Length + aadPad;
-        ciphertext.CopyTo(w[offset..]);
+        ciphertext.CopyTo(data[offset..]);
         offset += ciphertext.Length + ctPad;
-        WriteUInt64BigEndian(w[offset..], (ulong)aad.Length * 8);
-        WriteUInt64BigEndian(w[(offset + 8)..], (ulong)ciphertext.Length * 8);
-        return GHash(h, data);
+        WriteUInt64BigEndian(data[offset..], (ulong)aad.Length * 8);
+        WriteUInt64BigEndian(data[(offset + 8)..], (ulong)ciphertext.Length * 8);
+        GHash(h, data, s);
     }
 
-    private static byte[] GHash(byte[] h, ReadOnlySpan<byte> data)
+    private static void GHash(ReadOnlySpan<byte> h, ReadOnlySpan<byte> data, Span<byte> y)
     {
-        byte[] y = new byte[BlockSize];
+        y.Clear();
         for (int i = 0; i < data.Length; i += BlockSize)
         {
             for (int b = 0; b < BlockSize; b++)
             {
                 y[b] ^= data[i + b];
             }
-            y = Multiply(h, y);
+            Multiply(h, y);
         }
-        return y;
     }
 
-    /// <summary>Nhân trong GF(2^128) theo quy ước GCM (bit MSB-first).</summary>
-    private static byte[] Multiply(byte[] x, byte[] y)
+    /// <summary>Nhân trong GF(2^128) theo quy ước GCM (bit MSB-first) với Zero GC.</summary>
+    private static void Multiply(ReadOnlySpan<byte> x, Span<byte> y)
     {
-        byte[] z = new byte[BlockSize];
-        byte[] v = (byte[])y.Clone();
+        Span<byte> z = stackalloc byte[BlockSize];
+        Span<byte> v = stackalloc byte[BlockSize];
+        y.CopyTo(v);
+
         for (int i = 0; i < 128; i++)
         {
             if ((x[i >> 3] & (1 << (7 - (i & 7)))) != 0)
@@ -131,13 +169,15 @@ internal static class AesGcmAnyNonce
                 v[0] ^= 0xE1;
             }
         }
-        return z;
+
+        z.CopyTo(y);
     }
 
-    /// <summary>Chế độ CTR của GCM (bộ đếm 32 bit cuối, big-endian).</summary>
-    private static void Gctr(byte[] key, byte[] j0, ReadOnlySpan<byte> input, Span<byte> output, bool incrementFirst)
+    /// <summary>Chế độ CTR của GCM (bộ đếm 32 bit cuối, big-endian) với Zero GC.</summary>
+    private static void Gctr(byte[] key, ReadOnlySpan<byte> j0, ReadOnlySpan<byte> input, Span<byte> output, bool incrementFirst)
     {
-        byte[] counter = (byte[])j0.Clone();
+        Span<byte> counter = stackalloc byte[BlockSize];
+        j0.CopyTo(counter);
         if (incrementFirst)
         {
             Increment32(counter);
@@ -145,7 +185,7 @@ internal static class AesGcmAnyNonce
 
         using Aes aes = Aes.Create();
         aes.Key = key;
-        byte[] keystream = new byte[BlockSize];
+        Span<byte> keystream = stackalloc byte[BlockSize];
         for (int offset = 0; offset < input.Length; offset += BlockSize)
         {
             _ = aes.EncryptEcb(counter, keystream, PaddingMode.None);
@@ -158,7 +198,7 @@ internal static class AesGcmAnyNonce
         }
     }
 
-    private static void Increment32(byte[] counter)
+    private static void Increment32(Span<byte> counter)
     {
         for (int b = BlockSize - 1; b >= BlockSize - 4; b--)
         {
