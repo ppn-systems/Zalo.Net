@@ -8,11 +8,12 @@
 
 ## 🌟 Key Features
 
-- **25 Full MCP Tools**: Covers 100% of Zalo SDK endpoints (Messaging, Groups, Friends, Smart Search, CRM Insights, Reminders, Bank Card Payloads).
+- **Full MCP Tools & Multi-Account Support**: Covers 100% of Zalo SDK endpoints with multi-account listing, switching, and optional `accountUid` targeting.
+- **100% Physical Data Isolation & High-Performance Concurrency**: Each account owns its own SQLite database (`accounts/{uid}/zalo_data.db`), private message ingest channel, and WebSocket listener. Zero SQLite file lock contention between accounts during concurrent writes!
 - **Dual Transport Protocols**:
   1. **Stdio JSON-RPC 2.0**: Native stdio transport for Claude Desktop, ChatGPT Desktop, Antigravity IDE, Cursor.
   2. **ASP.NET Core Web REST API (`--web`)**: Hosts OpenAPI 3.0 schema at `http://localhost:5000/openapi.json` for ChatGPT Web Custom GPT Actions.
-- **SQLite FTS5 Sub-Millisecond Search**: Embedded SQLite WAL mode database (`zalo_data.db`) with full-text search index and automatic regex entity extraction (Bank accounts, Phone numbers, URLs, Reminders).
+- **SQLite FTS5 Sub-Millisecond Search**: Embedded SQLite WAL mode database with isolated full-text search index and automatic regex entity extraction (Bank accounts, Phone numbers, URLs, Reminders).
 - **Docker Container Support**: 24/7 Cloud deployment (`ghcr.io/ppn-systems/zalo-net-mcp:latest`).
 - **1-Click Self-Setup (`--setup`)**: Auto-configures `mcp.json` for ChatGPT Desktop, Claude Desktop, Antigravity, and Cursor.
 

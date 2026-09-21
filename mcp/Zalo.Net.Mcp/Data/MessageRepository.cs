@@ -697,6 +697,51 @@ public sealed partial class MessageRepository(ZaloDatabase db)
         return null;
     }
 
+    /// <summary>Retrieves all authenticated sessions currently marked active.</summary>
+    public async Task<IReadOnlyList<(string Uid, ZaloSessionMaterial Material)>> GetAllActiveSessionsAsync(CancellationToken ct = default)
+    {
+        using SqliteConnection conn = this._db.CreateConnection();
+        using SqliteCommand cmd = conn.CreateCommand();
+
+        cmd.CommandText = """
+            SELECT uid, material_json FROM sessions
+            WHERE is_active = 1
+            ORDER BY updated_at DESC;
+            """;
+
+        using SqliteDataReader reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        List<(string Uid, ZaloSessionMaterial Material)> list = [];
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            string uid = reader.GetString(0);
+            string json = reader.GetString(1);
+            if (!string.IsNullOrWhiteSpace(json))
+            {
+                ZaloSessionMaterial? material = JsonSerializer.Deserialize(json, ZaloMcpJsonContext.Default.ZaloSessionMaterial);
+                if (material != null)
+                {
+                    list.Add((uid, material));
+                }
+            }
+        }
+
+        return list;
+    }
+
+    /// <summary>Updates the specified session's timestamp to mark it as the most recently active session.</summary>
+    public async Task SetActiveSessionAsync(string uid, CancellationToken ct = default)
+    {
+        using SqliteConnection conn = this._db.CreateConnection();
+        using SqliteCommand cmd = conn.CreateCommand();
+
+        cmd.CommandText = "UPDATE sessions SET updated_at = @now WHERE uid = @uid OR session_id = @uid;";
+        string now = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture);
+        _ = cmd.Parameters.AddWithValue("@uid", uid);
+        _ = cmd.Parameters.AddWithValue("@now", now);
+
+        _ = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
     public async Task DeactivateSessionAsync(string? uid = null, CancellationToken ct = default)
     {
         using SqliteConnection conn = this._db.CreateConnection();

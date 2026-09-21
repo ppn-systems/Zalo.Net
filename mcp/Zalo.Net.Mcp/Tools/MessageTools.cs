@@ -13,12 +13,20 @@ using Zalo.Net.Mcp.Data;
 namespace Zalo.Net.Mcp.Tools;
 
 /// <summary>
-/// MCP Tools for Zalo Messaging, Sticker, Attachments, Bank Cards, Contact Cards, and Local SQLite Search.
+/// MCP Tools for Zalo Messaging operations: Sending text, stickers, files, attachments,
+/// reactions, message undo, and querying history/search with isolated database per account.
 /// </summary>
 [McpServerToolType]
 public sealed class MessageTools(ZaloSessionManager sessionManager)
 {
     private readonly ZaloSessionManager _sessionManager = sessionManager;
+
+    private (ZaloSession Session, MessageRepository Repository) ResolveAccount(string? accountUid)
+    {
+        this._sessionManager.EnsureAuthenticated(accountUid);
+        ZaloAccountContext account = this._sessionManager.GetAccount(accountUid)!;
+        return (account.Session, account.Repository);
+    }
 
     [McpServerTool(Name = "zalo_send_text")]
     [Description("Gửi tin nhắn văn bản đến người dùng cá nhân hoặc nhóm chat trên Zalo.")]
@@ -26,10 +34,10 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
         [Description("ID của người nhận (User ID) hoặc ID của nhóm chat (Group ID)")] string threadId,
         [Description("Loại cuộc trò chuyện: 'User' (cá nhân) hoặc 'Group' (nhóm chat)")] string threadType,
         [Description("Nội dung tin nhắn cần gửi")] string text,
+        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
         CancellationToken ct = default)
     {
-        this._sessionManager.EnsureAuthenticated();
-        ZaloSession session = this._sessionManager.ActiveSession!;
+        (ZaloSession session, MessageRepository repository) = this.ResolveAccount(accountUid);
 
         ZaloThreadType type = Enum.TryParse<ZaloThreadType>(threadType, ignoreCase: true, out ZaloThreadType parsedType)
             ? parsedType
@@ -37,7 +45,7 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
 
         ZaloSendResult result = await ZaloWebClient.SendTextAsync(session, threadId, type, text, ct).ConfigureAwait(false);
 
-        // Record outgoing message in SQLite database
+        // Record outgoing message in isolated SQLite database for this account
         ZaloMessageEvent outgoingMsg = new(
             MsgId: result.MsgId,
             CliMsgId: result.MsgId,
@@ -52,9 +60,9 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
             Attachments: null,
             IsSelf: true
         );
-        await this._sessionManager.Repository.SaveMessageAsync(outgoingMsg, ct).ConfigureAwait(false);
+        await repository.SaveMessageAsync(outgoingMsg, ct).ConfigureAwait(false);
 
-        var response = new { status = "success", msg_id = result.MsgId, thread_id = threadId };
+        var response = new { status = "success", msg_id = result.MsgId, thread_id = threadId, from_uid = session.Uid };
         return JsonSerializer.Serialize(response);
     }
 
@@ -65,12 +73,12 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
         [Description("Loại cuộc trò chuyện: 'User' hoặc 'Group'")] string threadType,
         [Description("Nội dung tin nhắn phát thông báo")] string text,
         [Description("Thời gian chờ giữa các lần gửi (ms, mặc định 1000ms)")] int delayMs = 1000,
+        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(threadIdsCsv);
 
-        this._sessionManager.EnsureAuthenticated();
-        ZaloSession session = this._sessionManager.ActiveSession!;
+        (ZaloSession session, _) = this.ResolveAccount(accountUid);
 
         ZaloThreadType type = Enum.TryParse<ZaloThreadType>(threadType, ignoreCase: true, out ZaloThreadType parsedType)
             ? parsedType
@@ -109,10 +117,10 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
         [Description("ID của Sticker")] int stickerId,
         [Description("ID của danh mục Sticker (Category ID)")] int cateId,
         [Description("Loại Sticker (mặc định 1)")] int stickerType = 1,
+        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
         CancellationToken ct = default)
     {
-        this._sessionManager.EnsureAuthenticated();
-        ZaloSession session = this._sessionManager.ActiveSession!;
+        (ZaloSession session, _) = this.ResolveAccount(accountUid);
 
         ZaloThreadType type = Enum.TryParse<ZaloThreadType>(threadType, ignoreCase: true, out ZaloThreadType parsedType)
             ? parsedType
@@ -131,6 +139,7 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
         [Description("Loại cuộc trò chuyện: 'User' hoặc 'Group'")] string threadType,
         [Description("Đường dẫn tuyệt đối đến file trên đĩa cục bộ")] string filePath,
         [Description("Chú thích đi kèm tệp tin (tùy chọn)")] string? caption = null,
+        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(filePath);
@@ -139,8 +148,7 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
             return JsonSerializer.Serialize(new { error = $"Tệp tin không tồn tại tại đường dẫn: {filePath}" });
         }
 
-        this._sessionManager.EnsureAuthenticated();
-        ZaloSession session = this._sessionManager.ActiveSession!;
+        (ZaloSession session, _) = this.ResolveAccount(accountUid);
 
         ZaloThreadType type = Enum.TryParse<ZaloThreadType>(threadType, ignoreCase: true, out ZaloThreadType parsedType)
             ? parsedType
@@ -163,10 +171,10 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
         [Description("Mã BIN ngân hàng (VD: '970458' cho TPBank, '970436' cho Vietcombank, '970422' cho MBBank)")] string binBank,
         [Description("Số tài khoản ngân hàng")] string accountNumber,
         [Description("Tên chủ tài khoản ngân hàng")] string accountName,
+        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
         CancellationToken ct = default)
     {
-        this._sessionManager.EnsureAuthenticated();
-        ZaloSession session = this._sessionManager.ActiveSession!;
+        (ZaloSession session, _) = this.ResolveAccount(accountUid);
 
         ZaloThreadType type = Enum.TryParse<ZaloThreadType>(threadType, ignoreCase: true, out ZaloThreadType parsedType)
             ? parsedType
@@ -187,10 +195,10 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
         [Description("User ID của danh thiếp được giới thiệu")] string targetUserId,
         [Description("Số điện thoại (tùy chọn)")] string? phoneNumber = null,
         [Description("QR Code Profile URL (tùy chọn)")] string? qrCodeUrl = null,
+        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
         CancellationToken ct = default)
     {
-        this._sessionManager.EnsureAuthenticated();
-        ZaloSession session = this._sessionManager.ActiveSession!;
+        (ZaloSession session, _) = this.ResolveAccount(accountUid);
 
         ZaloThreadType type = Enum.TryParse<ZaloThreadType>(threadType, ignoreCase: true, out ZaloThreadType parsedType)
             ? parsedType
@@ -213,10 +221,10 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
         [Description("CliMsgId của tin nhắn được trích dẫn")] string quoteCliMsgId,
         [Description("User ID của người gửi tin nhắn được trích dẫn")] string quoteSenderUid,
         [Description("Nội dung của tin nhắn được trích dẫn")] string quoteContent,
+        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
         CancellationToken ct = default)
     {
-        this._sessionManager.EnsureAuthenticated();
-        ZaloSession session = this._sessionManager.ActiveSession!;
+        (ZaloSession session, _) = this.ResolveAccount(accountUid);
 
         ZaloThreadType type = Enum.TryParse<ZaloThreadType>(threadType, ignoreCase: true, out ZaloThreadType parsedType)
             ? parsedType
@@ -237,10 +245,10 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
         [Description("CliMsgId của tin nhắn")] string cliMsgId,
         [Description("Loại cuộc trò chuyện: 'User' hoặc 'Group'")] string threadType,
         [Description("Loại cảm xúc: 'Haha', 'Like', 'Heart', 'Wow', 'Cry', 'Angry', 'Kiss', 'Love', 'Dislike'")] string reaction,
+        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
         CancellationToken ct = default)
     {
-        this._sessionManager.EnsureAuthenticated();
-        ZaloSession session = this._sessionManager.ActiveSession!;
+        (ZaloSession session, _) = this.ResolveAccount(accountUid);
 
         ZaloThreadType type = Enum.TryParse<ZaloThreadType>(threadType, ignoreCase: true, out ZaloThreadType parsedType)
             ? parsedType
@@ -263,10 +271,10 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
         [Description("MsgId của tin nhắn cần thu hồi")] string msgId,
         [Description("CliMsgId của tin nhắn cần thu hồi")] string cliMsgId,
         [Description("Loại cuộc trò chuyện: 'User' hoặc 'Group'")] string threadType,
+        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
         CancellationToken ct = default)
     {
-        this._sessionManager.EnsureAuthenticated();
-        ZaloSession session = this._sessionManager.ActiveSession!;
+        (ZaloSession session, _) = this.ResolveAccount(accountUid);
 
         ZaloThreadType type = Enum.TryParse<ZaloThreadType>(threadType, ignoreCase: true, out ZaloThreadType parsedType)
             ? parsedType
@@ -283,9 +291,11 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
     public async Task<string> SearchMessagesAsync(
         [Description("Từ khóa cần tìm kiếm trong nội dung tin nhắn")] string keyword,
         [Description("Số lượng kết quả tối đa cần lấy (mặc định 50)")] int limit = 50,
+        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
         CancellationToken ct = default)
     {
-        IReadOnlyList<SavedMessage> results = await this._sessionManager.Repository.SearchMessagesAsync(keyword, limit, ct).ConfigureAwait(false);
+        MessageRepository repo = this._sessionManager.GetAccount(accountUid)?.Repository ?? this._sessionManager.Repository;
+        IReadOnlyList<SavedMessage> results = await repo.SearchMessagesAsync(keyword, limit, ct).ConfigureAwait(false);
         return JsonSerializer.Serialize(results);
     }
 
@@ -294,9 +304,11 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
     public async Task<string> GetChatHistoryAsync(
         [Description("ID của cuộc trò chuyện (ThreadId)")] string threadId,
         [Description("Số lượng tin nhắn gần nhất cần lấy (mặc định 50)")] int limit = 50,
+        [Description("UID tài khoản Zalo (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
         CancellationToken ct = default)
     {
-        IReadOnlyList<SavedMessage> history = await this._sessionManager.Repository.GetChatHistoryAsync(threadId, limit, ct).ConfigureAwait(false);
+        MessageRepository repo = this._sessionManager.GetAccount(accountUid)?.Repository ?? this._sessionManager.Repository;
+        IReadOnlyList<SavedMessage> history = await repo.GetChatHistoryAsync(threadId, limit, ct).ConfigureAwait(false);
         return JsonSerializer.Serialize(history);
     }
 
@@ -307,10 +319,10 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
         [Description("Loại cuộc trò chuyện: 'User' hoặc 'Group'")] string threadType,
         [Description("Đường dẫn file local (ví dụ: C:\\image.png) hoặc URL hình ảnh")] string imagePathOrUrl,
         [Description("Chú thích đi kèm hình ảnh (tùy chọn)")] string? caption = null,
+        [Description("UID tài khoản Zalo gửi (tùy chọn, mặc định lấy tài khoản đang active)")] string? accountUid = null,
         CancellationToken ct = default)
     {
-        this._sessionManager.EnsureAuthenticated();
-        ZaloSession session = this._sessionManager.ActiveSession!;
+        (ZaloSession session, _) = this.ResolveAccount(accountUid);
 
         ZaloThreadType type = Enum.TryParse<ZaloThreadType>(threadType, ignoreCase: true, out ZaloThreadType parsedType)
             ? parsedType
@@ -324,7 +336,10 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
             using HttpClient dlClient = new();
             bytes = await dlClient.GetByteArrayAsync(imagePathOrUrl, ct).ConfigureAwait(false);
             fileName = Path.GetFileName(new Uri(imagePathOrUrl).AbsolutePath);
-            if (string.IsNullOrWhiteSpace(fileName)) fileName = "image.png";
+            if (string.IsNullOrWhiteSpace(fileName))
+            {
+                fileName = "image.png";
+            }
         }
         else
         {
@@ -362,7 +377,10 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
             ? outputFileName
             : Path.GetFileName(new Uri(fileUrl).AbsolutePath);
 
-        if (string.IsNullOrWhiteSpace(fileName)) fileName = $"zalo_download_{DateTime.UtcNow.Ticks}.bin";
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            fileName = $"zalo_download_{DateTime.UtcNow.Ticks}.bin";
+        }
         string savePath = Path.Combine(downloadsDir, fileName);
 
         using HttpClient http = new();
@@ -371,4 +389,8 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
 
         return JsonSerializer.Serialize(new { status = "success", saved_path = savePath, file_name = fileName, size_bytes = data.Length });
     }
+
+    /// <summary>Overload for calling without accountUid.</summary>
+    public Task<string> SendImageAsync(string threadId, string threadType, string imagePathOrUrl, string? caption, CancellationToken ct) =>
+        this.SendImageAsync(threadId, threadType, imagePathOrUrl, caption, accountUid: null, ct);
 }

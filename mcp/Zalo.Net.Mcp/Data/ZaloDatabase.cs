@@ -35,6 +35,29 @@ public sealed class ZaloDatabase
         }
     }
 
+    /// <summary>Gets the filesystem path to the SQLite database file.</summary>
+    public string DbPath => this._dbPath;
+
+    /// <summary>Gets the default application data directory for Zalo.Net.Mcp.</summary>
+    public static string GetDefaultAppDataDir() => OperatingSystem.IsMacOS()
+        ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Personal), "..", "Library", "Application Support", "Zalo.Net.Mcp")
+        : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Zalo.Net.Mcp");
+
+    /// <summary>Gets the isolated database file path for a specific account UID.</summary>
+    public static string GetAccountDbPath(string accountUid, string? baseDir = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(accountUid);
+        string root = baseDir ?? GetDefaultAppDataDir();
+        return Path.Combine(root, "accounts", accountUid, "zalo_data.db");
+    }
+
+    /// <summary>Creates or gets an isolated <see cref="ZaloDatabase"/> instance for a specific account UID.</summary>
+    public static ZaloDatabase ForAccount(string accountUid, string? baseDir = null)
+    {
+        string path = GetAccountDbPath(accountUid, baseDir);
+        return new ZaloDatabase(path);
+    }
+
     public string ConnectionString => new SqliteConnectionStringBuilder
     {
         DataSource = this._dbPath,
