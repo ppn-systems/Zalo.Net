@@ -325,9 +325,10 @@ public sealed class ZaloSessionManager : IDisposable
     /// </summary>
     public ZaloAccountContext? GetAccount(string? accountUid = null)
     {
-        if (!string.IsNullOrWhiteSpace(accountUid) && this._accounts.TryGetValue(accountUid, out ZaloAccountContext? specific))
+        // Strict Isolation: If a specific account UID is requested, never fall back to another account
+        if (!string.IsNullOrWhiteSpace(accountUid))
         {
-            return specific;
+            return this._accounts.TryGetValue(accountUid, out ZaloAccountContext? specific) ? specific : null;
         }
 
         if (this._activeAccountUid != null && this._accounts.TryGetValue(this._activeAccountUid, out ZaloAccountContext? active))

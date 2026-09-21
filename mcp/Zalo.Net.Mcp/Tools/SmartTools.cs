@@ -17,8 +17,16 @@ public sealed class SmartTools(ZaloSessionManager sessionManager)
 {
     private readonly ZaloSessionManager _sessionManager = sessionManager;
 
-    private MessageRepository ResolveRepository(string? accountUid) =>
-        this._sessionManager.GetAccount(accountUid)?.Repository ?? this._sessionManager.Repository;
+    private MessageRepository ResolveRepository(string? accountUid)
+    {
+        if (!string.IsNullOrWhiteSpace(accountUid))
+        {
+            this._sessionManager.EnsureAuthenticated(accountUid);
+            return this._sessionManager.GetAccount(accountUid)!.Repository;
+        }
+
+        return this._sessionManager.Repository;
+    }
 
     [McpServerTool(Name = "zalo_smart_search")]
     [Description("Tìm kiếm thông minh trên cả tin nhắn, thực thể trích xuất (STK, SĐT, Link) và lịch hẹn nhắc nhở.")]

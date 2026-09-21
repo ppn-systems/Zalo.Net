@@ -228,4 +228,113 @@ public sealed class MultiAccountDataIsolationTests : IDisposable
         string activeDefaultJson = await smartTools.SmartSearchAsync("Beta", 10, null, CancellationToken.None);
         Assert.Contains("Data Beta", activeDefaultJson, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public async Task MultiAccount_UnknownAccountUid_ThrowsInvalidOperationException_NeverLeaksActiveAccount()
+    {
+        // Arrange
+        using ZaloSessionManager sessionManager = new(this._masterRepo);
+
+        ZaloSessionMaterial matActive = new(
+            CookiesJson: "[]",
+            SecretKey: "key-active",
+            Imei: "imei-active",
+            Uid: "active_user",
+            UserAgent: "TestUA");
+
+        ZaloDatabase dbActive = ZaloDatabase.ForAccount(matActive.Uid, this._testBaseDir);
+        dbActive.Initialize();
+        MessageRepository repoActive = new(dbActive);
+        MessageIngestPipeline ingestActive = new(repoActive);
+        ZaloSession sessionActive = new(matActive, matActive.Uid, ["wss://dummy.ws"], new Dictionary<string, string[]>(), 30000);
+        ZaloAccountContext ctxActive = new(matActive.Uid, "Active User", null, sessionActive, new ZaloWebClient(), dbActive, repoActive, ingestActive);
+
+        sessionManager.AddAccountContext(ctxActive);
+
+        SmartTools smartTools = new(sessionManager);
+
+        // Act & Assert: Requesting an unknown/unregistered account UID must throw and NEVER fall back to active account
+        _ = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            _ = await smartTools.SmartSearchAsync("Secret", 10, "unregistered_or_foreign_account", CancellationToken.None);
+        });
+
+        Assert.Null(sessionManager.GetAccount("unregistered_or_foreign_account"));
+    }
+
+    [Theory]
+    [InlineData("../sneaky")]
+    [InlineData("..\\sneaky")]
+    [InlineData("sub/folder")]
+    [InlineData("sub\\folder")]
+    [InlineData("account:invalid")]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void MultiAccount_PathTraversal_ThrowsArgumentException(string illegalUid)
+    {
+        _ = Assert.ThrowsAny<ArgumentException>(() =>
+        {
+            _ = ZaloDatabase.GetAccountDbPath(illegalUid, this._testBaseDir);
+        });
+    }
+
+    [Fact]
+    public async Task MultiAccount_ConcurrentMultiAccountWrites_NoLockContention()
+    {
+        // Simulate 20 accounts concurrently ingesting messages into their independent databases
+        const int accountCount = 20;
+        const int messagesPerAccount = 25;
+
+        List<MessageRepository> repos = [];
+        List<string> uids = [];
+
+        for (int i = 0; i < accountCount; i++)
+        {
+            string uid = $"stress_user_{i:D3}";
+            uids.Add(uid);
+            ZaloDatabase db = ZaloDatabase.ForAccount(uid, this._testBaseDir);
+            db.Initialize();
+            repos.Add(new MessageRepository(db));
+        }
+
+        List<Task> tasks = [];
+        for (int i = 0; i < accountCount; i++)
+        {
+            int accountIndex = i;
+            string uid = uids[accountIndex];
+            MessageRepository repo = repos[accountIndex];
+
+            tasks.Add(Task.Run(async () =>
+            {
+                for (int m = 0; m < messagesPerAccount; m++)
+                {
+                    ZaloMessageEvent msg = CreateMessage(
+                        $"msg_{uid}_{m}",
+                        $"thread_{uid}",
+                        uid,
+                        $"Account {uid} message number {m}");
+
+                    await repo.SaveMessageAsync(msg, CancellationToken.None);
+                }
+            }));
+        }
+
+        // All tasks should finish smoothly without SQLite locking exceptions
+        await Task.WhenAll(tasks);
+
+        // Verify each account DB has exactly its own count and zero data from other accounts
+        for (int i = 0; i < accountCount; i++)
+        {
+            string uid = uids[i];
+            MessageRepository repo = repos[i];
+
+            IReadOnlyList<SavedMessage> msgs = await repo.GetChatHistoryAsync($"thread_{uid}", 100, CancellationToken.None);
+            Assert.Equal(messagesPerAccount, msgs.Count);
+
+            // Cross-account search test
+            string otherUid = uids[(i + 1) % accountCount];
+            IReadOnlyList<SavedMessage> leakCheck = await repo.SearchMessagesAsync(otherUid, 10, CancellationToken.None);
+            Assert.Empty(leakCheck);
+        }
+    }
 }
