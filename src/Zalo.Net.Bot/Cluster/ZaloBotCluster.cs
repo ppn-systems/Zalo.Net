@@ -154,9 +154,16 @@ public sealed class ZaloBotCluster : IDisposable
 
     /// <summary>
     /// Starts all registered accounts concurrently with complete fault isolation.
+    /// </summary>
+    public Task StartAllAsync(CancellationToken ct) => this.StartAllAsync(rampUpDelay: null, ct);
+
+    /// <summary>
+    /// Starts all registered accounts with controlled ramp-up rate and complete fault isolation.
     /// A failure or disconnect in one account will not terminate other accounts.
     /// </summary>
-    public async Task StartAllAsync(CancellationToken ct = default)
+    /// <param name="rampUpDelay">Optional delay between launching each account to smooth CPU/TLS handshakes and avoid server-side rate limits during mass startup (e.g. 1,000+ accounts). Default is null (launch concurrently).</param>
+    /// <param name="ct">Cancellation token.</param>
+    public async Task StartAllAsync(TimeSpan? rampUpDelay = null, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(this._disposed, this);
 
@@ -164,6 +171,10 @@ public sealed class ZaloBotCluster : IDisposable
         foreach (AccountEntry entry in this._accounts.Values)
         {
             tasks.Add(this.StartAccountInternalAsync(entry, ct));
+            if (rampUpDelay.HasValue && rampUpDelay.Value > TimeSpan.Zero)
+            {
+                await Task.Delay(rampUpDelay.Value, ct).ConfigureAwait(false);
+            }
         }
 
         await Task.WhenAll(tasks).ConfigureAwait(false);
@@ -205,23 +216,26 @@ public sealed class ZaloBotCluster : IDisposable
                 return entry.ExecutionTask;
             }
 
-            CancellationToken linkedToken = CancellationTokenSource.CreateLinkedTokenSource(entry.Cts.Token, ct).Token;
+            CancellationTokenSource linkedCts = CancellationTokenSource.CreateLinkedTokenSource(entry.Cts.Token, ct);
 
             entry.ExecutionTask = Task.Run(async () =>
             {
-                this.OnAccountStatusChanged?.Invoke(this, new ZaloBotAccountStatusEventArgs(entry.Uid, "Started"));
-                try
+                using (linkedCts)
                 {
-                    await entry.Engine.StartAsync(linkedToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    this.OnAccountStatusChanged?.Invoke(this, new ZaloBotAccountStatusEventArgs(entry.Uid, "Stopped", "Operation canceled"));
-                }
-                catch (Exception ex)
-                {
-                    this.OnAccountError?.Invoke(this, new ZaloBotAccountErrorEventArgs(entry.Uid, ex));
-                    this.OnAccountStatusChanged?.Invoke(this, new ZaloBotAccountStatusEventArgs(entry.Uid, "Faulted", ex.Message));
+                    this.OnAccountStatusChanged?.Invoke(this, new ZaloBotAccountStatusEventArgs(entry.Uid, "Started"));
+                    try
+                    {
+                        await entry.Engine.StartAsync(linkedCts.Token).ConfigureAwait(false);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        this.OnAccountStatusChanged?.Invoke(this, new ZaloBotAccountStatusEventArgs(entry.Uid, "Stopped", "Operation canceled"));
+                    }
+                    catch (Exception ex)
+                    {
+                        this.OnAccountError?.Invoke(this, new ZaloBotAccountErrorEventArgs(entry.Uid, ex));
+                        this.OnAccountStatusChanged?.Invoke(this, new ZaloBotAccountStatusEventArgs(entry.Uid, "Faulted", ex.Message));
+                    }
                 }
             }, ct);
 

@@ -70,17 +70,24 @@ public static class Hashing
     }
 
     [SuppressMessage("Security", "CA5351:Do Not Use Broken Cryptographic Algorithms", Justification = "MD5 required by Zalo protocol specification")]
+    public static string Md5Hex(ReadOnlySpan<byte> bytes)
+    {
+        Span<byte> hash = stackalloc byte[16];
+        _ = MD5.HashData(bytes, hash);
+        return Convert.ToHexStringLower(hash);
+    }
+
+    [SuppressMessage("Security", "CA5351:Do Not Use Broken Cryptographic Algorithms", Justification = "MD5 required by Zalo protocol specification")]
     public static string Md5Hex(string input)
     {
         ArgumentNullException.ThrowIfNull(input);
-        Span<byte> hash = stackalloc byte[16];
         int byteCount = Encoding.UTF8.GetByteCount(input);
 
         if (byteCount <= 512)
         {
             Span<byte> utf8 = stackalloc byte[byteCount];
             _ = Encoding.UTF8.GetBytes(input, utf8);
-            _ = MD5.HashData(utf8, hash);
+            return Md5Hex(utf8);
         }
         else
         {
@@ -88,14 +95,12 @@ public static class Hashing
             try
             {
                 _ = Encoding.UTF8.GetBytes(input, 0, input.Length, rented, 0);
-                _ = MD5.HashData(rented.AsSpan(0, byteCount), hash);
+                return Md5Hex(rented.AsSpan(0, byteCount));
             }
             finally
             {
                 System.Buffers.ArrayPool<byte>.Shared.Return(rented);
             }
         }
-
-        return Convert.ToHexStringLower(hash);
     }
 }

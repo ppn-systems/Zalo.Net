@@ -20,7 +20,22 @@ namespace Zalo.Net.Auth;
 /// </summary>
 public sealed class ZaloHttpClient : IDisposable
 {
+    private static readonly SocketsHttpHandler s_sharedHandler = new()
+    {
+        UseCookies = false,
+        AllowAutoRedirect = false,
+        AutomaticDecompression = DecompressionMethods.GZip
+                               | DecompressionMethods.Deflate
+                               | DecompressionMethods.Brotli,
+        PooledConnectionLifetime = TimeSpan.FromMinutes(15),
+        PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+        EnableMultipleHttp2Connections = true
+    };
+
+    private static readonly HttpClient s_sharedClient = new(s_sharedHandler, disposeHandler: false);
+
     private readonly HttpClient _http;
+    private readonly bool _disposeClient;
     private readonly CookieStore _cookies;
     private readonly string _userAgent;
 
@@ -43,17 +58,29 @@ public sealed class ZaloHttpClient : IDisposable
         _cookies = cookies ?? new CookieStore();
         this.Proxy = proxy;
 
-        SocketsHttpHandler handler = new()
+        if (proxy is null)
         {
-            UseCookies = false,
-            AllowAutoRedirect = false,
-            AutomaticDecompression = DecompressionMethods.GZip
-                                   | DecompressionMethods.Deflate
-                                   | DecompressionMethods.Brotli,
-            Proxy = proxy,
-            UseProxy = proxy != null
-        };
-        _http = new HttpClient(handler, disposeHandler: true);
+            _http = s_sharedClient;
+            _disposeClient = false;
+        }
+        else
+        {
+            SocketsHttpHandler handler = new()
+            {
+                UseCookies = false,
+                AllowAutoRedirect = false,
+                AutomaticDecompression = DecompressionMethods.GZip
+                                       | DecompressionMethods.Deflate
+                                       | DecompressionMethods.Brotli,
+                Proxy = proxy,
+                UseProxy = true,
+                PooledConnectionLifetime = TimeSpan.FromMinutes(15),
+                PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
+                EnableMultipleHttp2Connections = true
+            };
+            _http = new HttpClient(handler, disposeHandler: true);
+            _disposeClient = true;
+        }
     }
 
     /// <summary>
@@ -162,5 +189,11 @@ public sealed class ZaloHttpClient : IDisposable
     }
 
     /// <inheritdoc/>
-    public void Dispose() => _http.Dispose();
+    public void Dispose()
+    {
+        if (_disposeClient)
+        {
+            _http.Dispose();
+        }
+    }
 }

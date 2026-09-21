@@ -72,7 +72,7 @@ public static class WsFrameCodec
         return envelope.Encrypt switch
         {
             0 => ParseJsonSafe(envelope.Data),
-            1 => ParseJsonSafe(await InflateBase64Async(envelope.Data, ct).ConfigureAwait(false)),
+            1 => await InflateBase64AndParseJsonAsync(envelope.Data, ct).ConfigureAwait(false),
             2 => await DecryptGcmThenInflateAsync(envelope.Data, cipherKeyBytes, inflate: true, ct).ConfigureAwait(false),
             3 => await DecryptGcmThenInflateAsync(envelope.Data, cipherKeyBytes, inflate: false, ct).ConfigureAwait(false),
             _ => throw new InvalidOperationException($"Unknown encrypt type: {envelope.Encrypt}")
@@ -105,15 +105,23 @@ public static class WsFrameCodec
             ReadOnlySpan<byte> aad = buf.Slice(16, 16);
             ReadOnlySpan<byte> ctWithTag = buf[32..];
 
-            byte[] plaintext = AesGcmAnyNonce.Decrypt(cipherKeyBytes, iv, aad, ctWithTag);
-
-            if (!inflate)
+            int plainLen = ctWithTag.Length - 16;
+            byte[] rentedPlain = System.Buffers.ArrayPool<byte>.Shared.Rent(plainLen);
+            try
             {
-                return ParseJsonSafe(plaintext);
-            }
+                AesGcmAnyNonce.Decrypt(cipherKeyBytes, iv, aad, ctWithTag, rentedPlain.AsSpan(0, plainLen));
 
-            byte[] inflated = await InflateAsync(plaintext, ct).ConfigureAwait(false);
-            return ParseJsonSafe(inflated);
+                if (!inflate)
+                {
+                    return ParseJsonSafe(rentedPlain.AsSpan(0, plainLen));
+                }
+
+                return await InflateAndParseJsonAsync(rentedPlain, plainLen, ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(rentedPlain);
+            }
         }
         finally
         {
@@ -121,15 +129,28 @@ public static class WsFrameCodec
         }
     }
 
-    private static async Task<byte[]> InflateBase64Async(string base64, CancellationToken ct)
+    private static async Task<JsonNode?> InflateBase64AndParseJsonAsync(string base64, CancellationToken ct)
     {
-        byte[] buf = Convert.FromBase64String(base64);
-        return await InflateAsync(buf, ct).ConfigureAwait(false);
+        ReadOnlySpan<char> charSpan = base64.AsSpan();
+        int maxByteCount = ((charSpan.Length * 3) + 3) / 4;
+        byte[] rented = System.Buffers.ArrayPool<byte>.Shared.Rent(maxByteCount);
+        try
+        {
+            if (!Convert.TryFromBase64Chars(charSpan, rented, out int bytesWritten))
+            {
+                throw new InvalidOperationException("Invalid base64 payload");
+            }
+            return await InflateAndParseJsonAsync(rented, bytesWritten, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            System.Buffers.ArrayPool<byte>.Shared.Return(rented);
+        }
     }
 
-    private static async Task<byte[]> InflateAsync(byte[] data, CancellationToken ct)
+    private static async Task<JsonNode?> InflateAndParseJsonAsync(byte[] buffer, int count, CancellationToken ct)
     {
-        static Stream MakeDecompressor(MemoryStream src, byte[] headerData)
+        static Stream MakeDecompressor(Stream src, ReadOnlySpan<byte> headerData)
         {
             if (headerData.Length >= 2 && headerData[0] == 0x1f && headerData[1] == 0x8b)
             {
@@ -142,11 +163,9 @@ public static class WsFrameCodec
             return new DeflateStream(src, CompressionMode.Decompress);
         }
 
-        await using MemoryStream ms = new(data);
-        await using Stream dec = MakeDecompressor(ms, data);
-        await using MemoryStream outMs = new();
-        await dec.CopyToAsync(outMs, ct).ConfigureAwait(false);
-        return outMs.ToArray();
+        await using MemoryStream ms = new(buffer, 0, count, writable: false);
+        await using Stream dec = MakeDecompressor(ms, buffer.AsSpan(0, count));
+        return await JsonNode.ParseAsync(dec, cancellationToken: ct).ConfigureAwait(false);
     }
 
     private static JsonNode? ParseJsonSafe(ReadOnlySpan<byte> utf8Json)

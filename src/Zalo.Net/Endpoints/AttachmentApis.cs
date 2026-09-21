@@ -6,7 +6,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Security.Cryptography;
 using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
@@ -55,11 +54,7 @@ public static class AttachmentApis
         return ext is "jpg" or "jpeg" or "png" or "webp" or "gif" or "bmp";
     }
 
-    private static string ComputeMd5Hex(byte[] bytes)
-    {
-        byte[] hash = MD5.HashData(bytes);
-        return Convert.ToHexString(hash).ToLowerInvariant();
-    }
+    private static string ComputeMd5Hex(byte[] bytes) => Hashing.Md5Hex(bytes);
 
     private static string? GetNodeString(JsonNode? node)
     {
@@ -256,11 +251,9 @@ public static class AttachmentApis
             }
 
             int chunkLen = Math.Min(ChunkSize, totalSize - (i * ChunkSize));
-            byte[] chunkBytes = new byte[chunkLen];
-            Array.Copy(fileBytes, i * ChunkSize, chunkBytes, 0, chunkLen);
 
             using MultipartFormDataContent content = new();
-            using ByteArrayContent byteContent = new(chunkBytes);
+            using ByteArrayContent byteContent = new(fileBytes, i * ChunkSize, chunkLen);
             byteContent.Headers.ContentType = MediaTypeHeaderValue.Parse("application/octet-stream");
             content.Add(byteContent, "chunkContent", fileName);
 

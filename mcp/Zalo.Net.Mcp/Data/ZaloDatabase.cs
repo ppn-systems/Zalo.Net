@@ -70,7 +70,7 @@ public sealed class ZaloDatabase
     {
         DataSource = this._dbPath,
         Mode = SqliteOpenMode.ReadWriteCreate,
-        Cache = SqliteCacheMode.Shared
+        Cache = SqliteCacheMode.Default
     }.ToString();
 
     public SqliteConnection CreateConnection()
@@ -83,8 +83,8 @@ public sealed class ZaloDatabase
         // - foreign_keys=ON: relational integrity
         // - busy_timeout=5000: graceful wait on transient locks
         // - cache_size=-512: 512 KiB page cache limit per account DB (saves ~1.5 GB memory at 1,000 accounts)
-        // - temp_store=MEMORY: store temporary structures in RAM to conserve OS file descriptors and disk I/O
-        cmd.CommandText = "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA cache_size=-512; PRAGMA temp_store=MEMORY;";
+        // - wal_autocheckpoint=250: checkpoints WAL after 250 pages (~1MB) instead of default 1000 (~4MB), saving ~3GB disk at 1000 DBs
+        cmd.CommandText = "PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA cache_size=-512; PRAGMA temp_store=MEMORY; PRAGMA wal_autocheckpoint=250;";
         _ = cmd.ExecuteNonQuery();
         return conn;
     }

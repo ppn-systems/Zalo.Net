@@ -61,16 +61,33 @@ public static class AesGcmAnyNonce
             throw new InvalidOperationException("Ciphertext with tag must be at least 16 bytes");
         }
 
+        byte[] plaintext = new byte[ctWithTag.Length - 16];
+        Decrypt(key, iv, aad, ctWithTag, plaintext);
+        return plaintext;
+    }
+
+    /// <summary>Giải mã AES-GCM với IV độ dài bất kỳ ghi trực tiếp vào span đích (Zero GC).</summary>
+    public static void Decrypt(byte[] key, ReadOnlySpan<byte> iv, ReadOnlySpan<byte> aad, ReadOnlySpan<byte> ctWithTag, Span<byte> plaintext)
+    {
+        if (ctWithTag.Length < 16)
+        {
+            throw new InvalidOperationException("Ciphertext with tag must be at least 16 bytes");
+        }
+
         ReadOnlySpan<byte> ciphertext = ctWithTag[..^16];
         ReadOnlySpan<byte> tag = ctWithTag[^16..];
+
+        if (plaintext.Length < ciphertext.Length)
+        {
+            throw new ArgumentException("Plaintext destination span is too small", nameof(plaintext));
+        }
 
         if (iv.Length == 12)
         {
             // Đường chuẩn: uỷ quyền cho .NET (nhanh và đã được kiểm chứng).
             using AesGcm gcm = new(key, 16);
-            byte[] plainStandard = new byte[ciphertext.Length];
-            gcm.Decrypt(iv, ciphertext, tag, plainStandard, aad);
-            return plainStandard;
+            gcm.Decrypt(iv, ciphertext, tag, plaintext[..ciphertext.Length], aad);
+            return;
         }
 
         Span<byte> h = stackalloc byte[BlockSize];
@@ -83,8 +100,7 @@ public static class AesGcmAnyNonce
 
         Span<byte> j0 = stackalloc byte[BlockSize];
         ComputeJ0(h, iv, j0);
-        byte[] plaintext = new byte[ciphertext.Length];
-        Gctr(key, j0, ciphertext, plaintext, incrementFirst: true);
+        Gctr(key, j0, ciphertext, plaintext[..ciphertext.Length], incrementFirst: true);
 
         Span<byte> s = stackalloc byte[BlockSize];
         ComputeS(h, aad, ciphertext, s);
@@ -95,8 +111,6 @@ public static class AesGcmAnyNonce
         {
             throw new CryptographicException("AES-GCM tag mismatch (IV non-12-byte path)");
         }
-
-        return plaintext;
     }
 
     /// <summary>J0 cho IV khác 96 bit: GHASH_H(IV || 0^(s+64) || [len(IV)]_64).</summary>

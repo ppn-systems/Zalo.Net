@@ -4,7 +4,6 @@
 using System;
 using System.Buffers;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -488,11 +487,66 @@ public sealed class ZaloWsListener
         }
     }
 
+    private static readonly byte[] s_sync510Frame = BuildFrame(510, 1, "{\"first\":true,\"lastId\":null,\"preIds\":[]}"u8);
+    private static readonly byte[] s_sync511Frame = BuildFrame(511, 1, "{\"first\":true,\"lastId\":null,\"preIds\":[]}"u8);
+    private static readonly byte[] s_pingPrefix = [
+        0x01, 0x02, 0x00, 0x01,
+        (byte)'{', (byte)'"', (byte)'e', (byte)'v', (byte)'e', (byte)'n', (byte)'t', (byte)'I', (byte)'d', (byte)'"', (byte)':'
+    ];
+
+    private static byte[] BuildFrame(ushort cmd, byte subCmd, ReadOnlySpan<byte> utf8Body)
+    {
+        byte[] frame = new byte[4 + utf8Body.Length];
+        frame[0] = 0x01;
+        frame[1] = (byte)(cmd & 0xFF);
+        frame[2] = (byte)((cmd >> 8) & 0xFF);
+        frame[3] = subCmd;
+        utf8Body.CopyTo(frame.AsSpan(4));
+        return frame;
+    }
+
+    private static string? GetStringOrValue(JsonNode? node)
+    {
+        if (node is null)
+        {
+            return null;
+        }
+        if (node is JsonValue val)
+        {
+            if (val.TryGetValue<string>(out string? str))
+            {
+                return str;
+            }
+            return val.ToString();
+        }
+        return node.ToString();
+    }
+
+    private static bool ParseIsSelf(JsonNode? isSelfNode, string uidFrom, string? sessionUid)
+    {
+        if (isSelfNode is JsonValue val)
+        {
+            if (val.TryGetValue<bool>(out bool b) && b)
+            {
+                return true;
+            }
+            if (val.TryGetValue<int>(out int i) && i == 1)
+            {
+                return true;
+            }
+            if (val.TryGetValue<string>(out string? s) && (s == "1" || string.Equals(s, "true", StringComparison.OrdinalIgnoreCase)))
+            {
+                return true;
+            }
+        }
+        return uidFrom == "0" || (!string.IsNullOrEmpty(sessionUid) && uidFrom == sessionUid);
+    }
+
     private ZaloMessageEvent? ParseMessageEvent(JsonNode msg, ZaloThreadType threadType)
     {
-        string? msgId = msg["msgId"]?.ToJsonString()?.Trim('"');
-        string? cliMsgId = msg["cliMsgId"]?.ToJsonString()?.Trim('"');
-        if (msgId is null)
+        string? msgId = GetStringOrValue(msg["msgId"]);
+        string? cliMsgId = GetStringOrValue(msg["cliMsgId"]);
+        if (string.IsNullOrEmpty(msgId))
         {
             return null;
         }
@@ -504,10 +558,7 @@ public sealed class ZaloWsListener
             ? (msg["threadId"]?.GetValue<string>() ?? idTo)
             : (string.IsNullOrEmpty(uidFrom) || uidFrom == "0" || uidFrom == _session.Uid ? idTo : uidFrom);
 
-        string? isSelfRaw = msg["isSelf"]?.ToJsonString();
-        bool isSelf = isSelfRaw == "1" || isSelfRaw == "true"
-                     || uidFrom == "0"
-                     || (!string.IsNullOrEmpty(_session.Uid) && uidFrom == _session.Uid);
+        bool isSelf = ParseIsSelf(msg["isSelf"], uidFrom, _session.Uid);
 
         string msgType = msg["msgType"]?.GetValue<string>() ?? "";
         JsonNode? content = msg["content"];
@@ -533,7 +584,7 @@ public sealed class ZaloWsListener
             DisplayName: msg["dName"]?.GetValue<string>() ?? "",
             ThreadId: threadId,
             ThreadType: threadType,
-            TimestampMs: msg["ts"]?.ToJsonString()?.Trim('"') ?? "",
+            TimestampMs: GetStringOrValue(msg["ts"]) ?? "",
             Content: content,
             Attachments: attachments,
             IsSelf: isSelf,
@@ -557,10 +608,8 @@ public sealed class ZaloWsListener
                     await this.SendThrottle(ct).ConfigureAwait(false);
                 }
 
-                // Khung giữ nhịp ĐÚNG của Zalo Web: version=1, cmd=2, subCmd=1, thân JSON
-                // {"eventId": <ms>} (khung 4 byte 0x01 0x00 0x00 0x00 là SAI — máy chủ sẽ
-                // cắt kết nối và không đẩy sự kiện nào).
-                await SendFrameAsync(ws, 2, 1, "{\"eventId\":" + NowMs() + "}", ct).ConfigureAwait(false);
+                // Zero-GC Ping frame: version=1, cmd=2, subCmd=1, body {"eventId": <ms>}
+                await SendPingFrameAsync(ws, ct).ConfigureAwait(false);
 
                 // Máy chủ Zalo chỉ đẩy sự kiện khi socket còn sống; muốn không mất tin trong
                 // lúc ngắt thì phải chủ động xin lại danh sách tin gần đây (cmd 510 người /
@@ -569,29 +618,29 @@ public sealed class ZaloWsListener
                     && DateTimeOffset.UtcNow - lastSync >= this.HistorySyncInterval)
                 {
                     lastSync = DateTimeOffset.UtcNow;
-                    const string syncBody = "{\"first\":true,\"lastId\":null,\"preIds\":[]}";
-                    await SendFrameAsync(ws, 510, 1, syncBody, ct).ConfigureAwait(false);
-                    await SendFrameAsync(ws, 511, 1, syncBody, ct).ConfigureAwait(false);
+                    await ws.SendAsync(s_sync510Frame, WebSocketMessageType.Binary, endOfMessage: true, ct).ConfigureAwait(false);
+                    await ws.SendAsync(s_sync511Frame, WebSocketMessageType.Binary, endOfMessage: true, ct).ConfigureAwait(false);
                 }
             }
         }
         catch (OperationCanceledException) { /* expected */ }
     }
 
-    private static string NowMs() =>
-        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
-
-    /// <summary>Gửi một khung WS theo định dạng Zalo: header 4 byte (version, cmd u16 LE, subCmd) + JSON.</summary>
-    private static async Task SendFrameAsync(
-        ClientWebSocket ws, ushort cmd, byte subCmd, string jsonBody, CancellationToken ct)
+    private static async Task SendPingFrameAsync(ClientWebSocket ws, CancellationToken ct)
     {
-        byte[] payload = Encoding.UTF8.GetBytes(jsonBody);
-        byte[] frame = new byte[4 + payload.Length];
-        frame[0] = 0x01;                       // version
-        frame[1] = (byte)(cmd & 0xFF);         // cmd, little-endian
-        frame[2] = (byte)((cmd >> 8) & 0xFF);
-        frame[3] = subCmd;
-        payload.CopyTo(frame, 4);
-        await ws.SendAsync(frame, WebSocketMessageType.Binary, endOfMessage: true, ct).ConfigureAwait(false);
+        byte[] buffer = ArrayPool<byte>.Shared.Rent(48);
+        try
+        {
+            s_pingPrefix.CopyTo(buffer.AsSpan());
+            long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            _ = System.Buffers.Text.Utf8Formatter.TryFormat(nowMs, buffer.AsSpan(s_pingPrefix.Length), out int bytesWritten);
+            int totalLen = s_pingPrefix.Length + bytesWritten;
+            buffer[totalLen++] = (byte)'}';
+            await ws.SendAsync(new ReadOnlyMemory<byte>(buffer, 0, totalLen), WebSocketMessageType.Binary, endOfMessage: true, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
     }
 }

@@ -610,7 +610,8 @@ public sealed class ZaloWebClient : IZaloClient
             this.StatusChanged?.Invoke(this, new ZaloSessionStatusChanged(material.Uid, ZaloConnectionStatus.Reconnecting));
             try
             {
-                await Task.Delay(backoff, ct).ConfigureAwait(false);
+                TimeSpan jitter = TimeSpan.FromMilliseconds(Random.Shared.Next(100, 1500));
+                await Task.Delay(backoff + jitter, ct).ConfigureAwait(false);
             }
             catch (OperationCanceledException) { return; }
 

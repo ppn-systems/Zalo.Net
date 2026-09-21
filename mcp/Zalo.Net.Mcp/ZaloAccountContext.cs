@@ -1,6 +1,7 @@
 // Copyright (c) 2026 PPN Corporation. All rights reserved.
 // Licensed under the Apache License, Version 2.0.
 
+using Microsoft.Data.Sqlite;
 using Zalo.Net.Contracts;
 using Zalo.Net.Mcp.Data;
 
@@ -104,6 +105,13 @@ public sealed class ZaloAccountContext : IAsyncDisposable, IDisposable
         this.StopListener();
         await this.Ingest.DisposeAsync().ConfigureAwait(false);
         this.Client.Dispose();
+
+        try
+        {
+            using SqliteConnection conn = new(this.Database.ConnectionString);
+            SqliteConnection.ClearPool(conn);
+        }
+        catch { /* ignore cleanup errors */ }
     }
 
     /// <inheritdoc />
@@ -118,5 +126,12 @@ public sealed class ZaloAccountContext : IAsyncDisposable, IDisposable
         this.StopListener();
         this.Ingest.DisposeAsync().AsTask().GetAwaiter().GetResult();
         this.Client.Dispose();
+
+        try
+        {
+            using SqliteConnection conn = new(this.Database.ConnectionString);
+            SqliteConnection.ClearPool(conn);
+        }
+        catch { /* ignore cleanup errors */ }
     }
 }
