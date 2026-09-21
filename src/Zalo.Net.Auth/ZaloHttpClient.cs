@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Net;
@@ -33,6 +34,7 @@ public sealed class ZaloHttpClient : IDisposable
     };
 
     private static readonly HttpClient s_sharedClient = new(s_sharedHandler, disposeHandler: false);
+    private static readonly ConcurrentDictionary<IWebProxy, HttpClient> s_proxyClients = new();
 
     private readonly HttpClient _http;
     private readonly bool _disposeClient;
@@ -65,6 +67,15 @@ public sealed class ZaloHttpClient : IDisposable
         }
         else
         {
+            _http = GetOrCreateProxyClient(proxy);
+            _disposeClient = false;
+        }
+    }
+
+    private static HttpClient GetOrCreateProxyClient(IWebProxy proxy)
+    {
+        return s_proxyClients.GetOrAdd(proxy, static p =>
+        {
             SocketsHttpHandler handler = new()
             {
                 UseCookies = false,
@@ -72,15 +83,14 @@ public sealed class ZaloHttpClient : IDisposable
                 AutomaticDecompression = DecompressionMethods.GZip
                                        | DecompressionMethods.Deflate
                                        | DecompressionMethods.Brotli,
-                Proxy = proxy,
+                Proxy = p,
                 UseProxy = true,
                 PooledConnectionLifetime = TimeSpan.FromMinutes(15),
                 PooledConnectionIdleTimeout = TimeSpan.FromMinutes(2),
                 EnableMultipleHttp2Connections = true
             };
-            _http = new HttpClient(handler, disposeHandler: true);
-            _disposeClient = true;
-        }
+            return new HttpClient(handler, disposeHandler: true);
+        });
     }
 
     /// <summary>
