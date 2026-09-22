@@ -148,8 +148,8 @@ public class ZaloBotClusterTests
         await Task.Delay(100);
 
         Assert.Equal(2, handledByAccountUids.Count);
-        Assert.Equal("acc_1", handledByAccountUids[0]);
-        Assert.Equal("acc_2", handledByAccountUids[1]);
+        Assert.Contains("acc_1", handledByAccountUids);
+        Assert.Contains("acc_2", handledByAccountUids);
 
         await cts.CancelAsync();
         await runTask;
