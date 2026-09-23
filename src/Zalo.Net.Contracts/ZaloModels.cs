@@ -33,7 +33,13 @@ public enum ZaloLoginStatus
     Expired,
 
     /// <summary>Login attempt declined by user.</summary>
-    Declined
+    Declined,
+
+    /// <summary>Login attempt failed due to an unexpected error (see <see cref="ZaloLoginState.ErrorMessage"/>).</summary>
+    Failed,
+
+    /// <summary>No login session exists for the given session id (unknown or already consumed).</summary>
+    NotFound
 }
 
 /// <summary>
