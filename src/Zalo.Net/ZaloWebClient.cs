@@ -108,10 +108,12 @@ public sealed class ZaloWebClient : IZaloClient
                 return Task.FromResult(new ZaloLoginState(sessionId, ZaloLoginStatus.NotFound));
             }
 
-            if (DateTimeOffset.UtcNow >= session.ConfirmExpiresAt)
+            bool isTerminal = session.CurrentState.Status is ZaloLoginStatus.Connected
+                or ZaloLoginStatus.Failed or ZaloLoginStatus.Declined or ZaloLoginStatus.Expired;
+
+            if (!isTerminal && DateTimeOffset.UtcNow >= session.ConfirmExpiresAt)
             {
                 session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Expired);
-                return Task.FromResult(session.CurrentState);
             }
 
             return Task.FromResult(session.CurrentState);
