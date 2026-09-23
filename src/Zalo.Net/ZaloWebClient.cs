@@ -49,17 +49,27 @@ public sealed class ZaloWebClient : IZaloClient
         string ua = ZaloConstants.Protocol.DefaultUserAgent;
         ZaloHttpClient http = new(ua, proxy: _proxy);
 
-        string version = await LoginQrApis.LoadLoginPageAsync(http, ct).ConfigureAwait(false);
+        string code, image;
+        string version;
+        try
+        {
+            version = await LoginQrApis.LoadLoginPageAsync(http, ct).ConfigureAwait(false);
 
-        await LoginQrApis.GetLoginInfoAsync(http, version, ct).ConfigureAwait(false);
-        await LoginQrApis.VerifyClientAsync(http, version, ct).ConfigureAwait(false);
+            await LoginQrApis.GetLoginInfoAsync(http, version, ct).ConfigureAwait(false);
+            await LoginQrApis.VerifyClientAsync(http, version, ct).ConfigureAwait(false);
 
-        JsonNode qrData = await LoginQrApis.GenerateQrAsync(http, version, ct).ConfigureAwait(false);
+            JsonNode qrData = await LoginQrApis.GenerateQrAsync(http, version, ct).ConfigureAwait(false);
 
-        string code = qrData["code"]?.GetValue<string>()
-                     ?? throw new ZaloApiException("QR response missing 'code'");
-        string image = qrData["image"]?.GetValue<string>()
-                     ?? throw new ZaloApiException("QR response missing 'image'");
+            code = qrData["code"]?.GetValue<string>()
+                         ?? throw new ZaloApiException("QR response missing 'code'");
+            image = qrData["image"]?.GetValue<string>()
+                         ?? throw new ZaloApiException("QR response missing 'image'");
+        }
+        catch
+        {
+            http.Dispose();
+            throw;
+        }
 
         image = image.Replace("data:image/png;base64,", "", StringComparison.Ordinal);
 
@@ -95,10 +105,10 @@ public sealed class ZaloWebClient : IZaloClient
         {
             if (!_qrSessions.TryGetValue(sessionId, out QrSession? session))
             {
-                return Task.FromResult(new ZaloLoginState(sessionId, ZaloLoginStatus.Expired));
+                return Task.FromResult(new ZaloLoginState(sessionId, ZaloLoginStatus.NotFound));
             }
 
-            if (DateTimeOffset.UtcNow >= session.ExpiresAt)
+            if (DateTimeOffset.UtcNow >= session.ConfirmExpiresAt)
             {
                 session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Expired);
                 return Task.FromResult(session.CurrentState);
@@ -162,7 +172,13 @@ public sealed class ZaloWebClient : IZaloClient
 
                 displayName = scanResult["data"]?["displayName"]?.GetValue<string>();
                 avatar = scanResult["data"]?["avatar"]?.GetValue<string>();
-                lock (_lock) { session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Scanned, displayName, avatar); }
+                lock (_lock)
+                {
+                    session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Scanned, displayName, avatar);
+                    // Confirming on the phone can happen well after the 100s QR image itself would
+                    // expire; give the user a fresh window to confirm once the scan is seen.
+                    session.ConfirmExpiresAt = DateTimeOffset.UtcNow.AddSeconds(60);
+                }
 
                 if (scanResult["data"]?["confirmed"]?.GetValue<bool>() == true)
                 {
@@ -178,7 +194,7 @@ public sealed class ZaloWebClient : IZaloClient
                 return;
             }
 
-            while (!sessionCt.IsCancellationRequested && DateTimeOffset.UtcNow < session.ExpiresAt)
+            while (!sessionCt.IsCancellationRequested && DateTimeOffset.UtcNow < session.ConfirmExpiresAt)
             {
                 JsonNode? confirmResult = null;
                 try
@@ -209,7 +225,11 @@ public sealed class ZaloWebClient : IZaloClient
                 }
                 if (errorCode != 0)
                 {
-                    lock (_lock) { session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Expired); }
+                    lock (_lock)
+                    {
+                        session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Failed, displayName, avatar,
+                            $"Unexpected confirm error_code {errorCode}");
+                    }
                     return;
                 }
 
@@ -244,7 +264,7 @@ public sealed class ZaloWebClient : IZaloClient
                 return;
             }
 
-            if (sessionCt.IsCancellationRequested || DateTimeOffset.UtcNow >= session.ExpiresAt)
+            if (sessionCt.IsCancellationRequested || DateTimeOffset.UtcNow >= session.ConfirmExpiresAt)
             {
                 lock (_lock) { session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Expired); }
             }
@@ -252,8 +272,15 @@ public sealed class ZaloWebClient : IZaloClient
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            lock (_lock) { session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Expired, displayName, avatar, ex.Message); }
-            this.StatusChanged?.Invoke(this, new ZaloSessionStatusChanged("", ZaloConnectionStatus.SessionExpired, ex.Message));
+            // Don't surface raw exception text publicly: it can include proxy URIs, credentials,
+            // or other internal details. Full detail still goes to diagnostics for local debugging.
+            if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Auth.SessionExpired))
+            {
+                ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Auth.SessionExpired, new { QrLoginError = ex.Message });
+            }
+            const string safeMessage = "QR login failed due to an internal error.";
+            lock (_lock) { session.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Failed, displayName, avatar, safeMessage); }
+            this.StatusChanged?.Invoke(this, new ZaloSessionStatusChanged("", ZaloConnectionStatus.SessionExpired, safeMessage));
         }
     }
 
@@ -564,7 +591,11 @@ public sealed class ZaloWebClient : IZaloClient
             }
             catch (ZaloApiException ex) when (IsAuthError(ex))
             {
-                this.StatusChanged?.Invoke(this, new ZaloSessionStatusChanged(material.Uid, ZaloConnectionStatus.SessionExpired, ex.Message));
+                if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Auth.SessionExpired))
+                {
+                    ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Auth.SessionExpired, new { ReconnectAuthError = ex.Message });
+                }
+                this.StatusChanged?.Invoke(this, new ZaloSessionStatusChanged(material.Uid, ZaloConnectionStatus.SessionExpired, "Session authentication failed."));
                 return;
             }
             catch (OperationCanceledException) { return; }
@@ -774,6 +805,9 @@ public sealed class ZaloWebClient : IZaloClient
         public ZaloSessionMaterial? Material { get; set; }
         public CancellationTokenSource Cts { get; }
 
+        /// <summary>Deadline for the confirm step, extended past <see cref="ExpiresAt"/> once the QR is scanned.</summary>
+        public DateTimeOffset ConfirmExpiresAt { get; set; }
+
         public QrSession(ZaloHttpClient http, string version, string code, string userAgent, DateTimeOffset expiresAt, Guid sessionId)
         {
             this.Http = http;
@@ -781,6 +815,7 @@ public sealed class ZaloWebClient : IZaloClient
             this.Code = code;
             this.UserAgent = userAgent;
             this.ExpiresAt = expiresAt;
+            this.ConfirmExpiresAt = expiresAt;
             this.CurrentState = new ZaloLoginState(sessionId, ZaloLoginStatus.Pending);
             this.Cts = new CancellationTokenSource();
         }

@@ -2,8 +2,8 @@
 // Licensed under the Apache License, Version 2.0.
 
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using System.Globalization;
 using System.Net;
 using System.Net.Http;
@@ -34,7 +34,10 @@ public sealed class ZaloHttpClient : IDisposable
     };
 
     private static readonly HttpClient s_sharedClient = new(s_sharedHandler, disposeHandler: false);
-    private static readonly ConcurrentDictionary<IWebProxy, HttpClient> s_proxyClients = new();
+
+    // Keyed by proxy instance identity; entries are reclaimed automatically once the caller's
+    // IWebProxy is no longer referenced, instead of pinning a fresh handler forever.
+    private static readonly ConditionalWeakTable<IWebProxy, HttpClient> s_proxyClients = new();
 
     private readonly HttpClient _http;
     private readonly bool _disposeClient;
@@ -74,7 +77,7 @@ public sealed class ZaloHttpClient : IDisposable
 
     private static HttpClient GetOrCreateProxyClient(IWebProxy proxy)
     {
-        return s_proxyClients.GetOrAdd(proxy, static p =>
+        return s_proxyClients.GetValue(proxy, static p =>
         {
             SocketsHttpHandler handler = new()
             {
