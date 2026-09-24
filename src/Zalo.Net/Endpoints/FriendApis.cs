@@ -91,7 +91,7 @@ internal static class FriendApis
         {
             ["incInvalid"] = 1,
             ["page"] = page,
-            ["count"] = count > 0 ? count : 20000,
+            ["count"] = count > 0 ? count : 200,
             ["avatar_size"] = 120,
             ["actiontime"] = 0,
             ["imei"] = session.Material.Imei

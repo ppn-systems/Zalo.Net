@@ -172,17 +172,7 @@ public static class AttachmentApis
         bool isImage = IsImageExtension(fileName);
         if (!isImage && !string.IsNullOrWhiteSpace(caption))
         {
-            try
-            {
-                _ = await MessageApis.SendTextAsync(http, session, threadId, threadType, caption, ct).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Internal.Warning))
-                {
-                    ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Internal.Warning, $"Send caption text failed: {ex.GetType().Name}: {ex.Message}");
-                }
-            }
+            _ = await MessageApis.SendTextAsync(http, session, threadId, threadType, caption, ct).ConfigureAwait(false);
         }
 
         UploadResult upload = await UploadFileAsync(http, session, threadId, threadType, fileBytes, fileName, ct).ConfigureAwait(false);
@@ -219,7 +209,10 @@ public static class AttachmentApis
         string? hdUrl = null;
         string? thumbUrl = null;
 
-        Console.WriteLine($"[DEBUG LOG] Uploading file '{fileName}' ({totalSize} bytes, {totalChunk} chunks of 512KB) -> Host: {fileBaseUrl}, Path: {urlPath}");
+        if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Internal.Debug))
+        {
+            ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Internal.Debug, $"Uploading file '{fileName}' ({totalSize} bytes, {totalChunk} chunks of 512KB) -> Host: {fileBaseUrl}, Path: {urlPath}");
+        }
 
         for (int i = 0; i < totalChunk; i++)
         {
@@ -273,7 +266,6 @@ public static class AttachmentApis
             if (errorCode != 0)
             {
                 string errMsg = GetPropString(json, "error_message") ?? "upload file failed";
-                Console.WriteLine($"[DEBUG LOG] Upload Error: code={errorCode}, msg='{errMsg}'");
                 throw new ZaloApiException(errMsg, errorCode);
             }
 
@@ -283,7 +275,6 @@ public static class AttachmentApis
                 if (innerErrVal.TryGetValue(out int innerErr) && innerErr != 0)
                 {
                     string errMsg = GetPropString(innerObj, "error_message") ?? "upload chunk failed";
-                    Console.WriteLine($"[DEBUG LOG] Upload Chunk Error: code={innerErr}, msg='{errMsg}'");
                     throw new ZaloApiException(errMsg, innerErr);
                 }
             }
@@ -311,23 +302,22 @@ public static class AttachmentApis
             if (ZaloFileDoneRegistry.TryGet(finalId, out string? regUrl) && !string.IsNullOrEmpty(regUrl))
             {
                 normalUrl = regUrl;
-                Console.WriteLine($"[DEBUG LOG] Acquired fileUrl from WebSocket file_done: '{normalUrl}'");
             }
             else
             {
-                Console.WriteLine($"[DEBUG LOG] Uploaded 100% data for fileId '{finalId}'. Waiting for WS file_done...");
                 for (int wait = 0; wait < 150; wait++)
                 {
                     await Task.Delay(100, ct).ConfigureAwait(false);
                     if (ZaloFileDoneRegistry.TryGet(finalId, out string? wUrl) && !string.IsNullOrEmpty(wUrl))
                     {
                         normalUrl = wUrl;
-                        if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Internal.Debug))
-                        {
-                            ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Internal.Debug, $"Received file_done for fileId '{finalId}' after wait");
-                        }
                         break;
                     }
+                }
+
+                if (string.IsNullOrEmpty(normalUrl))
+                {
+                    throw new ZaloApiException($"Timed out waiting for file_done event for fileId '{finalId}'; file was not sent.");
                 }
             }
         }
@@ -430,8 +420,6 @@ public static class AttachmentApis
                 };
         }
 
-        Console.WriteLine($"[DEBUG LOG] Sending file message via {path} (fileId='{upload.PhotoId}', ext='{Path.GetExtension(fileName)}')...");
-
         string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
         if (string.IsNullOrEmpty(encryptedParams))
         {
@@ -454,7 +442,6 @@ public static class AttachmentApis
         if (errorCode != 0)
         {
             string errMsg = GetPropString(json, "error_message") ?? "sendFileMessage failed";
-            Console.WriteLine($"[DEBUG LOG] Send File Error: code={errorCode}, msg='{errMsg}'");
             throw new ZaloApiException(errMsg, errorCode);
         }
 
@@ -465,7 +452,6 @@ public static class AttachmentApis
                     ?? GetPropString(json, "message_id")
                     ?? now.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
-        Console.WriteLine($"[DEBUG LOG] Send File Success -> Zalo Server msgId='{msgId}'");
-        return new ZaloSendResult(msgId);
+        return new ZaloSendResult(msgId, now.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 }

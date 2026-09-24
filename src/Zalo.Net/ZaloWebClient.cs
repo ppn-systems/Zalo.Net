@@ -365,8 +365,8 @@ public sealed class ZaloWebClient : IZaloClient
         ArgumentNullException.ThrowIfNull(session);
 
         using ZaloHttpClient http = CreateHttpForSession(session);
-        string msgId = await MessageApis.SendTextAsync(http, session, threadId, threadType, text, ct).ConfigureAwait(false);
-        return new ZaloSendResult(msgId);
+        (string msgId, string cliMsgId) = await MessageApis.SendTextAsync(http, session, threadId, threadType, text, ct).ConfigureAwait(false);
+        return new ZaloSendResult(msgId, cliMsgId);
     }
 
     /// <summary>Sends an image attachment message.</summary>
@@ -426,14 +426,14 @@ public sealed class ZaloWebClient : IZaloClient
     }
 
     /// <summary>Sends a Zalo sticker message.</summary>
-    public static async Task SendStickerAsync(
+    public static async Task<ZaloSendResult> SendStickerAsync(
         ZaloSession session, string threadId, int stickerId, int cateId, int stickerType, ZaloThreadType type,
         CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(session);
 
         using ZaloHttpClient http = CreateHttpForSession(session);
-        await StickerApis.SendStickerAsync(http, session, threadId, stickerId, cateId, stickerType, type, ct).ConfigureAwait(false);
+        return await StickerApis.SendStickerAsync(http, session, threadId, stickerId, cateId, stickerType, type, ct).ConfigureAwait(false);
     }
 
     #region Group Management (Group 2)
@@ -501,11 +501,12 @@ public sealed class ZaloWebClient : IZaloClient
 
     #region Friends & Contacts Management (Group 4)
 
-    /// <summary>Retrieves all friends in the user's Zalo contact list.</summary>
+    /// <summary>Retrieves one page of the user's Zalo friend list. Call again with an increasing <paramref name="page"/> to fetch more.</summary>
     public static async Task<IReadOnlyList<ZaloFriendInfo>> GetAllFriendsAsync(
-        ZaloSession session, int count = 20000, int page = 1, CancellationToken ct = default)
+        ZaloSession session, int count = 200, int page = 1, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(session);
+        ArgumentOutOfRangeException.ThrowIfLessThan(page, 1);
 
         using ZaloHttpClient http = CreateHttpForSession(session);
         return await FriendApis.GetAllFriendsAsync(http, session, count, page, ct).ConfigureAwait(false);

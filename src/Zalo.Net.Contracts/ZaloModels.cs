@@ -159,7 +159,9 @@ public sealed record ZaloSessionStatusChanged(
 /// <summary>
 /// Result returned after sending a message.
 /// </summary>
-public sealed record ZaloSendResult(string MsgId);
+/// <param name="MsgId">Server-assigned message id.</param>
+/// <param name="CliMsgId">Client-generated message id sent in the request, echoed back so callers can de-duplicate.</param>
+public sealed record ZaloSendResult(string MsgId, string CliMsgId = "");
 
 /// <summary>
 /// Profile information for a Zalo user.

@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Http;
 using System.Text.Json.Nodes;
 using System.Threading;
@@ -35,8 +36,8 @@ public static class MessageApis
         return $"{baseClean}{path}{sep}zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}";
     }
 
-    /// <summary>Sends a text message to a user or group thread.</summary>
-    public static async Task<string> SendTextAsync(
+    /// <summary>Sends a text message to a user or group thread. Returns the server msgId and the client-generated cliMsgId (for de-duplication).</summary>
+    public static async Task<(string MsgId, string CliMsgId)> SendTextAsync(
         ZaloHttpClient http, ZaloSession session,
         string threadId, ZaloThreadType threadType, string text,
         CancellationToken ct)
@@ -107,7 +108,7 @@ public static class MessageApis
         {
             ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Message.TextSent, new { TargetThreadId = threadId, TargetThreadType = threadType.ToString(), OutboundMsgId = msgId });
         }
-        return msgId;
+        return (msgId, now.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 
     /// <summary>Sends a reply/quote message quoting an existing message.</summary>
@@ -289,13 +290,24 @@ public static class MessageApis
         ArgumentNullException.ThrowIfNull(session);
 
         string host = GetHost(session, "profile", ZaloConstants.Hosts.Profile);
-        string url = MakeUrl(host, "/api/social/profile/me");
+        bool isSelf = string.Equals(userId, session.Uid, StringComparison.Ordinal);
+        string url = MakeUrl(host, isSelf ? "/api/social/profile/me" : "/api/social/friend/getprofiles/v2");
 
-        JsonObject payload = new()
-        {
-            ["uid"] = userId,
-            ["imei"] = session.Material.Imei
-        };
+        JsonObject payload = isSelf
+            ? new JsonObject
+            {
+                ["uid"] = userId,
+                ["imei"] = session.Material.Imei
+            }
+            : new JsonObject
+            {
+                ["phonebook_version"] = 0,
+                ["friend_pversion_map"] = new JsonArray($"{userId}_0"),
+                ["avatar_size"] = 120,
+                ["show_online_status"] = 1,
+                ["language"] = session.Material.Language,
+                ["imei"] = session.Material.Imei
+            };
 
         string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
         if (string.IsNullOrEmpty(encryptedParams))
@@ -321,6 +333,12 @@ public static class MessageApis
             {
                 try { dataNode = JsonNode.Parse(decrypted); } catch { }
             }
+        }
+
+        if (!isSelf && dataNode?["changed_profiles"] is JsonObject changedProfiles)
+        {
+            dataNode = changedProfiles.FirstOrDefault(kv => kv.Key.StartsWith(userId, StringComparison.Ordinal)).Value
+                    ?? changedProfiles.FirstOrDefault().Value;
         }
 
         string uid = dataNode?["uid"]?.GetValue<string>() ?? userId;

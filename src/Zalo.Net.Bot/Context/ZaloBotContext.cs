@@ -157,8 +157,8 @@ public sealed class ZaloBotContext
     public async Task<ZaloSendResult> ReplyTextAsync(string text, CancellationToken ct = default)
     {
         using ZaloHttpClient http = this.CreateHttp();
-        string msgId = await MessageApis.SendTextAsync(http, this.Session, this.ThreadId, this.ThreadType, text, ct).ConfigureAwait(false);
-        return new ZaloSendResult(msgId);
+        (string msgId, string cliMsgId) = await MessageApis.SendTextAsync(http, this.Session, this.ThreadId, this.ThreadType, text, ct).ConfigureAwait(false);
+        return new ZaloSendResult(msgId, cliMsgId);
     }
 
     /// <summary>Quotes (replies to) the current message with new text.</summary>
@@ -184,10 +184,10 @@ public sealed class ZaloBotContext
         this.Client.SendContactCardAsync(this.Session, this.ThreadId, this.ThreadType, userId, phoneNumber, qrCodeUrl, ct);
 
     /// <summary>Sends a sticker into the current thread.</summary>
-    public async Task ReplyStickerAsync(int stickerId, int cateId, int stickerType = 1, CancellationToken ct = default)
+    public async Task<ZaloSendResult> ReplyStickerAsync(int stickerId, int cateId, int stickerType = 1, CancellationToken ct = default)
     {
         using ZaloHttpClient http = this.CreateHttp();
-        await StickerApis.SendStickerAsync(http, this.Session, this.ThreadId, stickerId, cateId, stickerType, this.ThreadType, ct).ConfigureAwait(false);
+        return await StickerApis.SendStickerAsync(http, this.Session, this.ThreadId, stickerId, cateId, stickerType, this.ThreadType, ct).ConfigureAwait(false);
     }
 
     /// <summary>Sends an image into the current thread.</summary>

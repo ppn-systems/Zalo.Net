@@ -19,8 +19,8 @@ namespace Zalo.Net.Endpoints;
 /// </summary>
 public static class StickerApis
 {
-    /// <summary>Sends a Zalo sticker to a thread.</summary>
-    public static async Task SendStickerAsync(
+    /// <summary>Sends a Zalo sticker to a thread. Returns the server msgId and the client-generated cliMsgId (for de-duplication).</summary>
+    public static async Task<ZaloSendResult> SendStickerAsync(
         ZaloHttpClient http, ZaloSession session,
         string threadId, int stickerId, int cateId, int stickerType, ZaloThreadType type,
         CancellationToken ct = default)
@@ -42,12 +42,13 @@ public static class StickerApis
         string path = isGroup ? "/api/group/sticker" : "/api/message/sticker";
         string url = $"{endpointHost.TrimEnd('/')}{path}?zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}&nretry=0";
 
+        long clientId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         JsonObject payload = new()
         {
             ["stickerId"] = stickerId,
             ["cateId"] = cateId,
             ["type"] = stickerType,
-            ["clientId"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+            ["clientId"] = clientId,
             ["imei"] = session.Material.Imei,
             ["zsource"] = 101
         };
@@ -91,5 +92,11 @@ public static class StickerApis
         {
             ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Message.StickerSent, new { TargetThreadId = threadId, TargetThreadType = type.ToString(), StickerId = stickerId });
         }
+
+        string cliMsgId = clientId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string msgId = json?["data"]?["msgId"]?.GetValue<string>()
+                    ?? json?["data"]?["message_id"]?.GetValue<string>()
+                    ?? cliMsgId;
+        return new ZaloSendResult(msgId, cliMsgId);
     }
 }
