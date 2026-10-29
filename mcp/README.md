@@ -41,6 +41,16 @@ docker run -d \
 
 OpenAPI Schema available at: `http://localhost:5000/openapi.json`
 
+> **Verify downloads:** each release ships `SHA256SUMS.txt`; check with `sha256sum -c SHA256SUMS.txt` before running a binary, or build from source with `dotnet publish mcp/Zalo.Net.Mcp`.
+
+---
+
+## ⚠️ Security & Privacy Notes
+
+- Zalo.Net is an **unofficial** client and is not affiliated with VNG/Zalo; using it may violate Zalo's Terms of Service. Prefer a secondary account.
+- Session cookies and message history (including extracted phone numbers and bank accounts) are stored **unencrypted** in local SQLite files under the data directory. Protect that directory and never commit or share it.
+- The `--web` server binds to `localhost` only and has no authentication; do not expose it publicly.
+
 ---
 
 ## 🛠️ CLI Commands & Usage
