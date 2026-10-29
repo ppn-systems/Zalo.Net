@@ -159,6 +159,9 @@ jobs:
           merge-multiple: true
           if-no-files-found: warn
 
+      - name: Generate SHA256 checksums
+        run: cd dist && sha256sum zalo-net-mcp-* > SHA256SUMS.txt
+
       - name: Create or Update GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -166,4 +169,6 @@ jobs:
           name: Zalo.Net.Mcp Release ${{ inputs.tag || github.ref_name }}
           draft: false
           prerelease: false
-          files: dist/zalo-net-mcp-*
+          files: |
+            dist/zalo-net-mcp-*
+            dist/SHA256SUMS.txt
