@@ -61,10 +61,10 @@ public static class ZaloConstants
         public const string Label = "https://label-wpa.chat.zalo.me";
 
         /// <summary>Default quick message template gateway host.</summary>
-        public const string QuickMessage = "https://quickmsg-wpa.chat.zalo.me";
+        public const string QuickMessage = "https://quickmessage.chat.zalo.me";
 
         /// <summary>Default cloud message history gateway host.</summary>
-        public const string CloudMsg = "https://tt-group-cm.api.zaloapp.com";
+        public const string CloudMsg = "https://tt-group-cm.chat.zalo.me";
 
         /// <summary>Default authentication gateway host for web sessions.</summary>
         public const string Login = "https://wpa.chat.zalo.me";
@@ -118,24 +118,24 @@ public static class ZaloConstants
                 case "chat":
                     AddUnique(list, Chat);
                     AddUnique(list, "https://chat-wpa.chat.zalo.me");
-                    AddUnique(list, "https://tt-chat3-wpa.api.zaloapp.com");
+                    AddUnique(list, "https://tt-chat3-wpa.chat.zalo.me");
                     AddUnique(list, "https://tt-chat1-wpa.chat.zalo.me");
                     break;
                 case "group":
                 case "group_poll":
                     AddUnique(list, Group);
                     AddUnique(list, "https://group-wpa.chat.zalo.me");
-                    AddUnique(list, "https://tt-group-wpa.api.zaloapp.com");
+                    AddUnique(list, "https://tt-group-wpa.chat.zalo.me");
                     break;
                 case "profile":
                     AddUnique(list, Profile);
                     AddUnique(list, "https://profile-wpa.chat.zalo.me");
-                    AddUnique(list, "https://tt-profile-wpa.api.zaloapp.com");
+                    AddUnique(list, "https://tt-profile-wpa.chat.zalo.me");
                     break;
                 case "friend":
                     AddUnique(list, Friend);
                     AddUnique(list, Profile);
-                    AddUnique(list, "https://tt-friend-wpa.api.zaloapp.com");
+                    AddUnique(list, "https://tt-friend-wpa.chat.zalo.me");
                     break;
                 case "conversation":
                     AddUnique(list, Conversation);
@@ -149,6 +149,7 @@ public static class ZaloConstants
                 case "group_board":
                 case "boards":
                     AddUnique(list, GroupBoard);
+                    AddUnique(list, "https://board-wpa.chat.zalo.me");
                     AddUnique(list, "https://tt-groupboard-wpa.chat.zalo.me");
                     AddUnique(list, Group);
                     break;
@@ -159,22 +160,22 @@ public static class ZaloConstants
                     break;
                 case "quick_message":
                     AddUnique(list, QuickMessage);
+                    AddUnique(list, "https://quickmsg-wpa.chat.zalo.me");
                     AddUnique(list, "https://tt-quickmsg-wpa.chat.zalo.me");
                     break;
                 case "sticker":
                     AddUnique(list, Sticker);
-                    AddUnique(list, "https://tt-sticker-wpa.zaloapp.com");
+                    AddUnique(list, "https://sticker-wpa.chat.zalo.me");
                     break;
                 case "reaction":
                     AddUnique(list, Reaction);
                     AddUnique(list, "https://tt-react-wpa.chat.zalo.me");
-                    AddUnique(list, "https://reaction.api.zaloapp.com");
                     break;
                 case "file":
                 case "files":
                     AddUnique(list, File);
                     AddUnique(list, "https://file-wpa.chat.zalo.me");
-                    AddUnique(list, "https://tt-files-wpa.api.zaloapp.com");
+                    AddUnique(list, "https://tt-files-wpa.chat.zalo.me");
                     break;
                 case "cloud_msg":
                 case "zcloud":

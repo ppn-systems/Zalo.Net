@@ -132,13 +132,21 @@ internal static class FriendApis
                          ?? item["uid"]?.GetValue<string>()
                          ?? item["fId"]?.GetValue<string>()
                          ?? "";
-            string displayName = item["displayName"]?.GetValue<string>()
-                               ?? item["zaloName"]?.GetValue<string>()
+            string? rawDisplay = item["displayName"]?.GetValue<string>();
+            string? rawZaloName = item["zaloName"]?.GetValue<string>();
+            string displayName = rawDisplay
+                               ?? rawZaloName
                                ?? item["dName"]?.GetValue<string>()
                                ?? "";
             string? avatar = item["avatar"]?.GetValue<string>();
             string? phone = item["phoneNumber"]?.GetValue<string>();
             string? alias = item["alias"]?.GetValue<string>();
+            if (string.IsNullOrEmpty(alias) &&
+                !string.IsNullOrEmpty(rawZaloName) &&
+                !string.Equals(displayName, rawZaloName, StringComparison.Ordinal))
+            {
+                alias = rawZaloName;
+            }
 
             if (!string.IsNullOrEmpty(userId))
             {

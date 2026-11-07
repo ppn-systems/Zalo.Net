@@ -121,8 +121,16 @@ public static class MessageApis
             }
         }
 
-        string msgId = dataNode?["msgId"]?.GetValue<string>()
-                    ?? dataNode?["message_id"]?.GetValue<string>()
+        if (dataNode?["error_code"]?.GetValue<int>() is int innerCode && innerCode != 0)
+        {
+            string innerMsg = dataNode["error_message"]?.GetValue<string>() ?? $"Inner sendMessage error {innerCode}";
+            throw new ZaloApiException(innerMsg, innerCode);
+        }
+
+        dataNode = dataNode?["data"] ?? dataNode;
+
+        string msgId = dataNode?["msgId"]?.ToString()
+                    ?? dataNode?["message_id"]?.ToString()
                     ?? now.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Message.TextSent))
@@ -247,8 +255,16 @@ public static class MessageApis
             }
         }
 
-        string msgId = dataNode?["msgId"]?.GetValue<string>()
-                    ?? dataNode?["message_id"]?.GetValue<string>()
+        if (dataNode?["error_code"]?.GetValue<int>() is int innerCode && innerCode != 0)
+        {
+            string innerMsg = dataNode["error_message"]?.GetValue<string>() ?? $"Inner sendMessage error {innerCode}";
+            throw new ZaloApiException(innerMsg, innerCode);
+        }
+
+        dataNode = dataNode?["data"] ?? dataNode;
+
+        string msgId = dataNode?["msgId"]?.ToString()
+                    ?? dataNode?["message_id"]?.ToString()
                     ?? now.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         if (ZaloDiagnosticsEvents.Source.IsEnabled(ZaloDiagnosticsEvents.Message.QuoteSent))
@@ -335,8 +351,10 @@ public static class MessageApis
             throw new ZaloApiException(innerMsg, innerCode);
         }
 
-        string msgId = dataNode?["msgId"]?.GetValue<string>()
-                    ?? dataNode?["message_id"]?.GetValue<string>()
+        dataNode = dataNode?["data"] ?? dataNode;
+
+        string msgId = dataNode?["msgId"]?.ToString()
+                    ?? dataNode?["message_id"]?.ToString()
                     ?? now.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         return msgId;
@@ -395,13 +413,17 @@ public static class MessageApis
             }
         }
 
+        dataNode = dataNode?["data"] ?? dataNode;
+
         if (!isSelf && dataNode?["changed_profiles"] is JsonObject changedProfiles)
         {
             dataNode = changedProfiles.FirstOrDefault(kv => kv.Key.StartsWith(userId, StringComparison.Ordinal)).Value
                     ?? changedProfiles.FirstOrDefault().Value;
         }
 
-        string uid = dataNode?["uid"]?.GetValue<string>() ?? userId;
+        string uid = dataNode?["uid"]?.GetValue<string>()
+                  ?? dataNode?["userId"]?.GetValue<string>()
+                  ?? userId;
         string displayName = dataNode?["displayName"]?.GetValue<string>()
                            ?? dataNode?["zaloName"]?.GetValue<string>()
                            ?? dataNode?["dpName"]?.GetValue<string>()
@@ -895,10 +917,27 @@ public static class MessageApis
         string enc = Uri.EscapeDataString(ZaloCipher.EncodeAes(session.Material.SecretKey, body.ToJsonString()));
         string path = $"/api/group/history?zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}&params={enc}";
 
-        using HttpResponseMessage resp = await http.RequestWithFailoverAsync("group", primaryHost, path, HttpMethod.Get, ct: ct).ConfigureAwait(false);
-        JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
-        JsonNode? root = StickerApis.UnwrapDecrypt(json, session.Material.SecretKey);
-        return ParseHistoryMessages(root, session.Uid, defaultThreadId: cleanGrid, defaultIsGroup: true);
+        try
+        {
+            using HttpResponseMessage resp = await http.RequestWithFailoverAsync("group", primaryHost, path, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+            JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+            JsonNode? root = StickerApis.UnwrapDecrypt(json, session.Material.SecretKey);
+            IReadOnlyList<ZaloHistoryMessage> parsed = ParseHistoryMessages(root, session.Uid, defaultThreadId: cleanGrid, defaultIsGroup: true);
+            if (parsed.Count > 0)
+            {
+                return parsed;
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // Fall back to group_cloud_message (/api/cm/getrecentv2) on modern Zalo Web
+        }
+
+        return await GetCloudMessagesAsync(http, session, cleanGrid, count: count, ct: ct).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -924,9 +963,9 @@ public static class MessageApis
             ["src"] = isOld ? 3 : 1,
         };
 
-        string primaryHost = session.ServiceMap.TryGetValue("zcloud", out string[]? zHosts) && zHosts.Length > 0
-            ? zHosts[0]
-            : ZaloConstants.Hosts.CloudMsg;
+        string primaryHost = session.GetServiceUrl("group_cloud_message")
+            ?? session.GetServiceUrl("zcloud")
+            ?? ZaloConstants.Hosts.CloudMsg;
 
         string ep = isOld ? "/api/cm/getoldv2" : "/api/cm/getrecentv2";
         string enc = Uri.EscapeDataString(ZaloCipher.EncodeAes(session.Material.SecretKey, body.ToJsonString()));
@@ -946,7 +985,15 @@ public static class MessageApis
             return [];
         }
 
-        JsonNode? dataNode = root["data"]?["data"] ?? root["data"] ?? root;
+        JsonNode? dataNode = root;
+        if (dataNode is JsonObject rootObj && rootObj.TryGetPropertyValue("data", out JsonNode? d1) && d1 is not null)
+        {
+            dataNode = d1;
+            if (dataNode is JsonObject d1Obj && d1Obj.TryGetPropertyValue("data", out JsonNode? d2) && d2 is not null)
+            {
+                dataNode = d2;
+            }
+        }
         if (dataNode is JsonValue strVal && strVal.TryGetValue(out string? innerJson) && !string.IsNullOrWhiteSpace(innerJson))
         {
             try { dataNode = JsonNode.Parse(innerJson); } catch { /* ignore */ }

@@ -56,13 +56,22 @@ internal static class BoardApis
             if (!string.IsNullOrEmpty(decrypted))
             {
                 JsonNode? inner = JsonNode.Parse(decrypted);
-                int innerErr = inner?["error_code"]?.GetValue<int>() ?? 0;
+                int innerErr = (inner as JsonObject)?["error_code"]?.GetValue<int>() ?? 0;
                 if (innerErr != 0)
                 {
-                    string msg = inner?["error_message"]?.GetValue<string>() ?? $"API inner error {innerErr}";
+                    string msg = (inner as JsonObject)?["error_message"]?.GetValue<string>() ?? $"API inner error {innerErr}";
                     throw new ZaloApiException(msg, innerErr);
                 }
-                return inner?["data"] ?? inner;
+                JsonNode? innerData = (inner as JsonObject)?["data"] ?? inner;
+                if (innerData is JsonValue strVal && strVal.TryGetValue(out string? nestedJson) && !string.IsNullOrWhiteSpace(nestedJson))
+                {
+                    string trimmed = nestedJson.Trim();
+                    if ((trimmed.StartsWith('{') && trimmed.EndsWith('}')) || (trimmed.StartsWith('[') && trimmed.EndsWith(']')))
+                    {
+                        try { innerData = JsonNode.Parse(trimmed); } catch { }
+                    }
+                }
+                return innerData;
             }
         }
 
@@ -436,7 +445,15 @@ internal static class BoardApis
         string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
         using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
         JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
-        JsonNode? dataNode = DecryptDataNode(session, node) ?? node?["data"];
+        JsonNode? dataNode;
+        try
+        {
+            dataNode = DecryptDataNode(session, node) ?? node?["data"];
+        }
+        catch (ZaloApiException ex) when (ex.Code is -1 or 211)
+        {
+            return [];
+        }
 
         List<ZaloBoardItem> results = [];
         if (dataNode?["items"] is JsonArray itemsArr)
@@ -466,8 +483,8 @@ internal static class BoardApis
                 }
                 else
                 {
-                    string id = detail["id"]?.GetValue<string>() ?? string.Empty;
-                    string creator = detail["creatorId"]?.GetValue<string>() ?? string.Empty;
+                    string id = detail["id"]?.ToString() ?? string.Empty;
+                    string creator = detail["creatorId"]?.ToString() ?? string.Empty;
                     long created = detail["createTime"]?.GetValue<long>() ?? 0;
                     long updated = detail["editTime"]?.GetValue<long>() ?? created;
                     string title = string.Empty;
@@ -505,8 +522,8 @@ internal static class BoardApis
             return new ZaloReminderItem(fallbackId, fallbackThreadId, isGroup, fallbackTitle);
         }
 
-        string id = node["reminderId"]?.GetValue<string>() ?? node["id"]?.GetValue<string>() ?? fallbackId;
-        string creatorId = node["creatorUid"]?.GetValue<string>() ?? node["creatorId"]?.GetValue<string>() ?? string.Empty;
+        string id = node["reminderId"]?.ToString() ?? node["id"]?.ToString() ?? fallbackId;
+        string creatorId = node["creatorUid"]?.ToString() ?? node["creatorId"]?.ToString() ?? string.Empty;
         string emoji = node["emoji"]?.GetValue<string>() ?? "⏰";
         long startTime = node["startTime"]?.GetValue<long>() ?? 0;
         long createTime = node["createTime"]?.GetValue<long>() ?? 0;
@@ -561,13 +578,15 @@ internal static class BoardApis
             {
                 ["toUid"] = threadId,
                 ["type"] = 0,
-                ["color"] = DefaultZaloBoardColor,
+                ["color"] = -16245706,
                 ["emoji"] = emoji,
                 ["startTime"] = startTime,
                 ["duration"] = -1,
                 ["params"] = new JsonObject { ["title"] = options.Title },
                 ["needPin"] = false,
-                ["repeat"] = repeat
+                ["repeat"] = repeat,
+                ["creatorUid"] = session.Uid,
+                ["src"] = 1
             };
 
             payload = new JsonObject
@@ -789,10 +808,18 @@ internal static class BoardApis
         string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
         using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
         JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
-        JsonNode? dataNode = DecryptDataNode(session, node) ?? node?["data"];
+        JsonNode? dataNode;
+        try
+        {
+            dataNode = DecryptDataNode(session, node) ?? node?["data"];
+        }
+        catch (ZaloApiException ex) when (ex.Code is -1 or 211)
+        {
+            return [];
+        }
 
         List<ZaloReminderItem> results = [];
-        JsonArray? arr = dataNode as JsonArray ?? dataNode?["items"] as JsonArray;
+        JsonArray? arr = dataNode as JsonArray ?? (dataNode as JsonObject)?["items"] as JsonArray;
         if (arr is not null)
         {
             foreach (JsonNode? item in arr)

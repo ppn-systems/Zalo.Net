@@ -24,7 +24,7 @@ public sealed class LoginApisTests
         Assert.NotEmpty(chatCandidates);
         Assert.Equal("https://tt-chat3-wpa.chat.zalo.me", chatCandidates[0]);
         Assert.Contains("https://chat-wpa.chat.zalo.me", chatCandidates);
-        Assert.Contains("https://tt-chat3-wpa.api.zaloapp.com", chatCandidates);
+        Assert.Contains("https://tt-chat1-wpa.chat.zalo.me", chatCandidates);
     }
 
     [Fact]
