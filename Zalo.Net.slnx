@@ -20,5 +20,6 @@
     <Project Path="tests/Zalo.Net.WebSocket.Tests/Zalo.Net.WebSocket.Tests.csproj" />
     <Project Path="tests/Zalo.Net.Tests/Zalo.Net.Tests.csproj" />
     <Project Path="tests/Zalo.Net.Bot.Tests/Zalo.Net.Bot.Tests.csproj" />
+    <Project Path="tests/Zalo.Net.Mcp.Tests/Zalo.Net.Mcp.Tests.csproj" />
   </Folder>
 </Solution>

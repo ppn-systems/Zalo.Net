@@ -844,7 +844,326 @@ public sealed partial class MessageRepository(ZaloDatabase db)
 
         return new ZaloAnalyticsResult(totalMessages, sentMessages, receivedMessages, topContacts, entityCounts);
     }
+
+    /// <summary>
+    /// Parses a human-friendly schedule time expression (<c>+15m</c>, <c>+2h</c>, <c>+1d</c>, <c>HH:MM</c>, or <c>YYYY-MM-DD HH:MM</c>) into a Unix timestamp (seconds).
+    /// </summary>
+    public static bool TryParseScheduleTime(string? input, DateTimeOffset now, out long sendAtUnix)
+    {
+        sendAtUnix = 0;
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return false;
+        }
+
+        string trimmed = input.Trim();
+
+        // 1) Relative offset: +15m, +2h, +1d, 15p, 2g, etc.
+        if (trimmed.StartsWith('+') || char.IsDigit(trimmed[0]))
+        {
+            string rel = trimmed.TrimStart('+').Trim();
+            int unitIdx = -1;
+            for (int i = 0; i < rel.Length; i++)
+            {
+                if (!char.IsDigit(rel[i]))
+                {
+                    unitIdx = i;
+                    break;
+                }
+            }
+
+            if (unitIdx > 0 && !rel.Contains(':', StringComparison.Ordinal) && !rel.Contains('-', StringComparison.Ordinal) && !rel.Contains('/', StringComparison.Ordinal))
+            {
+                string numPart = rel[..unitIdx];
+                string unitPart = rel[unitIdx..].Trim().ToLowerInvariant();
+                if (long.TryParse(numPart, NumberStyles.Integer, CultureInfo.InvariantCulture, out long amount) && amount > 0)
+                {
+                    long deltaSec = unitPart switch
+                    {
+                        "s" or "sec" or "giay" or "giây" => amount,
+                        "m" or "min" or "p" or "phut" or "phút" => amount * 60,
+                        "h" or "hr" or "g" or "gio" or "giờ" => amount * 3600,
+                        "d" or "day" or "ngay" or "ngày" => amount * 86400,
+                        _ => 0,
+                    };
+                    if (deltaSec > 0)
+                    {
+                        sendAtUnix = now.ToUnixTimeSeconds() + deltaSec;
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // 2) Time of day: HH:MM (today, or tomorrow if already in the past)
+        if (trimmed.Length is >= 4 and <= 5 && trimmed.Contains(':', StringComparison.Ordinal))
+        {
+            string[] parts = trimmed.Split(':');
+            if (parts.Length == 2
+                && int.TryParse(parts[0], NumberStyles.Integer, CultureInfo.InvariantCulture, out int hour)
+                && int.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out int minute)
+                && hour is >= 0 and <= 23
+                && minute is >= 0 and <= 59)
+            {
+                DateTimeOffset candidate = new(now.Year, now.Month, now.Day, hour, minute, 0, now.Offset);
+                if (candidate <= now)
+                {
+                    candidate = candidate.AddDays(1);
+                }
+                sendAtUnix = candidate.ToUnixTimeSeconds();
+                return true;
+            }
+        }
+
+        // 3) Full date-time: YYYY-MM-DD HH:MM or DD/MM/YYYY HH:MM or ISO-8601
+        string[] formats =
+        [
+            "yyyy-MM-dd HH:mm",
+            "yyyy-MM-dd HH:mm:ss",
+            "dd/MM/yyyy HH:mm",
+            "dd-MM-yyyy HH:mm"
+        ];
+        if (DateTimeOffset.TryParseExact(trimmed, formats, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out DateTimeOffset dto)
+            || DateTimeOffset.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out dto))
+        {
+            if (dto > now)
+            {
+                sendAtUnix = dto.ToUnixTimeSeconds();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public async Task<long> ScheduleMessageAsync(
+        string threadId, string threadType, string text, long sendAtUnix, CancellationToken ct = default)
+    {
+        using SqliteConnection conn = this._db.CreateConnection();
+        using SqliteCommand cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO scheduled_messages (thread_id, thread_type, text, send_at_unix, status, created_at)
+            VALUES (@tid, @ttype, @text, @send_at, 'pending', @now);
+            SELECT last_insert_rowid();
+            """;
+        _ = cmd.Parameters.AddWithValue("@tid", threadId);
+        _ = cmd.Parameters.AddWithValue("@ttype", threadType);
+        _ = cmd.Parameters.AddWithValue("@text", text);
+        _ = cmd.Parameters.AddWithValue("@send_at", sendAtUnix);
+        _ = cmd.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture));
+
+        object? scalar = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+        return Convert.ToInt64(scalar ?? 0L, CultureInfo.InvariantCulture);
+    }
+
+    public async Task<IReadOnlyList<ScheduledMessageRow>> GetScheduledMessagesAsync(
+        string? statusFilter = "pending", CancellationToken ct = default)
+    {
+        using SqliteConnection conn = this._db.CreateConnection();
+        using SqliteCommand cmd = conn.CreateCommand();
+
+        if (string.IsNullOrWhiteSpace(statusFilter) || string.Equals(statusFilter, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            cmd.CommandText = """
+                SELECT id, thread_id, thread_type, text, send_at_unix, status, created_at
+                FROM scheduled_messages
+                ORDER BY send_at_unix ASC, id ASC;
+                """;
+        }
+        else
+        {
+            cmd.CommandText = """
+                SELECT id, thread_id, thread_type, text, send_at_unix, status, created_at
+                FROM scheduled_messages
+                WHERE status = @status
+                ORDER BY send_at_unix ASC, id ASC;
+                """;
+            _ = cmd.Parameters.AddWithValue("@status", statusFilter);
+        }
+
+        List<ScheduledMessageRow> rows = [];
+        using SqliteDataReader reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            rows.Add(new ScheduledMessageRow(
+                Id: reader.GetInt64(0),
+                ThreadId: reader.GetString(1),
+                ThreadType: reader.GetString(2),
+                Text: reader.GetString(3),
+                SendAtUnix: reader.GetInt64(4),
+                Status: reader.GetString(5),
+                CreatedAt: reader.GetString(6)));
+        }
+        return rows;
+    }
+
+    public async Task<IReadOnlyList<ScheduledMessageRow>> ClaimDueScheduledMessagesAsync(
+        long nowUnix, CancellationToken ct = default)
+    {
+        using SqliteConnection conn = this._db.CreateConnection();
+        using SqliteTransaction tx = conn.BeginTransaction();
+
+        List<ScheduledMessageRow> due = [];
+        using (SqliteCommand selectCmd = conn.CreateCommand())
+        {
+            selectCmd.Transaction = tx;
+            selectCmd.CommandText = """
+                SELECT id, thread_id, thread_type, text, send_at_unix, status, created_at
+                FROM scheduled_messages
+                WHERE status = 'pending' AND send_at_unix <= @now
+                ORDER BY send_at_unix ASC, id ASC
+                LIMIT 20;
+                """;
+            _ = selectCmd.Parameters.AddWithValue("@now", nowUnix);
+
+            using SqliteDataReader reader = await selectCmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+            while (await reader.ReadAsync(ct).ConfigureAwait(false))
+            {
+                due.Add(new ScheduledMessageRow(
+                    Id: reader.GetInt64(0),
+                    ThreadId: reader.GetString(1),
+                    ThreadType: reader.GetString(2),
+                    Text: reader.GetString(3),
+                    SendAtUnix: reader.GetInt64(4),
+                    Status: "sending",
+                    CreatedAt: reader.GetString(6)));
+            }
+        }
+
+        if (due.Count > 0)
+        {
+            using SqliteCommand updateCmd = conn.CreateCommand();
+            updateCmd.Transaction = tx;
+            updateCmd.CommandText = "UPDATE scheduled_messages SET status = 'sending' WHERE id = @id;";
+            SqliteParameter idParam = updateCmd.Parameters.Add("@id", SqliteType.Integer);
+            foreach (ScheduledMessageRow item in due)
+            {
+                idParam.Value = item.Id;
+                _ = await updateCmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+        }
+
+        tx.Commit();
+        return due;
+    }
+
+    public async Task CompleteScheduledMessageAsync(long id, bool success, CancellationToken ct = default)
+    {
+        using SqliteConnection conn = this._db.CreateConnection();
+        using SqliteCommand cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE scheduled_messages SET status = @status WHERE id = @id;";
+        _ = cmd.Parameters.AddWithValue("@status", success ? "sent" : "failed");
+        _ = cmd.Parameters.AddWithValue("@id", id);
+        _ = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+    }
+
+    public async Task<bool> CancelScheduledMessageAsync(long id, CancellationToken ct = default)
+    {
+        using SqliteConnection conn = this._db.CreateConnection();
+        using SqliteCommand cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM scheduled_messages WHERE id = @id AND status = 'pending';";
+        _ = cmd.Parameters.AddWithValue("@id", id);
+        int affected = await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+        return affected > 0;
+    }
+
+    public async Task<long> UpsertAutoReplyRuleAsync(
+        string pattern, string replyTemplate, bool isActive = true, CancellationToken ct = default)
+    {
+        using SqliteConnection conn = this._db.CreateConnection();
+        using SqliteCommand cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO auto_reply_rules (pattern, reply_template, is_active, created_at)
+            VALUES (@pattern, @reply, @active, @now);
+            SELECT last_insert_rowid();
+            """;
+        _ = cmd.Parameters.AddWithValue("@pattern", pattern.Trim());
+        _ = cmd.Parameters.AddWithValue("@reply", replyTemplate);
+        _ = cmd.Parameters.AddWithValue("@active", isActive ? 1 : 0);
+        _ = cmd.Parameters.AddWithValue("@now", DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture));
+        object? scalar = await cmd.ExecuteScalarAsync(ct).ConfigureAwait(false);
+        return Convert.ToInt64(scalar ?? 0L, CultureInfo.InvariantCulture);
+    }
+
+    public async Task<IReadOnlyList<AutoReplyRule>> GetAutoReplyRulesAsync(
+        bool activeOnly = false, CancellationToken ct = default)
+    {
+        using SqliteConnection conn = this._db.CreateConnection();
+        using SqliteCommand cmd = conn.CreateCommand();
+        cmd.CommandText = activeOnly
+            ? "SELECT id, pattern, reply_template, is_active, created_at FROM auto_reply_rules WHERE is_active = 1 ORDER BY id ASC;"
+            : "SELECT id, pattern, reply_template, is_active, created_at FROM auto_reply_rules ORDER BY id ASC;";
+
+        List<AutoReplyRule> list = [];
+        using SqliteDataReader reader = await cmd.ExecuteReaderAsync(ct).ConfigureAwait(false);
+        while (await reader.ReadAsync(ct).ConfigureAwait(false))
+        {
+            list.Add(new AutoReplyRule(
+                Id: reader.GetInt64(0),
+                Pattern: reader.GetString(1),
+                ReplyTemplate: reader.GetString(2),
+                IsActive: reader.GetInt32(3) == 1,
+                CreatedAt: reader.GetString(4)));
+        }
+        return list;
+    }
+
+    public async Task<bool> DeleteAutoReplyRuleAsync(long id, CancellationToken ct = default)
+    {
+        using SqliteConnection conn = this._db.CreateConnection();
+        using SqliteCommand cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM auto_reply_rules WHERE id = @id;";
+        _ = cmd.Parameters.AddWithValue("@id", id);
+        return await cmd.ExecuteNonQueryAsync(ct).ConfigureAwait(false) > 0;
+    }
+
+    public async Task<string?> MatchAutoReplyAsync(string incomingText, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(incomingText))
+        {
+            return null;
+        }
+
+        IReadOnlyList<AutoReplyRule> rules = await this.GetAutoReplyRulesAsync(activeOnly: true, ct).ConfigureAwait(false);
+        if (rules.Count == 0)
+        {
+            return null;
+        }
+
+        string normalized = incomingText.Trim();
+        string? catchAllReply = null;
+
+        foreach (AutoReplyRule rule in rules)
+        {
+            string pat = rule.Pattern.Trim();
+            if (pat == "*" || string.Equals(pat, "all", StringComparison.OrdinalIgnoreCase))
+            {
+                catchAllReply ??= rule.ReplyTemplate;
+                continue;
+            }
+
+            if (pat.StartsWith("regex:", StringComparison.OrdinalIgnoreCase))
+            {
+                string rxPattern = pat[6..].Trim();
+                try
+                {
+                    if (Regex.IsMatch(normalized, rxPattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(50)))
+                    {
+                        return rule.ReplyTemplate;
+                    }
+                }
+                catch { /* ignore invalid regex */ }
+            }
+            else if (normalized.Contains(pat, StringComparison.OrdinalIgnoreCase))
+            {
+                return rule.ReplyTemplate;
+            }
+        }
+
+        return catchAllReply;
+    }
 }
 
 public sealed record TopContactStat(string UserId, string DisplayName, long MessageCount);
 public sealed record ZaloAnalyticsResult(long TotalMessages, long SentMessages, long ReceivedMessages, IReadOnlyList<TopContactStat> TopContacts, IReadOnlyDictionary<string, long> ExtractedEntityCounts);
+public sealed record ScheduledMessageRow(long Id, string ThreadId, string ThreadType, string Text, long SendAtUnix, string Status, string CreatedAt);

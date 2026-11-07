@@ -156,6 +156,60 @@ public sealed class MessageRepositoryQueryTests : IDisposable
         Assert.Equal(1, threadB.MessageCount);
     }
 
+    [Fact]
+    public void TryParseScheduleTime_SupportsRelativeTimeOfDayAndIsoDate()
+    {
+        DateTimeOffset now = new(2026, 11, 7, 10, 0, 0, TimeSpan.FromHours(7));
+
+        Assert.True(MessageRepository.TryParseScheduleTime("+15m", now, out long plus15m));
+        Assert.Equal(now.AddMinutes(15).ToUnixTimeSeconds(), plus15m);
+
+        Assert.True(MessageRepository.TryParseScheduleTime("+2h", now, out long plus2h));
+        Assert.Equal(now.AddHours(2).ToUnixTimeSeconds(), plus2h);
+
+        Assert.True(MessageRepository.TryParseScheduleTime("14:30", now, out long sameDay));
+        Assert.Equal(new DateTimeOffset(2026, 11, 7, 14, 30, 0, TimeSpan.FromHours(7)).ToUnixTimeSeconds(), sameDay);
+
+        Assert.True(MessageRepository.TryParseScheduleTime("08:00", now, out long nextDay));
+        Assert.Equal(new DateTimeOffset(2026, 11, 8, 8, 0, 0, TimeSpan.FromHours(7)).ToUnixTimeSeconds(), nextDay);
+    }
+
+    [Fact]
+    public async Task ScheduledMessages_ScheduleClaimAndComplete_WorksEndToEnd()
+    {
+        long nowUnix = 1_800_000_000;
+        long id1 = await this._repo.ScheduleMessageAsync("thread-1", "User", "Hello due", nowUnix - 10);
+        long id2 = await this._repo.ScheduleMessageAsync("thread-2", "Group", "Hello future", nowUnix + 3600);
+
+        IReadOnlyList<ScheduledMessageRow> pending = await this._repo.GetScheduledMessagesAsync("pending");
+        Assert.Equal(2, pending.Count);
+
+        IReadOnlyList<ScheduledMessageRow> due = await this._repo.ClaimDueScheduledMessagesAsync(nowUnix);
+        _ = Assert.Single(due);
+        Assert.Equal(id1, due[0].Id);
+
+        await this._repo.CompleteScheduledMessageAsync(id1, success: true);
+        Assert.True(await this._repo.CancelScheduledMessageAsync(id2));
+
+        IReadOnlyList<ScheduledMessageRow> remainingPending = await this._repo.GetScheduledMessagesAsync("pending");
+        Assert.Empty(remainingPending);
+    }
+
+    [Fact]
+    public async Task AutoReplyRules_SubstringRegexAndCatchAll_MatchProperly()
+    {
+        _ = await this._repo.UpsertAutoReplyRuleAsync("báo giá", "Dạ bảng giá bên em gửi anh/chị ạ.");
+        _ = await this._repo.UpsertAutoReplyRuleAsync("regex:^stk\\b", "STK Vietcombank: 0123456789");
+        long catchAllId = await this._repo.UpsertAutoReplyRuleAsync("*", "Em đang bận, lát em nhắn lại nhé!");
+
+        Assert.Equal("Dạ bảng giá bên em gửi anh/chị ạ.", await this._repo.MatchAutoReplyAsync("Cho mình xin Báo Giá gói Pro"));
+        Assert.Equal("STK Vietcombank: 0123456789", await this._repo.MatchAutoReplyAsync("stk shop là gì"));
+        Assert.Equal("Em đang bận, lát em nhắn lại nhé!", await this._repo.MatchAutoReplyAsync("Alo bạn ơi"));
+
+        Assert.True(await this._repo.DeleteAutoReplyRuleAsync(catchAllId));
+        Assert.Null(await this._repo.MatchAutoReplyAsync("Alo bạn ơi"));
+    }
+
     private async Task SaveChatterAsync(string prefix, int count)
     {
         for (int i = 0; i < count; i++)

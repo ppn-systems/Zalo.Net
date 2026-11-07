@@ -55,6 +55,11 @@ public sealed class ZaloHttpClient : IDisposable
     public IWebProxy? Proxy { get; }
 
     /// <summary>
+    /// Gets or sets client-side privacy guard options (block typing, delivered, seen).
+    /// </summary>
+    public ZaloPrivacyOptions PrivacyOptions { get; set; } = new();
+
+    /// <summary>
     /// Initializes a new instance of the <see cref="ZaloHttpClient"/> class.
     /// </summary>
     public ZaloHttpClient(string userAgent, CookieStore? cookies = null, IWebProxy? proxy = null)
@@ -97,6 +102,101 @@ public sealed class ZaloHttpClient : IDisposable
     }
 
     /// <summary>
+    /// Checks whether an outbound URL should be intercepted by the client-side privacy guard.
+    /// </summary>
+    public bool IsBlockedByPrivacyGuard(string url)
+    {
+        if (string.IsNullOrEmpty(url))
+        {
+            return false;
+        }
+
+        ZaloPrivacyOptions opts = this.PrivacyOptions;
+        if (!opts.BlockTyping && !opts.BlockDelivered && !opts.BlockSeen)
+        {
+            return false;
+        }
+
+        if (opts.BlockTyping &&
+            (url.Contains("/api/message/typing", StringComparison.OrdinalIgnoreCase) ||
+             url.Contains("/api/group/typing", StringComparison.OrdinalIgnoreCase) ||
+             url.Contains("act=typing", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        if (opts.BlockDelivered &&
+            (url.Contains("/api/message/delivered", StringComparison.OrdinalIgnoreCase) ||
+             url.Contains("/api/group/delivered", StringComparison.OrdinalIgnoreCase) ||
+             url.Contains("deliveredv2", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        if (opts.BlockSeen &&
+            (url.Contains("/api/message/seen", StringComparison.OrdinalIgnoreCase) ||
+             url.Contains("/api/group/seen", StringComparison.OrdinalIgnoreCase) ||
+             url.Contains("seenv2", StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Sends an HTTP request across ordered candidate gateway hosts with automatic failover.
+    /// </summary>
+    public async Task<HttpResponseMessage> RequestWithFailoverAsync(
+        string serviceKey,
+        string? primaryHost,
+        string pathAndQuery,
+        HttpMethod method,
+        Func<HttpContent?>? contentFactory = null,
+        Dictionary<string, string>? extraHeaders = null,
+        string origin = "https://chat.zalo.me",
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(pathAndQuery);
+
+        string[] candidates = ZaloConstants.Hosts.GetCandidates(serviceKey, primaryHost);
+        Exception? lastException = null;
+
+        for (int i = 0; i < candidates.Length; i++)
+        {
+            string host = candidates[i].TrimEnd('/');
+            string fullUrl = pathAndQuery.StartsWith('/')
+                ? string.Concat(host, pathAndQuery)
+                : string.Concat(host, "/", pathAndQuery);
+
+            try
+            {
+                using HttpContent? body = contentFactory?.Invoke();
+                HttpResponseMessage resp = await this.RequestAsync(fullUrl, method, body, extraHeaders, origin, ct).ConfigureAwait(false);
+                if (resp.IsSuccessStatusCode || resp.StatusCode == HttpStatusCode.Found || i == candidates.Length - 1)
+                {
+                    return resp;
+                }
+                resp.Dispose();
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                lastException = ex;
+                if (i == candidates.Length - 1)
+                {
+                    throw;
+                }
+            }
+        }
+
+        throw lastException ?? new ZaloApiException($"All candidate hosts failed for service '{serviceKey}'.");
+    }
+
+    /// <summary>
     /// Sends an HTTP request with default Zalo headers and manual redirect handling.
     /// </summary>
     public async Task<HttpResponseMessage> RequestAsync(
@@ -107,6 +207,14 @@ public sealed class ZaloHttpClient : IDisposable
     {
         ArgumentNullException.ThrowIfNull(url);
         ArgumentNullException.ThrowIfNull(method);
+
+        if (this.IsBlockedByPrivacyGuard(url))
+        {
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"error_code\":0,\"data\":{}}", System.Text.Encoding.UTF8, "application/json")
+            };
+        }
 
         const int maxRedirects = 5;
         string currentUrl = url;

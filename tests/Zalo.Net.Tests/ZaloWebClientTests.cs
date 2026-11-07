@@ -108,4 +108,24 @@ public class ZaloWebClientTests
     [Fact]
     public async Task SendQuoteMessageAsync_NullSession_ThrowsArgumentNullException()
         => _ = await Assert.ThrowsAsync<ArgumentNullException>(() => ZaloWebClient.SendQuoteMessageAsync(null!, "thread1", ZaloThreadType.User, "Rep", "m1", "c1", "u1", "Quote", quoteTs: 0, ct: CancellationToken.None));
+
+    [Fact]
+    public void StickerApis_GetCanonicalStickerQueries_NormalizesVietnameseAndSlang()
+    {
+        string[] queries = Endpoints.StickerApis.GetCanonicalStickerQueries("tks");
+        Assert.Contains("tks", queries);
+        Assert.Contains("cảm ơn", queries);
+        Assert.Contains("cam on", queries);
+
+        string stripped = Endpoints.StickerApis.StripVietnameseDiacritics("Đẹp quá đi");
+        Assert.Equal("dep qua di", stripped);
+    }
+
+    [Fact]
+    public void UndoApis_CleanGroupId_StripsPrefixCorrectly()
+    {
+        Assert.Equal("123456", Endpoints.UndoApis.CleanGroupId("group_123456"));
+        Assert.Equal("123456", Endpoints.UndoApis.CleanGroupId("g123456"));
+        Assert.Equal("123456", Endpoints.UndoApis.CleanGroupId("123456"));
+    }
 }

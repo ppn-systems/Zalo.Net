@@ -165,6 +165,48 @@ public sealed class ZaloWsListenerTests
         Assert.Equal("201", events[1].MsgId);
     }
 
+    [Fact]
+    public async Task Cmd521Frame_ExtractsMentions_AndDetectsMentionAll()
+    {
+        List<ZaloMessageEvent> events = [];
+        ZaloWsListener listener = new(MakeSession(), events.Add, _ => { });
+
+        const string innerJson = """
+            {"data":{"groupMsgs":[
+                {"msgId":"801","cliMsgId":"802","uidFrom":"u1","idTo":"g1","content":"@All hello @Bob",
+                 "mentions":[{"uid":"-1","pos":0,"len":4},{"uid":"999888","pos":11,"len":4}]}
+            ]}}
+            """;
+        byte[] frame = BuildFrame(521, 0, innerJson, encrypt: 0, keyBytes: null);
+        await InvokeDispatch(listener, frame);
+
+        _ = Assert.Single(events);
+        Assert.True(events[0].IsMentionAll);
+        Assert.NotNull(events[0].MentionedUids);
+        Assert.Contains("-1", events[0].MentionedUids!);
+        Assert.Contains("999888", events[0].MentionedUids!);
+    }
+
+    [Fact]
+    public async Task Cmd515Frame_BothMsgsAndGroupMsgs_DispatchesAll()
+    {
+        List<ZaloMessageEvent> events = [];
+        ZaloWsListener listener = new(MakeSession(), events.Add, _ => { });
+
+        const string innerJson = """
+            {"data":{
+                "msgs":[{"msgId":"d1","cliMsgId":"c1","uidFrom":"u1","idTo":"uid","content":"dm"}],
+                "groupMsgs":[{"msgId":"g1","cliMsgId":"c2","uidFrom":"u2","idTo":"grp99","content":"grp"}]
+            }}
+            """;
+        byte[] frame = BuildFrame(515, 0, innerJson, encrypt: 0, keyBytes: null);
+        await InvokeDispatch(listener, frame);
+
+        Assert.Equal(2, events.Count);
+        Assert.Equal(ZaloThreadType.User, events[0].ThreadType);
+        Assert.Equal(ZaloThreadType.Group, events[1].ThreadType);
+    }
+
     private static ZaloSession MakeSession(string? cipherKey = null) =>
         new(new ZaloSessionMaterial("[]", cipherKey ?? "", "imei", "uid", "ua"),
             "uid", ["wss://ws.zalo.me"], new Dictionary<string, string[]>(), 20_000);

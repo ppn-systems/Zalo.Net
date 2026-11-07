@@ -120,7 +120,25 @@ public sealed record ZaloSession(
     string[] WsUrls,
     System.Collections.Generic.IReadOnlyDictionary<string, string[]> ServiceMap,
     int PingIntervalMs,
-    System.Net.IWebProxy? Proxy = null);
+    System.Net.IWebProxy? Proxy = null)
+{
+    /// <summary>
+    /// Resolves the primary gateway URL for the specified <paramref name="serviceKey"/> from <see cref="ServiceMap"/>, or <c>null</c> if not present.
+    /// </summary>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "CA1055:URI-like return values should not be strings", Justification = "Gateway host strings are combined with relative paths.")]
+    public string? GetServiceUrl(string serviceKey)
+    {
+        if (this.ServiceMap is not null &&
+            this.ServiceMap.TryGetValue(serviceKey, out string[]? urls) &&
+            urls is { Length: > 0 } &&
+            !string.IsNullOrWhiteSpace(urls[0]))
+        {
+            return urls[0];
+        }
+
+        return null;
+    }
+}
 
 /// <summary>
 /// Represents a message media or file attachment.
@@ -146,7 +164,9 @@ public sealed record ZaloMessageEvent(
     object? Content,
     System.Collections.Generic.IReadOnlyList<ZaloAttachment>? Attachments,
     bool IsSelf,
-    string? RawJson = null);
+    string? RawJson = null,
+    System.Collections.Generic.IReadOnlyList<string>? MentionedUids = null,
+    bool IsMentionAll = false);
 
 /// <summary>
 /// Event payload emitted when the WebSocket connection status changes.
@@ -214,3 +234,281 @@ public sealed record ZaloBankCard(string BinBank, string AccountNumber, string A
 /// <param name="PhoneNumber">Optional phone number associated with the contact.</param>
 /// <param name="QrCodeUrl">Optional QR Code profile URL for the contact.</param>
 public sealed record ZaloContactCard(string UserId, string? PhoneNumber = null, string? QrCodeUrl = null);
+
+/// <summary>
+/// Client-side privacy guard options to suppress outbound typing, delivered, and seen receipts.
+/// </summary>
+public sealed record ZaloPrivacyOptions(
+    bool BlockTyping = false,
+    bool BlockDelivered = false,
+    bool BlockSeen = false);
+
+/// <summary>
+/// Rich link preview metadata parsed from a URL via <c>/api/message/parselink</c>.
+/// </summary>
+public sealed record ZaloLinkMetadata(
+    string Url,
+    string Title,
+    string Description = "",
+    string ThumbnailUrl = "",
+    string SourceDomain = "");
+
+/// <summary>
+/// Metadata for an official Zalo sticker pack in the Sticker Store.
+/// </summary>
+public sealed record ZaloStickerPack(
+    long Id,
+    string Name,
+    int TotalImages,
+    string IconUrl);
+
+/// <summary>
+/// Metadata for an individual Zalo sticker item returned from search/suggest or pack details.
+/// </summary>
+public sealed record ZaloStickerItem(
+    int StickerId,
+    int CateId,
+    int StickerType = 7,
+    string Label = "");
+
+/// <summary>
+/// Online status and last active timestamp for a Zalo user.
+/// </summary>
+public sealed record ZaloOnlineStatus(
+    string UserId,
+    bool IsOnline,
+    long LastOnlineTimestamp,
+    string StatusText);
+
+/// <summary>
+/// Friendship state between the authenticated account and a target user.
+/// </summary>
+public enum ZaloFriendshipStatus
+{
+    /// <summary>Status could not be determined.</summary>
+    Unknown,
+
+    /// <summary>Both users are friends.</summary>
+    Friend,
+
+    /// <summary>Current user sent a pending friend request to the target user.</summary>
+    OutgoingPending,
+
+    /// <summary>Target user sent a pending friend request to the current user.</summary>
+    IncomingPending,
+
+    /// <summary>Users are not friends and have no pending requests.</summary>
+    Stranger
+}
+
+/// <summary>
+/// Represents a muted conversation entry returned by <c>/api/social/profile/getmute</c>.
+/// </summary>
+public sealed record ZaloMutedConversation(
+    string ThreadId,
+    bool IsGroup,
+    long UntilTimestamp);
+
+/// <summary>
+/// Represents a manually marked unread conversation returned by <c>/api/conv/getUnreadMark</c>.
+/// </summary>
+public sealed record ZaloUnreadMark(
+    string ThreadId,
+    bool IsGroup,
+    string ClientMsgId = "",
+    string FromUid = "");
+
+/// <summary>
+/// Represents an outbound or inbound @mention span within a group message.
+/// </summary>
+public sealed record ZaloMention(
+    string Uid,
+    int Position,
+    int Length,
+    bool IsMentionAll = false);
+
+/// <summary>
+/// Represents a historical message fetched from server history (<c>get-last-msgs</c>, <c>group/history</c>, or <c>cm/getrecentv2</c>).
+/// </summary>
+public sealed record ZaloHistoryMessage(
+    string MsgId,
+    string CliMsgId,
+    string ThreadId,
+    bool IsGroup,
+    string SenderId,
+    string SenderName,
+    string Content,
+    string MsgType,
+    long Timestamp,
+    bool IsSelf);
+
+/// <summary>
+/// Group permission and moderation settings for <c>/api/group/setting/update</c>.
+/// </summary>
+public sealed record ZaloGroupSettingsOptions(
+    bool BlockName = false,
+    bool SignAdminMsg = false,
+    bool SetTopicOnly = false,
+    bool EnableMsgHistory = true,
+    bool JoinApproval = false,
+    bool LockCreatePost = false,
+    bool LockCreatePoll = false,
+    bool LockSendMsg = false,
+    bool LockViewMember = false);
+
+/// <summary>
+/// Details of a group invite link returned by <c>/api/group/link/detail</c> or <c>/api/group/link/new</c>.
+/// </summary>
+public sealed record ZaloGroupLinkDetail(
+    string Link,
+    long ExpirationDate = 0,
+    bool Enabled = true);
+
+/// <summary>
+/// Options for creating a group poll via <c>/api/poll/create</c>.
+/// </summary>
+public sealed record ZaloPollCreateOptions(
+    string Question,
+    System.Collections.Generic.IReadOnlyList<string> Options,
+    long ExpiredTime = 0,
+    bool AllowMultiChoices = true,
+    bool AllowAddNewOption = true,
+    bool HideVotePreview = false,
+    bool IsAnonymous = false);
+
+/// <summary>
+/// Represents an individual voting option in a Zalo group poll.
+/// </summary>
+public sealed record ZaloPollOption(
+    long OptionId,
+    string Content,
+    int Votes,
+    bool Voted,
+    System.Collections.Generic.IReadOnlyList<string> Voters);
+
+/// <summary>
+/// Detailed state of a Zalo group poll returned by <c>/api/poll/create</c>, <c>/api/poll/detail</c>, or <c>/api/poll/vote</c>.
+/// </summary>
+public sealed record ZaloPollDetail(
+    long PollId,
+    string CreatorId,
+    string Question,
+    bool Closed,
+    bool AllowMultiChoices,
+    bool AllowAddNewOption,
+    bool IsAnonymous,
+    bool HideVotePreview,
+    int TotalVotes,
+    long CreatedTime,
+    long ExpiredTime,
+    System.Collections.Generic.IReadOnlyList<ZaloPollOption> Options);
+
+/// <summary>
+/// Represents a group board item (note, pinned topic, or poll) returned by <c>/api/board/list</c> or <c>/api/board/topic/createv2</c>.
+/// </summary>
+public sealed record ZaloBoardItem(
+    string Id,
+    int BoardType,
+    string Title,
+    string CreatorId = "",
+    long CreatedTime = 0,
+    long UpdatedTime = 0);
+
+/// <summary>
+/// Repeat schedule mode for official Zalo reminders.
+/// </summary>
+public enum ZaloReminderRepeatMode
+{
+    /// <summary>One-time reminder (no repeat).</summary>
+    None = 0,
+
+    /// <summary>Repeats every day.</summary>
+    Daily = 1,
+
+    /// <summary>Repeats every week.</summary>
+    Weekly = 2,
+
+    /// <summary>Repeats every month.</summary>
+    Monthly = 3
+}
+
+/// <summary>
+/// Options for creating or updating an official Zalo reminder (<c>/api/board/oneone/*</c> or <c>/api/board/topic/*</c>).
+/// </summary>
+public sealed record ZaloReminderOptions(
+    string Title,
+    string Emoji = "⏰",
+    long StartTimeMs = 0,
+    ZaloReminderRepeatMode Repeat = ZaloReminderRepeatMode.None,
+    bool PinAct = false);
+
+/// <summary>
+/// Represents an official Zalo reminder entry in a 1-on-1 or group thread.
+/// </summary>
+public sealed record ZaloReminderItem(
+    string ReminderId,
+    string ThreadId,
+    bool IsGroup,
+    string Title,
+    string CreatorId = "",
+    string Emoji = "⏰",
+    long StartTimeMs = 0,
+    ZaloReminderRepeatMode Repeat = ZaloReminderRepeatMode.None,
+    long CreatedTimeMs = 0);
+
+/// <summary>
+/// Represents an outgoing or incoming friend request / recommendation entry.
+/// </summary>
+public sealed record ZaloFriendRequestItem(
+    string UserId,
+    string DisplayName,
+    string ZaloName = "",
+    string AvatarUrl = "",
+    string Message = "",
+    long Timestamp = 0,
+    bool IsIncoming = false);
+
+/// <summary>
+/// Represents a user alias mapping returned by <c>/api/alias/list</c>.
+/// </summary>
+public sealed record ZaloAliasEntry(
+    string UserId,
+    string Alias);
+
+/// <summary>
+/// Represents a conversation CRM label returned by <c>/api/convlabel/get</c>.
+/// </summary>
+public sealed record ZaloLabelItem(
+    int Id,
+    string Text,
+    string TextKey,
+    string Color,
+    string Emoji,
+    System.Collections.Generic.IReadOnlyList<string> Conversations,
+    long CreateTime = 0);
+
+/// <summary>
+/// Represents a quick message template returned by <c>/api/quickmessage/list</c>.
+/// </summary>
+public sealed record ZaloQuickMessage(
+    int Id,
+    string Keyword,
+    string Title,
+    int Type = 0,
+    long CreatedTime = 0,
+    long LastModified = 0);
+
+/// <summary>
+/// Options for updating the authenticated account's profile and business info via <c>/api/social/profile/update</c>.
+/// </summary>
+public sealed record ZaloProfileUpdateOptions(
+    string Name,
+    string DateOfBirth,
+    int Gender = 0,
+    string? BizDescription = null,
+    int? BizCategory = null,
+    string? BizAddress = null,
+    string? BizWebsite = null,
+    string? BizEmail = null);
+
+
