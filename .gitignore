@@ -63,3 +63,6 @@ build_errors*.txt
 /.mcp.json
 /node_modules
 /scratch.cs
+
+# Cloudflare Wrangler local cache (contains account metadata)
+/.wrangler/
