@@ -393,4 +393,162 @@ public sealed class MessageTools(ZaloSessionManager sessionManager)
     /// <summary>Overload for calling without accountUid.</summary>
     public Task<string> SendImageAsync(string threadId, string threadType, string imagePathOrUrl, string? caption, CancellationToken ct) =>
         this.SendImageAsync(threadId, threadType, imagePathOrUrl, caption, accountUid: null, ct);
+
+    [McpServerTool(Name = "zalo_search_stickers")]
+    [Description("Search Zalo stickers by keyword (supports Vietnamese diacritic normalization and synonyms) or list sticker store packs.")]
+    public async Task<string> SearchStickersAsync(
+        [Description("Keyword to search stickers (e.g. 'cam on', 'xin chao', 'haha'). Leave empty to list store packs.")] string? keyword = null,
+        [Description("Maximum number of stickers to return (default 15)")] int limit = 15,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
+        CancellationToken ct = default)
+    {
+        (ZaloSession session, _) = this.ResolveAccount(accountUid);
+        ZaloAccountContext account = this._sessionManager.GetAccount(accountUid)!;
+
+        if (string.IsNullOrWhiteSpace(keyword))
+        {
+            IReadOnlyList<ZaloStickerPack> packs = await account.Client.GetStickerStorePacksAsync(session, ct).ConfigureAwait(false);
+            return JsonSerializer.Serialize(packs, ZaloMcpJsonContext.Default.IReadOnlyListZaloStickerPack);
+        }
+
+        IReadOnlyList<ZaloStickerItem> stickers = await account.Client.SearchStickersAsync(session, keyword, ct).ConfigureAwait(false);
+        if (limit > 0 && stickers.Count > limit)
+        {
+            stickers = [.. stickers.Take(limit)];
+        }
+        return JsonSerializer.Serialize(stickers, ZaloMcpJsonContext.Default.IReadOnlyListZaloStickerItem);
+    }
+
+    [McpServerTool(Name = "zalo_send_link")]
+    [Description("Parse URL preview metadata and send a rich link card message into a Zalo conversation.")]
+    public async Task<string> SendLinkAsync(
+        [Description("Recipient User ID or Group ID (ThreadId)")] string threadId,
+        [Description("Conversation type: 'User' or 'Group'")] string threadType,
+        [Description("Target HTTP/HTTPS URL to preview and send")] string url,
+        [Description("Optional accompanying message text")] string? message = null,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
+        CancellationToken ct = default)
+    {
+        (ZaloSession session, _) = this.ResolveAccount(accountUid);
+        ZaloAccountContext account = this._sessionManager.GetAccount(accountUid)!;
+
+        ZaloThreadType type = Enum.TryParse<ZaloThreadType>(threadType, ignoreCase: true, out ZaloThreadType parsedType)
+            ? parsedType
+            : ZaloThreadType.User;
+
+        ZaloSendResult result = await account.Client.SendLinkAsync(session, threadId, type, url, message, metadata: null, ct).ConfigureAwait(false);
+        return JsonSerializer.Serialize(new { status = "success", msg_id = result.MsgId, thread_id = threadId, url });
+    }
+
+    [McpServerTool(Name = "zalo_forward_message")]
+    [Description("Forward a message content to one or more User IDs or Group IDs.")]
+    public async Task<string> ForwardMessageAsync(
+        [Description("Comma-separated list of target User IDs or Group IDs")] string targetIdsCsv,
+        [Description("Target conversation type: 'User' or 'Group'")] string threadType,
+        [Description("Message content to forward")] string messageContent,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(targetIdsCsv);
+        (ZaloSession session, _) = this.ResolveAccount(accountUid);
+        ZaloAccountContext account = this._sessionManager.GetAccount(accountUid)!;
+
+        ZaloThreadType type = Enum.TryParse<ZaloThreadType>(threadType, ignoreCase: true, out ZaloThreadType parsedType)
+            ? parsedType
+            : ZaloThreadType.User;
+
+        string[] targets = targetIdsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (string target in targets)
+        {
+            _ = await account.Client.ForwardMessageAsync(session, target, type, messageContent, ct: ct).ConfigureAwait(false);
+        }
+        return JsonSerializer.Serialize(new { status = "success", target_count = targets.Length, thread_type = type.ToString() });
+    }
+
+    [McpServerTool(Name = "zalo_delete_message_for_me")]
+    [Description("Delete a message locally ('delete for me' only) without recalling it for other participants.")]
+    public async Task<string> DeleteMessageForMeAsync(
+        [Description("Conversation ID (ThreadId)")] string threadId,
+        [Description("Conversation type: 'User' or 'Group'")] string threadType,
+        [Description("Server message ID (MsgId)")] string msgId,
+        [Description("Client message ID (CliMsgId)")] string cliMsgId,
+        [Description("Sender User ID (UidFrom)")] string uidFrom,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
+        CancellationToken ct = default)
+    {
+        (ZaloSession session, _) = this.ResolveAccount(accountUid);
+        ZaloAccountContext account = this._sessionManager.GetAccount(accountUid)!;
+
+        ZaloThreadType type = Enum.TryParse<ZaloThreadType>(threadType, ignoreCase: true, out ZaloThreadType parsedType)
+            ? parsedType
+            : ZaloThreadType.User;
+
+        await account.Client.DeleteMessageForMeAsync(session, threadId, type, msgId, cliMsgId, uidFrom, ct).ConfigureAwait(false);
+        return JsonSerializer.Serialize(new { status = "success", msg_id = msgId, action = "deleted_for_me" });
+    }
+
+    [McpServerTool(Name = "zalo_sync_history")]
+    [Description("Fetch historical messages directly from Zalo servers (User, Group, or CloudMsg) and persist them to local SQLite.")]
+    public async Task<string> SyncServerHistoryAsync(
+        [Description("Source type: 'User', 'Group', or 'Cloud'")] string sourceType = "User",
+        [Description("Group ID or Conversation ID (required when sourceType is 'Group' or 'Cloud')")] string? groupId = null,
+        [Description("Count of messages to fetch (default 50)")] int count = 50,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
+        CancellationToken ct = default)
+    {
+        (ZaloSession session, MessageRepository repository) = this.ResolveAccount(accountUid);
+        ZaloAccountContext account = this._sessionManager.GetAccount(accountUid)!;
+
+        int effectiveCount = count <= 0 ? 50 : count;
+        IReadOnlyList<ZaloHistoryMessage> remoteMessages;
+        if (string.Equals(sourceType, "Group", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(groupId))
+            {
+                return JsonSerializer.Serialize(new { error = "groupId is required when sourceType is 'Group'." });
+            }
+            remoteMessages = await account.Client.GetGroupHistoryAsync(session, groupId, effectiveCount, ct).ConfigureAwait(false);
+        }
+        else if (string.Equals(sourceType, "Cloud", StringComparison.OrdinalIgnoreCase))
+        {
+            string targetId = string.IsNullOrWhiteSpace(groupId) ? session.Uid : groupId;
+            remoteMessages = await account.Client.GetCloudMessagesAsync(session, targetId, "0", isOld: false, effectiveCount, ct).ConfigureAwait(false);
+        }
+        else
+        {
+            string[]? filterIds = string.IsNullOrWhiteSpace(groupId) ? null : [groupId];
+            remoteMessages = await account.Client.GetLastMessagesAsync(session, filterIds, ct).ConfigureAwait(false);
+        }
+
+        List<ZaloMessageEvent> events = new(remoteMessages.Count);
+        foreach (ZaloHistoryMessage m in remoteMessages)
+        {
+            events.Add(new ZaloMessageEvent(
+                MsgId: m.MsgId,
+                CliMsgId: m.CliMsgId,
+                MsgType: m.MsgType,
+                UidFrom: m.SenderId,
+                IdTo: m.ThreadId,
+                DisplayName: m.SenderName,
+                ThreadId: m.ThreadId,
+                ThreadType: m.IsGroup ? ZaloThreadType.Group : ZaloThreadType.User,
+                TimestampMs: m.Timestamp.ToString(CultureInfo.InvariantCulture),
+                Content: m.Content,
+                Attachments: null,
+                IsSelf: m.IsSelf));
+        }
+
+        if (events.Count > 0)
+        {
+            await repository.SaveMessagesBatchAsync(events, ct).ConfigureAwait(false);
+        }
+
+        return JsonSerializer.Serialize(new
+        {
+            status = "success",
+            source_type = sourceType,
+            synced_count = events.Count,
+            messages = remoteMessages
+        });
+    }
 }

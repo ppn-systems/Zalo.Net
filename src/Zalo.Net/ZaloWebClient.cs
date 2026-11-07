@@ -682,8 +682,11 @@ public sealed class ZaloWebClient : IZaloClient
         return result;
     }
 
-    private static ZaloHttpClient CreateHttpForSession(ZaloSession session)
-        => new(session.Material.UserAgent, CookieStore.ForMaterial(session.Material), session.Proxy);
+    private static ZaloHttpClient CreateHttpForSession(ZaloSession session, ZaloPrivacyOptions? privacy = null)
+        => new(session.Material.UserAgent, CookieStore.ForMaterial(session.Material), session.Proxy)
+        {
+            PrivacyOptions = privacy ?? new ZaloPrivacyOptions()
+        };
 
     private void RemoveQrSession(Guid sessionId)
     {
@@ -792,8 +795,620 @@ public sealed class ZaloWebClient : IZaloClient
     public async Task SendImageAsync(ZaloSession session, string threadId, ZaloThreadType threadType, byte[] imageBytes, string fileName, string? caption = null, CancellationToken ct = default)
     {
         ArgumentNullException.ThrowIfNull(session);
-        using ZaloHttpClient http = CreateHttpForSession(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
         _ = await MessageApis.SendPhotoAsync(http, session, threadId, threadType, imageBytes, fileName, caption, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public ZaloPrivacyOptions PrivacyOptions { get; set; } = new();
+
+    /// <inheritdoc/>
+    public async Task<ZaloSessionMaterial> LoginByPasswordAsync(
+        string phone, string password, string isoCountryCode = "VN", string? imei = null, CancellationToken ct = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(phone);
+        ArgumentException.ThrowIfNullOrWhiteSpace(password);
+
+        string effectiveImei = string.IsNullOrWhiteSpace(imei) ? $"{Guid.NewGuid():N}-8668" : imei.Trim();
+        string ua = ZaloConstants.Protocol.DefaultUserAgent;
+        using ZaloHttpClient http = new(ua, proxy: _proxy);
+        JsonNode? loginData = await LoginApis.LoginByPasswordAsync(http, phone, password, effectiveImei, isoCountryCode, "vi", ct).ConfigureAwait(false);
+
+        string uid = loginData?["uid"]?.ToString()
+                  ?? loginData?["userId"]?.ToString()
+                  ?? loginData?["account"]?["uid"]?.ToString()
+                  ?? loginData?["account"]?["userId"]?.ToString()
+                  ?? string.Empty;
+        string secretKey = loginData?["zpw_enk"]?.ToString() ?? string.Empty;
+        string? zpwSek = loginData?["zpw_sek"]?.ToString() ?? loginData?["account"]?["zpw_sek"]?.ToString();
+
+        if (!string.IsNullOrEmpty(zpwSek))
+        {
+            http.Cookies.AddCookies("https://chat.zalo.me", [$"zpw_sek={zpwSek}; Domain=.zalo.me; Path=/"]);
+        }
+
+        if (string.IsNullOrEmpty(secretKey) || string.IsNullOrEmpty(uid))
+        {
+            JsonNode? info = await LoginApis.GetLoginInfoAsync(http, effectiveImei, "vi", string.Empty, ct).ConfigureAwait(false);
+            if (string.IsNullOrEmpty(uid))
+            {
+                uid = info?["uid"]?.ToString() ?? info?["userId"]?.ToString() ?? string.Empty;
+            }
+            if (string.IsNullOrEmpty(secretKey))
+            {
+                secretKey = info?["zpw_enk"]?.ToString() ?? string.Empty;
+            }
+        }
+
+        return new ZaloSessionMaterial(
+            CookiesJson: http.Cookies.ToJson(),
+            SecretKey: secretKey,
+            Imei: effectiveImei,
+            Uid: uid,
+            UserAgent: ua,
+            Language: "vi");
+    }
+
+    /// <inheritdoc/>
+    public async Task<ZaloLinkMetadata> ParseLinkAsync(ZaloSession session, string url, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await MessageApis.ParseLinkAsync(http, session, url, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<ZaloSendResult> SendLinkAsync(ZaloSession session, string threadId, ZaloThreadType threadType, string url, string? message = null, ZaloLinkMetadata? metadata = null, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await MessageApis.SendLinkAsync(http, session, threadId, threadType, url, message, metadata, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task DeleteMessageForMeAsync(ZaloSession session, string threadId, ZaloThreadType threadType, string msgId, string cliMsgId, string ownerId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await UndoApis.DeleteMessageForMeAsync(http, session, threadId, threadType, msgId, cliMsgId, ownerId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<ZaloSendResult> ForwardMessageAsync(ZaloSession session, string targetThreadId, ZaloThreadType targetThreadType, string text, int? stickerId = null, int? stickerCateId = null, int stickerType = 7, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await MessageApis.ForwardMessageAsync(http, session, targetThreadId, targetThreadType, text, stickerId, stickerCateId, stickerType, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendTypingAsync(ZaloSession session, string threadId, ZaloThreadType threadType, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await MessageApis.SendTypingAsync(http, session, threadId, threadType, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task SendSeenV2Async(ZaloSession session, string threadId, ZaloThreadType threadType, string lastMsgId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await MessageApis.SendSeenV2Async(http, session, threadId, threadType, lastMsgId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ZaloHistoryMessage>> GetLastMessagesAsync(ZaloSession session, string[]? threadIds = null, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await MessageApis.GetLastMessagesAsync(http, session, threadIds, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ZaloHistoryMessage>> GetGroupHistoryAsync(ZaloSession session, string groupId, int count = 50, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await MessageApis.GetGroupHistoryAsync(http, session, groupId, count, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ZaloHistoryMessage>> GetCloudMessagesAsync(ZaloSession session, string convId, string globalMsgId = "0", bool isOld = false, int count = 50, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await MessageApis.GetCloudMessagesAsync(http, session, convId, globalMsgId, isOld, count, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<string>> GetStickerSuggestKeywordsAsync(ZaloSession session, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await StickerApis.GetStickerSuggestKeywordsAsync(http, session, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ZaloStickerItem>> SearchStickersAsync(ZaloSession session, string keyword, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await StickerApis.SearchStickersAsync(http, session, keyword, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ZaloStickerPack>> GetStickerStorePacksAsync(ZaloSession session, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await StickerApis.GetStickerStorePacksAsync(http, session, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ZaloStickerItem>> GetStickerPackItemsAsync(ZaloSession session, int cateId, string packName = "", CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await StickerApis.GetStickerPackItemsAsync(http, session, cateId, packName, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<string>> GetPinnedConversationsAsync(ZaloSession session, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await ConversationApis.GetPinnedConversationsAsync(http, session, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task SetPinnedConversationAsync(ZaloSession session, string threadId, ZaloThreadType threadType, bool pin, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await ConversationApis.SetPinnedConversationAsync(http, session, threadId, threadType, pin, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ZaloMutedConversation>> GetMutedConversationsAsync(ZaloSession session, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await ConversationApis.GetMutedConversationsAsync(http, session, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task SetMuteConversationAsync(ZaloSession session, string threadId, ZaloThreadType threadType, bool mute, long durationSeconds = -1, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await ConversationApis.SetMuteConversationAsync(http, session, threadId, threadType, mute, durationSeconds, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ZaloUnreadMark>> GetUnreadMarksAsync(ZaloSession session, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await ConversationApis.GetUnreadMarksAsync(http, session, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task SetUnreadMarkAsync(ZaloSession session, string threadId, ZaloThreadType threadType, bool unread, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await ConversationApis.SetUnreadMarkAsync(http, session, threadId, threadType, unread, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task SetHiddenConversationAsync(ZaloSession session, string threadId, ZaloThreadType threadType, bool hide, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await ConversationApis.SetHiddenConversationAsync(http, session, threadId, threadType, hide, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task DeleteConversationHistoryAsync(ZaloSession session, string threadId, ZaloThreadType threadType, string? lastCliMsgId = null, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await ConversationApis.DeleteConversationHistoryAsync(http, session, threadId, threadType, lastCliMsgId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<ZaloOnlineStatus> GetUserLastOnlineAsync(ZaloSession session, string userId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await FriendApis.GetUserLastOnlineAsync(http, session, userId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<ZaloFriendshipStatus> GetFriendRequestStatusAsync(ZaloSession session, string targetUserId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await FriendApis.GetFriendRequestStatusAsync(http, session, targetUserId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task RejectFriendRequestAsync(ZaloSession session, string targetUserId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await FriendApis.RejectFriendRequestAsync(http, session, targetUserId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task UndoFriendRequestAsync(ZaloSession session, string targetUserId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await FriendApis.UndoFriendRequestAsync(http, session, targetUserId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ZaloUserProfile>> GetMiniProfilesAsync(ZaloSession session, string[] userIds, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await FriendApis.GetMiniProfilesAsync(http, session, userIds, ct).ConfigureAwait(false);
+    }
+
+    // ─── Group 1: Advanced Group Admin & Invite Links ────────────────────────
+
+    /// <inheritdoc/>
+    public async Task DisperseGroupAsync(ZaloSession session, string groupId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await GroupApis.DisperseGroupAsync(http, session, groupId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task ChangeGroupOwnerAsync(ZaloSession session, string groupId, string newOwnerId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await GroupApis.ChangeGroupOwnerAsync(http, session, groupId, newOwnerId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<ZaloGroupLinkDetail> GetGroupLinkDetailAsync(ZaloSession session, string groupId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await GroupApis.GetGroupLinkDetailAsync(http, session, groupId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<ZaloGroupLinkDetail> EnableGroupLinkAsync(ZaloSession session, string groupId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await GroupApis.EnableGroupLinkAsync(http, session, groupId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task DisableGroupLinkAsync(ZaloSession session, string groupId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await GroupApis.DisableGroupLinkAsync(http, session, groupId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<ZaloGroupInfo> GetGroupLinkInfoAsync(ZaloSession session, string groupLink, int memberPage = 1, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await GroupApis.GetGroupLinkInfoAsync(http, session, groupLink, memberPage, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task UpdateGroupSettingsAsync(ZaloSession session, string groupId, ZaloGroupSettingsOptions options, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await GroupApis.UpdateGroupSettingsAsync(http, session, groupId, options, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<string>> GetPendingGroupMembersAsync(ZaloSession session, string groupId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await GroupApis.GetPendingGroupMembersAsync(http, session, groupId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<string>> GetGroupBlockedMembersAsync(ZaloSession session, string groupId, int page = 1, int count = 50, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await GroupApis.GetGroupBlockedMembersAsync(http, session, groupId, page, count, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task AddGroupBlockedMemberAsync(ZaloSession session, string groupId, string[] memberIds, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await GroupApis.AddGroupBlockedMemberAsync(http, session, groupId, memberIds, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task RemoveGroupBlockedMemberAsync(ZaloSession session, string groupId, string[] memberIds, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await GroupApis.RemoveGroupBlockedMemberAsync(http, session, groupId, memberIds, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task RemoveGroupDeputyAsync(ZaloSession session, string groupId, string[] memberIds, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await GroupApis.RemoveGroupDeputyAsync(http, session, groupId, memberIds, ct).ConfigureAwait(false);
+    }
+
+    // ─── Group 2: Group Polls, Board Notes & Official Zalo Reminders ─────────
+
+    /// <inheritdoc/>
+    public async Task<ZaloPollDetail> CreatePollAsync(ZaloSession session, string groupId, ZaloPollCreateOptions options, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await BoardApis.CreatePollAsync(http, session, groupId, options, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<ZaloPollDetail> GetPollDetailAsync(ZaloSession session, long pollId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await BoardApis.GetPollDetailAsync(http, session, pollId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<ZaloPollDetail> VotePollAsync(ZaloSession session, long pollId, long[] optionIds, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await BoardApis.VotePollAsync(http, session, pollId, optionIds, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task LockPollAsync(ZaloSession session, long pollId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await BoardApis.LockPollAsync(http, session, pollId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task SharePollAsync(ZaloSession session, long pollId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await BoardApis.SharePollAsync(http, session, pollId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<ZaloBoardItem> CreateGroupNoteAsync(ZaloSession session, string groupId, string title, bool pinToTop = false, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await BoardApis.CreateGroupNoteAsync(http, session, groupId, title, pinToTop, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<ZaloBoardItem> EditGroupNoteAsync(ZaloSession session, string groupId, string topicId, string title, bool pinToTop = false, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await BoardApis.EditGroupNoteAsync(http, session, groupId, topicId, title, pinToTop, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ZaloBoardItem>> GetGroupBoardListAsync(ZaloSession session, string groupId, int page = 1, int count = 20, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await BoardApis.GetGroupBoardListAsync(http, session, groupId, page, count, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<ZaloReminderItem> CreateReminderAsync(ZaloSession session, string threadId, bool isGroup, ZaloReminderOptions options, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await BoardApis.CreateReminderAsync(http, session, threadId, isGroup, options, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<ZaloReminderItem> EditReminderAsync(ZaloSession session, string threadId, bool isGroup, string reminderId, ZaloReminderOptions options, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await BoardApis.EditReminderAsync(http, session, threadId, isGroup, reminderId, options, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task RemoveReminderAsync(ZaloSession session, string threadId, bool isGroup, string reminderId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await BoardApis.RemoveReminderAsync(http, session, threadId, isGroup, reminderId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<ZaloReminderItem> GetReminderAsync(ZaloSession session, string reminderId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await BoardApis.GetReminderAsync(http, session, reminderId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ZaloReminderItem>> GetListReminderAsync(ZaloSession session, string threadId, bool isGroup, int page = 1, int count = 20, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await BoardApis.GetListReminderAsync(http, session, threadId, isGroup, page, count, ct).ConfigureAwait(false);
+    }
+
+    // ─── Group 3: Extended Friend & Alias Management ─────────────────────────
+
+    /// <inheritdoc/>
+    public async Task RemoveFriendAsync(ZaloSession session, string friendId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await FriendApis.RemoveFriendAsync(http, session, friendId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ZaloFriendRequestItem>> GetSentFriendRequestsAsync(ZaloSession session, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await FriendApis.GetSentFriendRequestsAsync(http, session, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ZaloFriendRequestItem>> GetFriendRecommendationsAsync(ZaloSession session, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await FriendApis.GetFriendRecommendationsAsync(http, session, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ZaloAliasEntry>> GetAliasListAsync(ZaloSession session, int page = 1, int count = 100, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await FriendApis.GetAliasListAsync(http, session, page, count, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task RemoveFriendAliasAsync(ZaloSession session, string friendId, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await FriendApis.RemoveFriendAliasAsync(http, session, friendId, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task BlockViewFeedAsync(ZaloSession session, string userId, bool isBlocked, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await FriendApis.BlockViewFeedAsync(http, session, userId, isBlocked, ct).ConfigureAwait(false);
+    }
+
+    // ─── Group 4: Conversation Labels, Quick Messages & Auto-Delete Chat ─────
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ZaloLabelItem>> GetLabelsAsync(ZaloSession session, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await ConversationApis.GetLabelsAsync(http, session, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ZaloLabelItem>> UpdateLabelsAsync(ZaloSession session, IReadOnlyList<ZaloLabelItem> labels, int version = 0, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await ConversationApis.UpdateLabelsAsync(http, session, labels, version, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<IReadOnlyList<ZaloQuickMessage>> GetQuickMessagesAsync(ZaloSession session, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await ConversationApis.GetQuickMessagesAsync(http, session, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<ZaloQuickMessage> AddQuickMessageAsync(ZaloSession session, string keyword, string title, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await ConversationApis.AddQuickMessageAsync(http, session, keyword, title, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task<ZaloQuickMessage> UpdateQuickMessageAsync(ZaloSession session, int itemId, string keyword, string title, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        return await ConversationApis.UpdateQuickMessageAsync(http, session, itemId, keyword, title, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task RemoveQuickMessageAsync(ZaloSession session, int[] itemIds, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await ConversationApis.RemoveQuickMessageAsync(http, session, itemIds, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task UpdateAutoDeleteChatAsync(ZaloSession session, string threadId, bool isGroup, long ttlMs, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await ConversationApis.UpdateAutoDeleteChatAsync(http, session, threadId, isGroup, ttlMs, ct).ConfigureAwait(false);
+    }
+
+    // ─── Group 5: Account Profile, Settings & Hidden Conversation PIN ────────
+
+    /// <inheritdoc/>
+    public async Task UpdateProfileAsync(ZaloSession session, ZaloProfileUpdateOptions options, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await ConversationApis.UpdateProfileAsync(http, session, options, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task UpdateSettingsAsync(ZaloSession session, string settingKey, int value, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await ConversationApis.UpdateSettingsAsync(http, session, settingKey, value, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task UpdateActiveStatusAsync(ZaloSession session, bool isActive, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await ConversationApis.UpdateActiveStatusAsync(http, session, isActive, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task UpdateHiddenConversPinAsync(ZaloSession session, string fourDigitPin, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await ConversationApis.UpdateHiddenConversPinAsync(http, session, fourDigitPin, ct).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc/>
+    public async Task ResetHiddenConversPinAsync(ZaloSession session, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        using ZaloHttpClient http = CreateHttpForSession(session, this.PrivacyOptions);
+        await ConversationApis.ResetHiddenConversPinAsync(http, session, ct).ConfigureAwait(false);
     }
 
     private sealed class QrSession : IDisposable

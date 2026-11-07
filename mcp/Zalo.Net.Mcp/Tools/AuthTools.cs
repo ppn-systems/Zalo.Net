@@ -135,4 +135,48 @@ public sealed class AuthTools(ZaloSessionManager sessionManager)
 
     /// <summary>Overload for calling without accountUid.</summary>
     public Task<string> GetProfileAsync(CancellationToken ct) => this.GetProfileAsync(accountUid: null, ct);
+
+    [McpServerTool(Name = "zalo_login_password")]
+    [Description("Authenticate a Zalo account using phone number and password (loginByPasswv2).")]
+    public async Task<string> LoginByPasswordAsync(
+        [Description("Phone number (e.g. '0912345678' or '84912345678')")] string phone,
+        [Description("Account password")] string password,
+        [Description("ISO country code (default 'VN')")] string isoCountryCode = "VN",
+        CancellationToken ct = default)
+    {
+        ZaloAccountContext context = await this._sessionManager.LoginByPasswordAsync(phone, password, isoCountryCode, ct).ConfigureAwait(false);
+        return JsonSerializer.Serialize(new
+        {
+            status = "Connected",
+            uid = context.Uid,
+            display_name = context.DisplayName,
+            avatar_url = context.AvatarUrl ?? ""
+        });
+    }
+
+    [McpServerTool(Name = "zalo_set_privacy_guard")]
+    [Description("Configure outbound privacy guard to block typing indicators, delivered receipts, or read (seen) receipts.")]
+    public Task<string> SetPrivacyGuardAsync(
+        [Description("Block outbound typing indicator events")] bool blockTyping = true,
+        [Description("Block outbound delivered receipt events")] bool blockDelivered = false,
+        [Description("Block outbound read (seen) receipt events")] bool blockSeen = false,
+        [Description("Target Zalo account UID (optional, defaults to active account)")] string? accountUid = null,
+        CancellationToken ct = default)
+    {
+        this._sessionManager.EnsureAuthenticated(accountUid);
+        ZaloAccountContext account = this._sessionManager.GetAccount(accountUid)!;
+        account.Client.PrivacyOptions = new ZaloPrivacyOptions(
+            BlockTyping: blockTyping,
+            BlockDelivered: blockDelivered,
+            BlockSeen: blockSeen);
+
+        return Task.FromResult(JsonSerializer.Serialize(new
+        {
+            status = "success",
+            account_uid = account.Uid,
+            block_typing = blockTyping,
+            block_delivered = blockDelivered,
+            block_seen = blockSeen
+        }));
+    }
 }

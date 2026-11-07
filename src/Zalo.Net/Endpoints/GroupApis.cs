@@ -577,13 +577,13 @@ internal static class GroupApis
         ArgumentException.ThrowIfNullOrWhiteSpace(memberUid);
 
         string host = GetGroupHost(session);
-        string url = MakeUrl(host, "/api/group/update-admin");
+        string url = MakeUrl(host, "/api/group/admins/add");
 
         JsonObject payload = new()
         {
             ["grid"] = groupId,
             ["members"] = ToJsonArray([memberUid]),
-            ["role"] = 1
+            ["imei"] = session.Material.Imei
         };
 
         string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
@@ -599,6 +599,455 @@ internal static class GroupApis
         if (errorCode != 0)
         {
             throw new ZaloApiException(node?["error_message"]?.GetValue<string>() ?? $"PromoteGroupAdmin failed with code {errorCode}", errorCode);
+        }
+    }
+
+    public static async Task RemoveGroupDeputyAsync(
+        ZaloHttpClient http, ZaloSession session, string groupId, string[] memberIds, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
+        ArgumentNullException.ThrowIfNull(memberIds);
+
+        if (memberIds.Length == 0)
+        {
+            return;
+        }
+
+        string host = GetGroupHost(session);
+        string url = MakeUrl(host, "/api/group/admins/remove");
+
+        JsonObject payload = new()
+        {
+            ["grid"] = groupId,
+            ["members"] = ToJsonArray(memberIds),
+            ["imei"] = session.Material.Imei
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt RemoveGroupDeputy payload");
+        }
+
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        int errorCode = node?["error_code"]?.GetValue<int>() ?? 0;
+        if (errorCode != 0)
+        {
+            throw new ZaloApiException(node?["error_message"]?.GetValue<string>() ?? $"RemoveGroupDeputy failed with code {errorCode}", errorCode);
+        }
+    }
+
+    public static async Task DisperseGroupAsync(
+        ZaloHttpClient http, ZaloSession session, string groupId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
+
+        string host = GetGroupHost(session);
+        string url = MakeUrl(host, "/api/group/disperse");
+
+        JsonObject payload = new()
+        {
+            ["grid"] = groupId,
+            ["imei"] = session.Material.Imei
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt DisperseGroup payload");
+        }
+
+        using FormUrlEncodedContent body = new([new KeyValuePair<string, string>("params", encryptedParams)]);
+        using HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Post, body: body, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        int errorCode = node?["error_code"]?.GetValue<int>() ?? 0;
+        if (errorCode != 0)
+        {
+            throw new ZaloApiException(node?["error_message"]?.GetValue<string>() ?? $"DisperseGroup failed with code {errorCode}", errorCode);
+        }
+    }
+
+    public static async Task ChangeGroupOwnerAsync(
+        ZaloHttpClient http, ZaloSession session, string groupId, string newOwnerId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(newOwnerId);
+
+        string host = GetGroupHost(session);
+        string url = MakeUrl(host, "/api/group/change-owner");
+
+        JsonObject payload = new()
+        {
+            ["grid"] = groupId,
+            ["newAdminId"] = newOwnerId,
+            ["imei"] = session.Material.Imei,
+            ["language"] = session.Material.Language
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt ChangeGroupOwner payload");
+        }
+
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        int errorCode = node?["error_code"]?.GetValue<int>() ?? 0;
+        if (errorCode != 0)
+        {
+            throw new ZaloApiException(node?["error_message"]?.GetValue<string>() ?? $"ChangeGroupOwner failed with code {errorCode}", errorCode);
+        }
+    }
+
+    public static async Task<ZaloGroupLinkDetail> GetGroupLinkDetailAsync(
+        ZaloHttpClient http, ZaloSession session, string groupId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
+
+        string host = GetGroupHost(session);
+        string url = MakeUrl(host, "/api/group/link/detail");
+
+        JsonObject payload = new()
+        {
+            ["grid"] = groupId,
+            ["imei"] = session.Material.Imei
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt GetGroupLinkDetail payload");
+        }
+
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        JsonNode? dataNode = DecryptDataNode(session, node) ?? node?["data"];
+
+        string link = dataNode?["link"]?.GetValue<string>() ?? string.Empty;
+        long exp = dataNode?["expiration_date"]?.GetValue<long>() ?? 0;
+        int enabledVal = dataNode?["enabled"]?.GetValue<int>() ?? (string.IsNullOrEmpty(link) ? 0 : 1);
+        return new ZaloGroupLinkDetail(link, exp, enabledVal == 1);
+    }
+
+    public static async Task<ZaloGroupLinkDetail> EnableGroupLinkAsync(
+        ZaloHttpClient http, ZaloSession session, string groupId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
+
+        string host = GetGroupHost(session);
+        string url = MakeUrl(host, "/api/group/link/new");
+
+        JsonObject payload = new()
+        {
+            ["grid"] = groupId,
+            ["imei"] = session.Material.Imei
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt EnableGroupLink payload");
+        }
+
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        JsonNode? dataNode = DecryptDataNode(session, node) ?? node?["data"];
+
+        string link = dataNode?["link"]?.GetValue<string>() ?? string.Empty;
+        long exp = dataNode?["expiration_date"]?.GetValue<long>() ?? 0;
+        int enabledVal = dataNode?["enabled"]?.GetValue<int>() ?? 1;
+        return new ZaloGroupLinkDetail(link, exp, enabledVal == 1);
+    }
+
+    public static async Task DisableGroupLinkAsync(
+        ZaloHttpClient http, ZaloSession session, string groupId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
+
+        string host = GetGroupHost(session);
+        string url = MakeUrl(host, "/api/group/link/disable");
+
+        JsonObject payload = new()
+        {
+            ["grid"] = groupId
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt DisableGroupLink payload");
+        }
+
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        int errorCode = node?["error_code"]?.GetValue<int>() ?? 0;
+        if (errorCode != 0)
+        {
+            throw new ZaloApiException(node?["error_message"]?.GetValue<string>() ?? $"DisableGroupLink failed with code {errorCode}", errorCode);
+        }
+    }
+
+    public static async Task<ZaloGroupInfo> GetGroupLinkInfoAsync(
+        ZaloHttpClient http, ZaloSession session, string groupLink, int memberPage, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupLink);
+
+        string host = GetGroupHost(session);
+        string url = MakeUrl(host, "/api/group/link/ginfo");
+
+        JsonObject payload = new()
+        {
+            ["link"] = groupLink,
+            ["avatar_size"] = 120,
+            ["member_avatar_size"] = 120,
+            ["mpage"] = memberPage > 0 ? memberPage : 1
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt GetGroupLinkInfo payload");
+        }
+
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        JsonNode? dataNode = DecryptDataNode(session, node) ?? node?["data"];
+
+        string gId = dataNode?["groupId"]?.GetValue<string>() ?? dataNode?["grid"]?.GetValue<string>() ?? string.Empty;
+        string name = dataNode?["name"]?.GetValue<string>() ?? string.Empty;
+        string? avatar = dataNode?["avt"]?.GetValue<string>() ?? dataNode?["fullAvt"]?.GetValue<string>();
+        int totalMem = dataNode?["totalMember"]?.GetValue<int>() ?? 0;
+        string creatorId = dataNode?["creatorId"]?.GetValue<string>() ?? string.Empty;
+
+        return new ZaloGroupInfo(gId, name, avatar, totalMem, creatorId);
+    }
+
+    public static async Task UpdateGroupSettingsAsync(
+        ZaloHttpClient http, ZaloSession session, string groupId, ZaloGroupSettingsOptions options, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
+        ArgumentNullException.ThrowIfNull(options);
+
+        string host = GetGroupHost(session);
+        string url = MakeUrl(host, "/api/group/setting/update");
+
+        JsonObject payload = new()
+        {
+            ["blockName"] = options.BlockName ? 1 : 0,
+            ["signAdminMsg"] = options.SignAdminMsg ? 1 : 0,
+            ["setTopicOnly"] = options.SetTopicOnly ? 1 : 0,
+            ["enableMsgHistory"] = options.EnableMsgHistory ? 1 : 0,
+            ["joinAppr"] = options.JoinApproval ? 1 : 0,
+            ["lockCreatePost"] = options.LockCreatePost ? 1 : 0,
+            ["lockCreatePoll"] = options.LockCreatePoll ? 1 : 0,
+            ["lockSendMsg"] = options.LockSendMsg ? 1 : 0,
+            ["lockViewMember"] = options.LockViewMember ? 1 : 0,
+            ["bannFeature"] = 0,
+            ["dirtyMedia"] = 0,
+            ["banDuration"] = 0,
+            ["blocked_members"] = new JsonArray(),
+            ["grid"] = groupId,
+            ["imei"] = session.Material.Imei
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt UpdateGroupSettings payload");
+        }
+
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        int errorCode = node?["error_code"]?.GetValue<int>() ?? 0;
+        if (errorCode != 0)
+        {
+            throw new ZaloApiException(node?["error_message"]?.GetValue<string>() ?? $"UpdateGroupSettings failed with code {errorCode}", errorCode);
+        }
+    }
+
+    public static async Task<IReadOnlyList<string>> GetPendingGroupMembersAsync(
+        ZaloHttpClient http, ZaloSession session, string groupId, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
+
+        string host = GetGroupHost(session);
+        string url = MakeUrl(host, "/api/group/pending-mems/list");
+
+        JsonObject payload = new()
+        {
+            ["grid"] = groupId,
+            ["imei"] = session.Material.Imei
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt GetPendingGroupMembers payload");
+        }
+
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        JsonNode? dataNode = DecryptDataNode(session, node) ?? node?["data"];
+
+        List<string> results = [];
+        if (dataNode?["users"] is JsonArray usersArr)
+        {
+            foreach (JsonNode? item in usersArr)
+            {
+                string? uid = item?["uid"]?.GetValue<string>() ?? item?["id"]?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(uid))
+                {
+                    results.Add(uid);
+                }
+            }
+        }
+        return results;
+    }
+
+    public static async Task<IReadOnlyList<string>> GetGroupBlockedMembersAsync(
+        ZaloHttpClient http, ZaloSession session, string groupId, int page, int count, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
+
+        string host = GetGroupHost(session);
+        string url = MakeUrl(host, "/api/group/blockedmems/list");
+
+        JsonObject payload = new()
+        {
+            ["grid"] = groupId,
+            ["page"] = page > 0 ? page : 1,
+            ["count"] = count > 0 ? count : 50,
+            ["imei"] = session.Material.Imei
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt GetGroupBlockedMembers payload");
+        }
+
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        JsonNode? dataNode = DecryptDataNode(session, node) ?? node?["data"];
+
+        List<string> results = [];
+        if (dataNode?["blocked_members"] is JsonArray blockedArr)
+        {
+            foreach (JsonNode? item in blockedArr)
+            {
+                string? uid = item?["id"]?.GetValue<string>() ?? item?["uid"]?.GetValue<string>();
+                if (!string.IsNullOrWhiteSpace(uid))
+                {
+                    results.Add(uid);
+                }
+            }
+        }
+        return results;
+    }
+
+    public static async Task AddGroupBlockedMemberAsync(
+        ZaloHttpClient http, ZaloSession session, string groupId, string[] memberIds, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
+        ArgumentNullException.ThrowIfNull(memberIds);
+
+        if (memberIds.Length == 0)
+        {
+            return;
+        }
+
+        string host = GetGroupHost(session);
+        string url = MakeUrl(host, "/api/group/blockedmems/add");
+
+        JsonObject payload = new()
+        {
+            ["grid"] = groupId,
+            ["members"] = ToJsonArray(memberIds)
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt AddGroupBlockedMember payload");
+        }
+
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        int errorCode = node?["error_code"]?.GetValue<int>() ?? 0;
+        if (errorCode != 0)
+        {
+            throw new ZaloApiException(node?["error_message"]?.GetValue<string>() ?? $"AddGroupBlockedMember failed with code {errorCode}", errorCode);
+        }
+    }
+
+    public static async Task RemoveGroupBlockedMemberAsync(
+        ZaloHttpClient http, ZaloSession session, string groupId, string[] memberIds, CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
+        ArgumentNullException.ThrowIfNull(memberIds);
+
+        if (memberIds.Length == 0)
+        {
+            return;
+        }
+
+        string host = GetGroupHost(session);
+        string url = MakeUrl(host, "/api/group/blockedmems/remove");
+
+        JsonObject payload = new()
+        {
+            ["grid"] = groupId,
+            ["members"] = ToJsonArray(memberIds)
+        };
+
+        string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        if (string.IsNullOrEmpty(encryptedParams))
+        {
+            throw new ZaloApiException("Failed to encrypt RemoveGroupBlockedMember payload");
+        }
+
+        string requestUrl = $"{url}&params={Uri.EscapeDataString(encryptedParams)}";
+        using HttpResponseMessage resp = await http.RequestAsync(requestUrl, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        int errorCode = node?["error_code"]?.GetValue<int>() ?? 0;
+        if (errorCode != 0)
+        {
+            throw new ZaloApiException(node?["error_message"]?.GetValue<string>() ?? $"RemoveGroupBlockedMember failed with code {errorCode}", errorCode);
         }
     }
 

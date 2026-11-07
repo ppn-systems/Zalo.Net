@@ -305,6 +305,11 @@ public sealed class ZaloWsListener
 
             case 501:
             case 510:
+            case 513:
+            case 514:
+            case 515:
+            case 534:
+            case 570:
                 try
                 {
                     if (state.KeyBytes == null && state.Key != null)
@@ -339,6 +344,8 @@ public sealed class ZaloWsListener
 
             case 521:
             case 511:
+            case 517:
+            case 518:
                 try
                 {
                     JsonNode? payload = await WsFrameCodec.DecodeFrameBodyAsync(body, state.Key, ct).ConfigureAwait(false);
@@ -367,6 +374,9 @@ public sealed class ZaloWsListener
                 break;
 
             case 601:
+            case 602:
+            case 603:
+            case 604:
                 try
                 {
                     JsonNode? payload = await WsFrameCodec.DecodeFrameBodyAsync(body, state.Key, ct).ConfigureAwait(false);
@@ -461,28 +471,49 @@ public sealed class ZaloWsListener
             return;
         }
 
-        JsonNode? data = payload["data"];
-        string arrName = threadType == ZaloThreadType.Group ? "groupMsgs" : "msgs";
-        if (data?[arrName] is not JsonArray msgs)
+        JsonNode? data = payload["data"] ?? payload;
+        bool dispatchedAny = false;
+
+        if (data?["msgs"] is JsonArray userMsgs)
         {
-            ZaloMessageEvent? single = data is JsonObject ? this.ParseMessageEvent(data, threadType) : null;
+            dispatchedAny = true;
+            foreach (JsonNode? msg in userMsgs)
+            {
+                if (msg is null)
+                {
+                    continue;
+                }
+                ZaloMessageEvent? evt = this.ParseMessageEvent(msg, ZaloThreadType.User);
+                if (evt is not null)
+                {
+                    _onMessage(evt);
+                }
+            }
+        }
+
+        if (data?["groupMsgs"] is JsonArray groupMsgs)
+        {
+            dispatchedAny = true;
+            foreach (JsonNode? msg in groupMsgs)
+            {
+                if (msg is null)
+                {
+                    continue;
+                }
+                ZaloMessageEvent? evt = this.ParseMessageEvent(msg, ZaloThreadType.Group);
+                if (evt is not null)
+                {
+                    _onMessage(evt);
+                }
+            }
+        }
+
+        if (!dispatchedAny && data is JsonObject)
+        {
+            ZaloMessageEvent? single = this.ParseMessageEvent(data, threadType);
             if (single is not null)
             {
                 _onMessage(single);
-            }
-            return;
-        }
-
-        foreach (JsonNode? msg in msgs)
-        {
-            if (msg is null)
-            {
-                continue;
-            }
-            ZaloMessageEvent? evt = this.ParseMessageEvent(msg, threadType);
-            if (evt is not null)
-            {
-                _onMessage(evt);
             }
         }
     }
@@ -575,6 +606,29 @@ public sealed class ZaloWsListener
             }
         }
 
+        List<string>? mentionedUids = null;
+        bool isMentionAll = false;
+        JsonNode? mentionsNode = msg["mentions"] ?? msg["meta"]?["mentionsList"];
+        if (mentionsNode is JsonArray mentionsArr && mentionsArr.Count > 0)
+        {
+            mentionedUids = new List<string>(mentionsArr.Count);
+            foreach (JsonNode? m in mentionsArr)
+            {
+                string? mUid = GetStringOrValue(m?["uid"]);
+                if (!string.IsNullOrWhiteSpace(mUid))
+                {
+                    if (mUid == ZaloConstants.Protocol.MentionAllUid)
+                    {
+                        isMentionAll = true;
+                    }
+                    if (!mentionedUids.Contains(mUid))
+                    {
+                        mentionedUids.Add(mUid);
+                    }
+                }
+            }
+        }
+
         return new ZaloMessageEvent(
             MsgId: msgId,
             CliMsgId: cliMsgId ?? "",
@@ -588,7 +642,9 @@ public sealed class ZaloWsListener
             Content: content,
             Attachments: attachments,
             IsSelf: isSelf,
-            RawJson: msg.ToJsonString());
+            RawJson: msg.ToJsonString(),
+            MentionedUids: mentionedUids,
+            IsMentionAll: isMentionAll);
     }
 
     private async Task PingLoopAsync(ClientWebSocket ws, int intervalMs, CancellationToken ct)

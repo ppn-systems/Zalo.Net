@@ -22,7 +22,7 @@ namespace Zalo.Net.Endpoints;
 public static class AttachmentApis
 {
     private const int ChunkSize = 512 * 1024; // 512 KB limit per Zalo Server Protocol
-    private const string DefaultFileHost = "https://file-wpa.chat.zalo.me";
+    private const string DefaultFileHost = ZaloConstants.Hosts.File;
 
     private sealed record UploadResult(
         string PhotoId,

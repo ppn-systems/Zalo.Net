@@ -220,6 +220,19 @@ public sealed class ZaloDatabase
                 created_at TEXT NOT NULL
             );
 
+            -- Scheduled Messages Table
+            CREATE TABLE IF NOT EXISTS scheduled_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                thread_id TEXT NOT NULL,
+                thread_type TEXT NOT NULL,
+                text TEXT NOT NULL,
+                send_at_unix INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_sched_due ON scheduled_messages(status, send_at_unix);
+
             CREATE TABLE IF NOT EXISTS sessions (
                 session_id TEXT PRIMARY KEY,
                 uid TEXT NOT NULL,

@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Net.Http;
 using System.Text.Json.Nodes;
@@ -29,6 +30,10 @@ public static class MessageApis
         return defaultHost;
     }
 
+    private static string GetChatHost(ZaloSession session) => GetHost(session, "chat", ZaloConstants.Hosts.Chat);
+
+    private static string GetGroupHost(ZaloSession session) => GetHost(session, "group", ZaloConstants.Hosts.Group);
+
     private static string MakeUrl(string baseUrl, string path)
     {
         string baseClean = baseUrl.EndsWith('/') ? baseUrl[..^1] : baseUrl;
@@ -40,7 +45,8 @@ public static class MessageApis
     public static async Task<(string MsgId, string CliMsgId)> SendTextAsync(
         ZaloHttpClient http, ZaloSession session,
         string threadId, ZaloThreadType threadType, string text,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyList<ZaloMention>? mentions = null)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(session);
@@ -48,9 +54,10 @@ public static class MessageApis
         ArgumentException.ThrowIfNullOrWhiteSpace(text);
 
         bool isGroup = threadType == ZaloThreadType.Group;
+        string serviceKey = isGroup ? "group" : "chat";
         string host = isGroup ? GetHost(session, "group", ZaloConstants.Hosts.Group) : GetHost(session, "chat", ZaloConstants.Hosts.Chat);
         string path = isGroup ? "/api/group/sendmsg" : "/api/message/sms";
-        string url = MakeUrl(host, path);
+        string pathAndQuery = $"{path}?zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}";
 
         long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         JsonObject payload = isGroup
@@ -58,7 +65,7 @@ public static class MessageApis
             {
                 ["message"] = text,
                 ["clientId"] = now,
-                ["grid"] = threadId,
+                ["grid"] = UndoApis.CleanGroupId(threadId),
                 ["visibility"] = 0,
                 ["ttl"] = 0
             }
@@ -71,14 +78,28 @@ public static class MessageApis
                 ["toid"] = threadId
             };
 
+        if (isGroup)
+        {
+            string? mentionJson = BuildMentionInfoJson(text, mentions);
+            if (!string.IsNullOrEmpty(mentionJson))
+            {
+                payload["mentionInfo"] = mentionJson;
+            }
+        }
+
         string? encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
         if (string.IsNullOrEmpty(encryptedParams))
         {
             throw new ZaloApiException("Failed to encrypt sendMessage payload");
         }
 
-        using FormUrlEncodedContent body = new([new KeyValuePair<string, string>("params", encryptedParams)]);
-        using HttpResponseMessage resp = await http.RequestAsync(url, HttpMethod.Post, body: body, ct: ct).ConfigureAwait(false);
+        using HttpResponseMessage resp = await http.RequestWithFailoverAsync(
+            serviceKey,
+            host,
+            pathAndQuery,
+            HttpMethod.Post,
+            () => new FormUrlEncodedContent([new KeyValuePair<string, string>("params", encryptedParams)]),
+            ct: ct).ConfigureAwait(false);
         JsonNode? node = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false)
                       ?? throw new ZaloApiException("Invalid JSON response from sendMessage");
 
@@ -109,6 +130,45 @@ public static class MessageApis
             ZaloDiagnosticsEvents.Write(ZaloDiagnosticsEvents.Message.TextSent, new { TargetThreadId = threadId, TargetThreadType = threadType.ToString(), OutboundMsgId = msgId });
         }
         return (msgId, now.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>Builds the Zalo <c>mentionInfo</c> JSON array string from explicit mentions or automatic <c>@All</c> detection.</summary>
+    public static string? BuildMentionInfoJson(string text, IReadOnlyList<ZaloMention>? mentions = null)
+    {
+        JsonArray arr = [];
+        if (mentions is { Count: > 0 })
+        {
+            foreach (ZaloMention m in mentions)
+            {
+                bool isAll = m.IsMentionAll || string.Equals(m.Uid, ZaloConstants.Protocol.MentionAllUid, StringComparison.Ordinal);
+                arr.Add((JsonNode)new JsonObject
+                {
+                    ["pos"] = m.Position,
+                    ["len"] = m.Length,
+                    ["uid"] = isAll ? ZaloConstants.Protocol.MentionAllUid : m.Uid,
+                    ["type"] = isAll ? 1 : 0,
+                });
+            }
+            return arr.ToJsonString();
+        }
+
+        if (!string.IsNullOrEmpty(text))
+        {
+            int idx = text.IndexOf("@All", StringComparison.OrdinalIgnoreCase);
+            if (idx >= 0)
+            {
+                arr.Add((JsonNode)new JsonObject
+                {
+                    ["pos"] = idx,
+                    ["len"] = 4,
+                    ["uid"] = ZaloConstants.Protocol.MentionAllUid,
+                    ["type"] = 1,
+                });
+                return arr.ToJsonString();
+            }
+        }
+
+        return null;
     }
 
     /// <summary>Sends a reply/quote message quoting an existing message.</summary>
@@ -472,5 +532,525 @@ public static class MessageApis
         {
             throw new ZaloApiException(node?["error_message"]?.GetValue<string>() ?? $"SendContactCard failed with code {error}", error);
         }
+    }
+
+    /// <summary>
+    /// Parses rich link metadata (<c>title</c>, <c>desc</c>, <c>thumb</c>, <c>src</c>) via <c>GET /api/message/parselink</c> (cmd 11285).
+    /// </summary>
+    public static async Task<ZaloLinkMetadata> ParseLinkAsync(
+        ZaloHttpClient http, ZaloSession session, string rawUrl, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(rawUrl);
+
+        string url = rawUrl.Trim();
+        string domain = "Liên kết";
+        if (Uri.TryCreate(url, UriKind.Absolute, out Uri? parsedUri) && !string.IsNullOrEmpty(parsedUri.Host))
+        {
+            domain = parsedUri.Host;
+        }
+
+        string title = domain;
+        string desc = string.Empty;
+        string thumb = string.Empty;
+        string src = domain;
+
+        string primaryHost = session.ServiceMap.TryGetValue("file", out string[]? fHosts) && fHosts.Length > 0
+            ? fHosts[0]
+            : ZaloConstants.Hosts.File;
+
+        JsonObject body = new()
+        {
+            ["link"] = url,
+            ["version"] = 1,
+            ["imei"] = session.Material.Imei,
+        };
+
+        try
+        {
+            string enc = Uri.EscapeDataString(ZaloCipher.EncodeAes(session.Material.SecretKey, body.ToJsonString()));
+            string path = $"/api/message/parselink?zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}&params={enc}";
+            using HttpResponseMessage resp = await http.RequestWithFailoverAsync("file", primaryHost, path, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+            JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+            JsonNode? root = StickerApis.UnwrapDecrypt(json, session.Material.SecretKey);
+            JsonNode? d = root?["data"]?["data"] ?? root?["data"] ?? root;
+
+            string? t = d?["title"]?.GetValue<string>()?.Trim();
+            if (!string.IsNullOrEmpty(t) && t != url)
+            {
+                title = t;
+            }
+
+            string? ds = d?["desc"]?.GetValue<string>()?.Trim();
+            if (!string.IsNullOrEmpty(ds) && ds != url)
+            {
+                desc = ds;
+            }
+
+            string? th = d?["thumb"]?.GetValue<string>()?.Trim();
+            if (!string.IsNullOrEmpty(th) && !th.Contains("im_parselink", StringComparison.OrdinalIgnoreCase))
+            {
+                thumb = th;
+            }
+
+            string? sr = d?["src"]?.GetValue<string>()?.Trim();
+            if (!string.IsNullOrEmpty(sr))
+            {
+                src = sr;
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            // Fallback to domain metadata if parselink fails
+        }
+
+        return new ZaloLinkMetadata(url, title, desc, thumb, src);
+    }
+
+    /// <summary>
+    /// Sends a rich link card message (<c>POST /api/message/link</c> or <c>/api/group/sendlink</c>, cmd 11286 / 11193).
+    /// </summary>
+    public static async Task<ZaloSendResult> SendLinkAsync(
+        ZaloHttpClient http, ZaloSession session,
+        string threadId, ZaloThreadType threadType, string url, string? message = null, ZaloLinkMetadata? metadata = null,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(threadId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(url);
+
+        ZaloLinkMetadata meta = metadata ?? await ParseLinkAsync(http, session, url, ct).ConfigureAwait(false);
+        string msgStr = string.IsNullOrWhiteSpace(message) ? meta.Url : message.Trim();
+        string titleStr = string.IsNullOrWhiteSpace(meta.Title) ? meta.Url : meta.Title.Trim();
+        long clientId = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
+        string mediaJson = "{\"type\":0,\"count\":0,\"mediaTitle\":\"\",\"artist\":\"\",\"streamUrl\":\"\",\"stream_icon\":\"\"}";
+        bool isGroup = threadType == ZaloThreadType.Group;
+        string serviceKey = isGroup ? "group" : "chat";
+        string primaryHost = isGroup ? GetGroupHost(session) : GetChatHost(session);
+
+        JsonObject payload = new()
+        {
+            ["msg"] = msgStr,
+            ["href"] = meta.Url,
+            ["src"] = meta.SourceDomain,
+            ["title"] = titleStr,
+            ["desc"] = meta.Description,
+            ["thumb"] = meta.ThumbnailUrl,
+            ["type"] = 0,
+            ["media"] = mediaJson,
+            ["clientId"] = clientId,
+            ["mentionInfo"] = isGroup ? "[]" : "",
+            ["language"] = session.Material.Language,
+            ["ttl"] = 0,
+            ["imei"] = session.Material.Imei,
+        };
+
+        if (isGroup)
+        {
+            payload["grid"] = UndoApis.CleanGroupId(threadId);
+        }
+        else
+        {
+            payload["toId"] = threadId;
+        }
+
+        string encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        string path = isGroup
+            ? $"/api/group/sendlink?zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}"
+            : $"/api/message/link?zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}";
+
+        using HttpResponseMessage resp = await http.RequestWithFailoverAsync(
+            serviceKey,
+            primaryHost,
+            path,
+            HttpMethod.Post,
+            () => new FormUrlEncodedContent([new KeyValuePair<string, string>("params", encryptedParams)]),
+            ct: ct).ConfigureAwait(false);
+
+        JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        JsonNode? root = StickerApis.UnwrapDecrypt(json, session.Material.SecretKey);
+        int errorCode = root?["error_code"]?.GetValue<int>() ?? json?["error_code"]?.GetValue<int>() ?? 0;
+        if (errorCode != 0)
+        {
+            throw new ZaloApiException(root?["error_message"]?.GetValue<string>() ?? $"SendLink failed with code {errorCode}", errorCode);
+        }
+
+        string cliMsgId = clientId.ToString(CultureInfo.InvariantCulture);
+        string msgId = root?["data"]?["msgId"]?.ToString()
+                    ?? root?["msgId"]?.ToString()
+                    ?? cliMsgId;
+        return new ZaloSendResult(msgId, cliMsgId);
+    }
+
+    /// <summary>
+    /// Forwards a message or sticker to another conversation.
+    /// </summary>
+    public static async Task<ZaloSendResult> ForwardMessageAsync(
+        ZaloHttpClient http, ZaloSession session,
+        string targetThreadId, ZaloThreadType targetThreadType,
+        string text, int? stickerId = null, int? stickerCateId = null, int stickerType = 7,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(targetThreadId);
+
+        if (stickerId is > 0)
+        {
+            return await StickerApis.SendStickerAsync(
+                http, session, targetThreadId, stickerId.Value, stickerCateId ?? 0, stickerType, targetThreadType, ct).ConfigureAwait(false);
+        }
+
+        string cleanText = text ?? string.Empty;
+        if (cleanText.StartsWith("[Đã thu hồi] ", StringComparison.Ordinal))
+        {
+            cleanText = cleanText["[Đã thu hồi] ".Length..];
+        }
+
+        (string msgId, string cliMsgId) = await SendTextAsync(http, session, targetThreadId, targetThreadType, cleanText, ct: ct).ConfigureAwait(false);
+        return new ZaloSendResult(msgId, cliMsgId);
+    }
+
+    /// <summary>
+    /// Sends a real-time typing indicator (<c>POST /api/message/typing</c> or <c>/api/group/typing</c>, cmd 11144 / 11196).
+    /// Automatically suppressed if <see cref="ZaloPrivacyOptions.BlockTyping"/> is enabled on <paramref name="http"/>.
+    /// </summary>
+    public static async Task SendTypingAsync(
+        ZaloHttpClient http, ZaloSession session,
+        string threadId, ZaloThreadType threadType,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+
+        if (http.PrivacyOptions.BlockTyping || string.IsNullOrWhiteSpace(threadId))
+        {
+            return;
+        }
+
+        bool isGroup = threadType == ZaloThreadType.Group;
+        string clean = UndoApis.CleanGroupId(threadId);
+        string serviceKey = isGroup ? "group" : "chat";
+        string primaryHost = isGroup ? GetGroupHost(session) : GetChatHost(session);
+
+        JsonObject payload = isGroup
+            ? new JsonObject
+            {
+                ["grid"] = clean,
+                ["imei"] = session.Material.Imei,
+            }
+            : new JsonObject
+            {
+                ["toid"] = clean,
+                ["destType"] = 0,
+                ["imei"] = session.Material.Imei,
+            };
+
+        string encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        string path = isGroup
+            ? $"/api/group/typing?zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}"
+            : $"/api/message/typing?zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}";
+
+        using HttpResponseMessage resp = await http.RequestWithFailoverAsync(
+            serviceKey,
+            primaryHost,
+            path,
+            HttpMethod.Post,
+            () => new FormUrlEncodedContent([new KeyValuePair<string, string>("params", encryptedParams)]),
+            ct: ct).ConfigureAwait(false);
+        _ = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Sends a "seen" receipt v2 (<c>POST /api/message/seenv2</c> or <c>/api/group/seenv2</c>, cmd 12118 / 12124).
+    /// Automatically suppressed if <see cref="ZaloPrivacyOptions.BlockSeen"/> is enabled on <paramref name="http"/>.
+    /// </summary>
+    public static async Task SendSeenV2Async(
+        ZaloHttpClient http, ZaloSession session,
+        string threadId, ZaloThreadType threadType, string lastMsgId,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+
+        if (http.PrivacyOptions.BlockSeen || string.IsNullOrWhiteSpace(threadId) || string.IsNullOrWhiteSpace(lastMsgId))
+        {
+            return;
+        }
+
+        bool isGroup = threadType == ZaloThreadType.Group;
+        string clean = UndoApis.CleanGroupId(threadId);
+        string serviceKey = isGroup ? "group" : "chat";
+        string primaryHost = isGroup ? GetGroupHost(session) : GetChatHost(session);
+
+        JsonObject msgInfos = new()
+        {
+            ["data"] = new JsonArray(
+                (JsonNode)new JsonObject
+                {
+                    ["gmi"] = lastMsgId,
+                    ["cmi"] = lastMsgId,
+                })
+        };
+
+        if (isGroup)
+        {
+            msgInfos["grid"] = clean;
+        }
+        else
+        {
+            msgInfos["senderId"] = clean;
+        }
+
+        JsonObject payload = new()
+        {
+            ["msgInfos"] = msgInfos.ToJsonString(),
+            ["imei"] = session.Material.Imei,
+        };
+
+        string encryptedParams = ZaloCipher.EncodeAes(session.Material.SecretKey, payload.ToJsonString());
+        string path = isGroup
+            ? $"/api/group/seenv2?zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}"
+            : $"/api/message/seenv2?zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}";
+
+        using HttpResponseMessage resp = await http.RequestWithFailoverAsync(
+            serviceKey,
+            primaryHost,
+            path,
+            HttpMethod.Post,
+            () => new FormUrlEncodedContent([new KeyValuePair<string, string>("params", encryptedParams)]),
+            ct: ct).ConfigureAwait(false);
+        _ = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Fetches recent conversation previews and last messages (<c>GET /api/preloadconvers/get-last-msgs</c>, cmd 10053).
+    /// </summary>
+    public static async Task<IReadOnlyList<ZaloHistoryMessage>> GetLastMessagesAsync(
+        ZaloHttpClient http, ZaloSession session, string[]? threadIds = null, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+
+        JsonObject map = new();
+        if (threadIds is { Length: > 0 and <= 25 })
+        {
+            foreach (string id in threadIds)
+            {
+                if (string.IsNullOrWhiteSpace(id))
+                {
+                    continue;
+                }
+                bool isGrp = id.StartsWith("group_", StringComparison.OrdinalIgnoreCase) || (id.Length > 1 && (id[0] == 'g' || id[0] == 'G') && char.IsDigit(id[1]));
+                string clean = UndoApis.CleanGroupId(id);
+                map[isGrp ? $"{clean}_1" : $"{clean}_0"] = "1";
+            }
+        }
+
+        JsonObject body = new()
+        {
+            ["threadIdLocalMsgId"] = map.ToJsonString(),
+            ["imei"] = session.Material.Imei,
+        };
+
+        string primaryHost = session.ServiceMap.TryGetValue("conversation", out string[]? cHosts) && cHosts.Length > 0
+            ? cHosts[0]
+            : ZaloConstants.Hosts.Conversation;
+
+        string enc = Uri.EscapeDataString(ZaloCipher.EncodeAes(session.Material.SecretKey, body.ToJsonString()));
+        string path = $"/api/preloadconvers/get-last-msgs?zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}&params={enc}";
+
+        using HttpResponseMessage resp = await http.RequestWithFailoverAsync("conversation", primaryHost, path, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        JsonNode? root = StickerApis.UnwrapDecrypt(json, session.Material.SecretKey);
+        return ParseHistoryMessages(root, session.Uid, defaultThreadId: null, defaultIsGroup: false);
+    }
+
+    /// <summary>
+    /// Fetches group message history (<c>GET /api/group/history</c>, cmd 11240).
+    /// </summary>
+    public static async Task<IReadOnlyList<ZaloHistoryMessage>> GetGroupHistoryAsync(
+        ZaloHttpClient http, ZaloSession session, string groupId, int count = 50, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(groupId);
+
+        string cleanGrid = UndoApis.CleanGroupId(groupId);
+        JsonObject body = new()
+        {
+            ["grid"] = cleanGrid,
+            ["count"] = count > 0 ? count : 50,
+            ["imei"] = session.Material.Imei,
+        };
+
+        string primaryHost = GetGroupHost(session);
+        string enc = Uri.EscapeDataString(ZaloCipher.EncodeAes(session.Material.SecretKey, body.ToJsonString()));
+        string path = $"/api/group/history?zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}&params={enc}";
+
+        using HttpResponseMessage resp = await http.RequestWithFailoverAsync("group", primaryHost, path, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        JsonNode? root = StickerApis.UnwrapDecrypt(json, session.Material.SecretKey);
+        return ParseHistoryMessages(root, session.Uid, defaultThreadId: cleanGrid, defaultIsGroup: true);
+    }
+
+    /// <summary>
+    /// Fetches cloud message history (<c>GET /api/cm/getrecentv2</c> or <c>/api/cm/getoldv2</c>, cmd 12506 / 12507).
+    /// </summary>
+    public static async Task<IReadOnlyList<ZaloHistoryMessage>> GetCloudMessagesAsync(
+        ZaloHttpClient http, ZaloSession session,
+        string convId, string globalMsgId = "0", bool isOld = false, int count = 50,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentException.ThrowIfNullOrWhiteSpace(convId);
+
+        string cleanId = UndoApis.CleanGroupId(convId);
+        JsonObject body = new()
+        {
+            ["groupId"] = cleanId,
+            ["globalMsgId"] = string.IsNullOrWhiteSpace(globalMsgId) || globalMsgId == "0" ? "9223372036854775808" : globalMsgId,
+            ["count"] = count > 0 ? count : 50,
+            ["msgIds"] = new JsonArray(),
+            ["imei"] = session.Material.Imei,
+            ["src"] = isOld ? 3 : 1,
+        };
+
+        string primaryHost = session.ServiceMap.TryGetValue("zcloud", out string[]? zHosts) && zHosts.Length > 0
+            ? zHosts[0]
+            : ZaloConstants.Hosts.CloudMsg;
+
+        string ep = isOld ? "/api/cm/getoldv2" : "/api/cm/getrecentv2";
+        string enc = Uri.EscapeDataString(ZaloCipher.EncodeAes(session.Material.SecretKey, body.ToJsonString()));
+        string path = $"{ep}?zpw_ver={ZaloConstants.Protocol.ApiVersion}&zpw_type={ZaloConstants.Protocol.ApiType}&params={enc}&nretry=0";
+
+        using HttpResponseMessage resp = await http.RequestWithFailoverAsync("cloud_msg", primaryHost, path, HttpMethod.Get, ct: ct).ConfigureAwait(false);
+        JsonNode? json = await ZaloHttpClient.ReadJsonAsync(resp, ct).ConfigureAwait(false);
+        JsonNode? root = StickerApis.UnwrapDecrypt(json, session.Material.SecretKey);
+        return ParseHistoryMessages(root, session.Uid, defaultThreadId: cleanId, defaultIsGroup: true);
+    }
+
+    internal static IReadOnlyList<ZaloHistoryMessage> ParseHistoryMessages(
+        JsonNode? root, string? sessionUid, string? defaultThreadId, bool defaultIsGroup)
+    {
+        if (root is null)
+        {
+            return [];
+        }
+
+        JsonNode? dataNode = root["data"]?["data"] ?? root["data"] ?? root;
+        if (dataNode is JsonValue strVal && strVal.TryGetValue(out string? innerJson) && !string.IsNullOrWhiteSpace(innerJson))
+        {
+            try { dataNode = JsonNode.Parse(innerJson); } catch { /* ignore */ }
+        }
+
+        List<(JsonNode Node, bool IsGroup)> candidates = new();
+        if (dataNode is JsonArray arr)
+        {
+            foreach (JsonNode? it in arr)
+            {
+                if (it is not null)
+                {
+                    candidates.Add((it, defaultIsGroup));
+                }
+            }
+        }
+        else if (dataNode is JsonObject obj)
+        {
+            if (obj["msgs"] is JsonArray uMsgs)
+            {
+                foreach (JsonNode? it in uMsgs)
+                {
+                    if (it is not null)
+                    {
+                        candidates.Add((it, defaultIsGroup));
+                    }
+                }
+            }
+            if (obj["groupMsgs"] is JsonArray gMsgs)
+            {
+                foreach (JsonNode? it in gMsgs)
+                {
+                    if (it is not null)
+                    {
+                        candidates.Add((it, true));
+                    }
+                }
+            }
+            if (obj["messages"] is JsonArray mArr)
+            {
+                foreach (JsonNode? it in mArr)
+                {
+                    if (it is not null)
+                    {
+                        candidates.Add((it, defaultIsGroup));
+                    }
+                }
+            }
+        }
+
+        List<ZaloHistoryMessage> result = new(candidates.Count);
+        foreach ((JsonNode item, bool isGroupBucket) in candidates)
+        {
+            string msgId = item["msgId"]?.ToString()
+                        ?? item["globalMsgId"]?.ToString()
+                        ?? item["cliMsgId"]?.ToString()
+                        ?? string.Empty;
+            string cliMsgId = item["cliMsgId"]?.ToString() ?? msgId;
+            if (string.IsNullOrEmpty(msgId))
+            {
+                continue;
+            }
+
+            string uidFrom = item["uidFrom"]?.ToString() ?? item["fromUid"]?.ToString() ?? string.Empty;
+            string idTo = item["idTo"]?.ToString() ?? item["toId"]?.ToString() ?? defaultThreadId ?? string.Empty;
+            string senderName = item["dName"]?.ToString() ?? item["displayName"]?.ToString() ?? uidFrom;
+            string msgType = item["msgType"]?.ToString() ?? "webchat";
+            bool isSelf = uidFrom == "0" || (!string.IsNullOrEmpty(sessionUid) && uidFrom == sessionUid);
+
+            string threadId = isGroupBucket
+                ? (!string.IsNullOrEmpty(defaultThreadId) ? defaultThreadId : idTo)
+                : (isSelf ? idTo : uidFrom);
+            if (string.IsNullOrEmpty(threadId))
+            {
+                threadId = defaultThreadId ?? idTo;
+            }
+
+            string contentText = item["content"] is JsonValue cVal && cVal.TryGetValue(out string? s)
+                ? s
+                : (item["content"]?.ToJsonString() ?? item["msg"]?.ToString() ?? string.Empty);
+
+            long ts = 0;
+            if (item["ts"] is JsonValue tsVal)
+            {
+                if (!tsVal.TryGetValue(out ts) && tsVal.TryGetValue(out string? tsStr))
+                {
+                    _ = long.TryParse(tsStr, NumberStyles.Integer, CultureInfo.InvariantCulture, out ts);
+                }
+            }
+
+            result.Add(new ZaloHistoryMessage(
+                MsgId: msgId,
+                CliMsgId: cliMsgId,
+                ThreadId: threadId,
+                IsGroup: isGroupBucket,
+                SenderId: isSelf && !string.IsNullOrEmpty(sessionUid) ? sessionUid : uidFrom,
+                SenderName: senderName,
+                Content: contentText,
+                MsgType: msgType,
+                Timestamp: ts,
+                IsSelf: isSelf));
+        }
+
+        result.Sort((a, b) => a.Timestamp.CompareTo(b.Timestamp));
+        return result;
     }
 }

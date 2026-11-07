@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0.
 
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Zalo.Net.Contracts;
 using Zalo.Net.Mcp.Data;
 
@@ -14,6 +15,7 @@ namespace Zalo.Net.Mcp;
 public sealed class ZaloSessionManager : IDisposable
 {
     private readonly ConcurrentDictionary<string, ZaloAccountContext> _accounts = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, DateTimeOffset> _autoReplyCooldowns = new(StringComparer.Ordinal);
     private readonly MessageRepository _masterRepository;
     private readonly MessageIngestPipeline _masterIngest;
     private readonly ZaloWebClient _loginClient;
@@ -178,6 +180,44 @@ public sealed class ZaloSessionManager : IDisposable
         {
             this._logger?.LogInformation("Realtime Zalo message received for account {Uid} from {Sender}: {Content}", uid, e.DisplayName ?? e.UidFrom, e.Content);
             _ = accountIngest.Enqueue(e);
+
+            if (!e.IsSelf)
+            {
+                string? incomingText = e.Content switch
+                {
+                    JsonElement { ValueKind: JsonValueKind.String } el => el.GetString(),
+                    string str => str,
+                    _ => null,
+                };
+
+                if (!string.IsNullOrWhiteSpace(incomingText))
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            string? reply = await accountRepo.MatchAutoReplyAsync(incomingText).ConfigureAwait(false);
+                            if (!string.IsNullOrWhiteSpace(reply))
+                            {
+                                string cooldownKey = $"{uid}:{e.ThreadId}";
+                                DateTimeOffset now = DateTimeOffset.UtcNow;
+                                if (this._autoReplyCooldowns.TryGetValue(cooldownKey, out DateTimeOffset lastSent)
+                                    && (now - lastSent).TotalSeconds < 15)
+                                {
+                                    return;
+                                }
+
+                                this._autoReplyCooldowns[cooldownKey] = now;
+                                _ = await ZaloWebClient.SendTextAsync(session, e.ThreadId, e.ThreadType, reply, CancellationToken.None).ConfigureAwait(false);
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            this._logger?.LogWarning(ex, "Auto-reply failed for account {Uid} on thread {ThreadId}", uid, e.ThreadId);
+                        }
+                    });
+                }
+            }
         };
 
         accountClient.StatusChanged += (_, e) =>
@@ -186,7 +226,7 @@ public sealed class ZaloSessionManager : IDisposable
             accountContext.IsConnected = e.Status == ZaloConnectionStatus.Connected;
         };
 
-        // Start isolated WebSocket listener
+        // Start isolated WebSocket listener and scheduled message worker
         this.StartAccountListener(accountContext, material, session);
 
         this._accounts[uid] = accountContext;
@@ -215,6 +255,52 @@ public sealed class ZaloSessionManager : IDisposable
                 context.IsConnected = false;
             }
         }, token);
+
+        _ = Task.Run(async () =>
+        {
+            using PeriodicTimer timer = new(TimeSpan.FromSeconds(5));
+            try
+            {
+                while (await timer.WaitForNextTickAsync(token).ConfigureAwait(false))
+                {
+                    try
+                    {
+                        long nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                        IReadOnlyList<ScheduledMessageRow> due = await context.Repository
+                            .ClaimDueScheduledMessagesAsync(nowUnix, token)
+                            .ConfigureAwait(false);
+
+                        foreach (ScheduledMessageRow item in due)
+                        {
+                            bool sentOk = false;
+                            try
+                            {
+                                ZaloThreadType threadType = Enum.TryParse<ZaloThreadType>(item.ThreadType, ignoreCase: true, out ZaloThreadType parsed)
+                                    ? parsed
+                                    : ZaloThreadType.User;
+                                _ = await ZaloWebClient.SendTextAsync(session, item.ThreadId, threadType, item.Text, token).ConfigureAwait(false);
+                                sentOk = true;
+                            }
+                            catch (Exception sendEx)
+                            {
+                                this._logger?.LogWarning(sendEx, "Scheduled message #{Id} failed for account {Uid}", item.Id, context.Uid);
+                            }
+
+                            await context.Repository.CompleteScheduledMessageAsync(item.Id, sentOk, token).ConfigureAwait(false);
+                        }
+                    }
+                    catch (OperationCanceledException) when (token.IsCancellationRequested)
+                    {
+                        break;
+                    }
+                    catch (Exception loopEx)
+                    {
+                        this._logger?.LogWarning(loopEx, "Scheduled message poll error for account {Uid}", context.Uid);
+                    }
+                }
+            }
+            catch (OperationCanceledException) { }
+        }, token);
     }
 
     private static async Task<(string DisplayName, string? AvatarUrl)> FetchProfileSafeAsync(
@@ -234,6 +320,16 @@ public sealed class ZaloSessionManager : IDisposable
     /// <summary>Starts QR login flow using the login client.</summary>
     public async Task<ZaloQrSession> StartQrLoginAsync(CancellationToken ct = default) =>
         await this._loginClient.StartQrLoginAsync(ct).ConfigureAwait(false);
+
+    /// <summary>Authenticates via phone number and password (`loginByPasswv2`) and registers the account context.</summary>
+    public async Task<ZaloAccountContext> LoginByPasswordAsync(
+        string phone, string password, string isoCountryCode = "VN", CancellationToken ct = default)
+    {
+        ZaloSessionMaterial material = await this._loginClient.LoginByPasswordAsync(phone, password, isoCountryCode, imei: null, ct).ConfigureAwait(false);
+        ZaloAccountContext context = await this.RegisterOrUpdateAccountAsync(material, ct).ConfigureAwait(false);
+        this._activeAccountUid = context.Uid;
+        return context;
+    }
 
     /// <summary>Registers an initialized account context directly into the manager.</summary>
     public void AddAccountContext(ZaloAccountContext context)
