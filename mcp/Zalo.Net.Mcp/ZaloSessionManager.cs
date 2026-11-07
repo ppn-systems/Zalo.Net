@@ -145,8 +145,9 @@ public sealed class ZaloSessionManager : IDisposable
     {
         ArgumentNullException.ThrowIfNull(material);
 
-        string uid = material.Uid;
         ZaloSession session = await ZaloWebClient.LoginWithSessionAsync(material, ct).ConfigureAwait(false);
+        string uid = !string.IsNullOrWhiteSpace(session.Uid) ? session.Uid : material.Uid;
+        material = material with { Uid = uid, SecretKey = session.Material.SecretKey };
         await this._masterRepository.SaveSessionMaterialAsync(uid, material, ct).ConfigureAwait(false);
 
         // If account already exists, stop its existing listener

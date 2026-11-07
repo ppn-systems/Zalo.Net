@@ -199,12 +199,17 @@ public static class LoginApis
                                 ?? throw new ZaloApiException("getLoginInfo: failed to decrypt response");
 
                 JsonNode? parsed = JsonNode.Parse(decrypted);
+                int innerErr = parsed?["error_code"]?.GetValue<int>() ?? 0;
+                if (innerErr != 0)
+                {
+                    throw new ZaloApiException(parsed?["error_message"]?.GetValue<string>() ?? $"getLoginInfo failed ({innerErr})", innerErr);
+                }
 
                 try
                 {
                     if (parsed is JsonObject o)
                     {
-                        if (o.ContainsKey("data"))
+                        if (o.ContainsKey("data") && o["data"] is not null)
                         {
                             return o["data"];
                         }

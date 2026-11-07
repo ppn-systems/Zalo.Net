@@ -102,9 +102,9 @@ public static class StickerApis
         }
 
         string cliMsgId = clientId.ToString(CultureInfo.InvariantCulture);
-        string msgId = root?["data"]?["msgId"]?.GetValue<string>()
-                    ?? root?["data"]?["message_id"]?.GetValue<string>()
-                    ?? root?["msgId"]?.GetValue<string>()
+        string msgId = root?["data"]?["msgId"]?.ToString()
+                    ?? root?["data"]?["message_id"]?.ToString()
+                    ?? root?["msgId"]?.ToString()
                     ?? cliMsgId;
         return new ZaloSendResult(msgId, cliMsgId);
     }

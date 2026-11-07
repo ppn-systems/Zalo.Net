@@ -254,8 +254,8 @@ public static class ConversationApis
         JsonObject body = new()
         {
             ["toid"] = clean,
-            ["duration"] = durationSeconds,
-            ["action"] = mute ? 1 : 2,
+            ["duration"] = mute ? durationSeconds : -1,
+            ["action"] = mute ? 1 : 3,
             ["startTime"] = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
             ["muteType"] = threadType == ZaloThreadType.Group ? 2 : 1,
             ["imei"] = session.Material.Imei,
@@ -349,30 +349,42 @@ public static class ConversationApis
 
         string clean = UndoApis.CleanGroupId(threadId);
         bool isGroup = threadType == ZaloThreadType.Group;
-        JsonArray convsGroup = isGroup ? [clean] : [];
-        JsonArray convsUser = isGroup ? [] : [clean];
+        long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        string nowStr = now.ToString(CultureInfo.InvariantCulture);
 
         string endpointPath;
         JsonObject inner;
         if (unread)
         {
             endpointPath = "/api/conv/addUnreadMark";
+            JsonObject markEntry = new()
+            {
+                ["id"] = clean,
+                ["cliMsgId"] = nowStr,
+                ["fromUid"] = "0",
+                ["ts"] = now,
+            };
             inner = new JsonObject
             {
-                ["convsGroup"] = convsGroup,
-                ["convsUser"] = convsUser,
+                ["convsGroup"] = isGroup ? new JsonArray((JsonNode)markEntry) : new JsonArray(),
+                ["convsUser"] = isGroup ? new JsonArray() : new JsonArray((JsonNode)markEntry),
                 ["imei"] = session.Material.Imei,
             };
         }
         else
         {
             endpointPath = "/api/conv/removeUnreadMark";
+            JsonObject dataEntry = new()
+            {
+                ["id"] = clean,
+                ["ts"] = now,
+            };
             inner = new JsonObject
             {
-                ["convsGroup"] = convsGroup,
-                ["convsUser"] = convsUser,
-                ["convsGroupData"] = new JsonArray(),
-                ["convsUserData"] = new JsonArray(),
+                ["convsGroup"] = isGroup ? new JsonArray((JsonNode)clean) : new JsonArray(),
+                ["convsUser"] = isGroup ? new JsonArray() : new JsonArray((JsonNode)clean),
+                ["convsGroupData"] = isGroup ? new JsonArray((JsonNode)dataEntry) : new JsonArray(),
+                ["convsUserData"] = isGroup ? new JsonArray() : new JsonArray((JsonNode)dataEntry),
             };
         }
 

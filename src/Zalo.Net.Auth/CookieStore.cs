@@ -157,15 +157,13 @@ public sealed class CookieStore
         foreach (SerializedCookie c in cookies)
         {
             string name = c.Key ?? c.Name ?? "";
-            string domain = c.Domain ?? "chat.zalo.me";
-            if (domain.StartsWith('.'))
-            {
-                domain = domain[1..];
-            }
-            string url = $"https://{domain}";
+            string rawDomain = c.Domain ?? "chat.zalo.me";
+            string hostDomain = rawDomain.StartsWith('.') ? rawDomain[1..] : rawDomain;
+            string cookieDomain = rawDomain.StartsWith('.') ? rawDomain : $".{rawDomain}";
+            string url = $"https://{hostDomain}";
             try
             {
-                Cookie cookie = new(name, c.Value ?? "", c.Path ?? "/", domain)
+                Cookie cookie = new(name, c.Value ?? "", c.Path ?? "/", cookieDomain)
                 {
                     Secure = c.Secure,
                     HttpOnly = c.HttpOnly,

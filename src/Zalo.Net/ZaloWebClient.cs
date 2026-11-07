@@ -238,12 +238,18 @@ public sealed class ZaloWebClient : IZaloClient
                 await LoginQrApis.CheckSessionAsync(session.Http, sessionCt).ConfigureAwait(false);
 
                 JsonNode? userInfo = await LoginQrApis.GetUserInfoAsync(session.Http, sessionCt).ConfigureAwait(false);
-                string uid = userInfo?["uid"]?.GetValue<string>()
-                               ?? confirmResult["data"]?["userId"]?.GetValue<string>()
+                JsonNode? userData = userInfo?["data"] ?? userInfo;
+                string uid = userData?["uid"]?.ToString()
+                               ?? confirmResult["data"]?["userId"]?.ToString()
                                ?? "";
 
-                displayName = userInfo?["displayName"]?.GetValue<string>() ?? displayName ?? "";
-                avatar = userInfo?["avatar"]?.GetValue<string>() ?? avatar;
+                displayName = userData?["info"]?["name"]?.GetValue<string>()
+                           ?? userData?["displayName"]?.GetValue<string>()
+                           ?? displayName
+                           ?? "";
+                avatar = userData?["info"]?["avatar"]?.GetValue<string>()
+                      ?? userData?["avatar"]?.GetValue<string>()
+                      ?? avatar;
 
                 string imei = Hashing.GenerateImei(session.UserAgent);
                 ParamsEncryptor encryptor = new(ZaloConstants.Protocol.ApiType, imei, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
@@ -251,6 +257,14 @@ public sealed class ZaloWebClient : IZaloClient
 
                 JsonNode? loginData = await LoginApis.GetLoginInfoAsync(session.Http, imei, "vi", enk, sessionCt).ConfigureAwait(false);
                 _ = await LoginApis.GetServerInfoAsync(session.Http, imei, sessionCt).ConfigureAwait(false);
+
+                if (string.IsNullOrWhiteSpace(uid))
+                {
+                    uid = loginData?["uid"]?.ToString()
+                       ?? loginData?["userId"]?.ToString()
+                       ?? loginData?["send2me_id"]?.ToString()
+                       ?? "";
+                }
 
                 string secretKey = loginData?["zpw_enk"]?.GetValue<string>()
                                  ?? throw new ZaloApiException("Missing zpw_enk in login response");
@@ -315,7 +329,10 @@ public sealed class ZaloWebClient : IZaloClient
         JsonNode? loginData = await LoginApis.GetLoginInfoAsync(http, material.Imei, material.Language, material.SecretKey, ct).ConfigureAwait(false);
         JsonNode? serverData = await LoginApis.GetServerInfoAsync(http, material.Imei, ct).ConfigureAwait(false);
 
-        string uid = loginData?["uid"]?.GetValue<string>() ?? material.Uid;
+        string uid = loginData?["uid"]?.ToString()
+                  ?? loginData?["userId"]?.ToString()
+                  ?? loginData?["send2me_id"]?.ToString()
+                  ?? material.Uid;
         string secretKey = loginData?["zpw_enk"]?.GetValue<string>() ?? material.SecretKey;
         string[] wsUrls = ExtractWsUrls(loginData);
         IReadOnlyDictionary<string, string[]> svcMap = ExtractServiceMap(loginData);
